@@ -17,7 +17,7 @@ import settings as S
 import stt
 import tts
 from audio import Microphone, write_wav
-from brain import Brain
+from brain import Brain, addressed
 
 Event = Callable[[str, str], None]   # (kind, text) kind: state|you|claude|status|note
 
@@ -110,7 +110,19 @@ class Engine:
         self._last_speech = time.monotonic()
         norm = stt.normalize(text)
 
-        if self.asleep:
+        hit = addressed(text)                       # "Jarvis, ..." / "hey Kylie" / "talk to Esther": wake + switch
+        if hit:
+            target, rest = hit
+            self.brain.set_target(target)
+            if self.asleep:
+                self.wake()
+            self.on_event("note", f"on the line: {self.brain.name(target)}")
+            if not rest:
+                self._speak(f"{self.brain.name(target)} here.")
+                self._set("listening")
+                return
+            text, norm = rest, stt.normalize(rest)
+        elif self.asleep:
             if not any(w in norm for w in (stt.normalize(x) for x in S.WAKE_WORDS)):
                 self._set("asleep")
                 return
@@ -125,7 +137,7 @@ class Engine:
             self._goodbye()
             return
         if norm in {stt.normalize(w) for w in S.SLEEP_WORDS}:
-            self._speak("Okay, sleeping. Say hey Claude to wake me.")
+            self._speak("Okay, sleeping. Say a name, like hey Claude or Jarvis, to wake me.")
             self.sleep()
             return
         if norm in {stt.normalize(w) for w in S.OPEN_MIC_WORDS}:

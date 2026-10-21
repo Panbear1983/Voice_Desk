@@ -51,20 +51,31 @@ class Whisper:
                 self._proc.kill()
         self._proc = None
 
-    def transcribe(self, wav: Path) -> str:
+    def transcribe(self, wav: Path, prompt: str = S.WHISPER_PROMPT) -> str:
         boundary = "----claudevoice"
         data = wav.read_bytes()
         body = (
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n"
             f"Content-Type: audio/wav\r\n\r\n").encode() + data + (
             f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson"
-            f"\r\n--{boundary}--\r\n").encode()
+            + (f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\n{prompt}" if prompt else "")
+            + f"\r\n--{boundary}--\r\n").encode()
         req = urllib.request.Request(
             self.url + "/inference", data=body,
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
         with urllib.request.urlopen(req, timeout=60) as resp:
             text = json.loads(resp.read().decode()).get("text", "")
-        return clean(text)
+        text = clean(text)
+        return "" if prompt and echoes_prompt(text, prompt) else text
+
+
+def echoes_prompt(text: str, prompt: str) -> bool:
+    """On noise whisper can hand the vocabulary hint back as if it were heard
+    ("Jarvis, Kylie, Esther, Wanna Buffet..."). Three or more of the hint's names in one
+    sentence is that echo, not a person talking."""
+    names = [normalize(n) for n in prompt.split(".")[0].split(",") if normalize(n)]
+    said = normalize(text)
+    return sum(1 for n in names if n in said) >= 3
 
 
 def clean(text: str) -> str:

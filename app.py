@@ -24,7 +24,7 @@ LIGHT = {
     "hearing": ("●  hearing you", "#27ae60"),
     "thinking": ("●  thinking", "#f39c12"),
     "speaking": ("●  speaking", "#3498db"),
-    "asleep": ("●  asleep, say hey Claude", "#7f8c8d"),
+    "asleep": ("●  asleep, say a name", "#7f8c8d"),
     "error": ("●  error", "#e74c3c"),
     "off": ("●  off", "#333333"),
 }
@@ -134,7 +134,12 @@ def main() -> None:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        print("Voice Desk is already open in another window.")
+        import service
+        if service.is_fresh(service.read_status()):
+            print("The always-on listener has the microphone (just say a name). "
+                  "./dashboard.sh shows it; K in the dashboard stops it if you want this window instead.")
+        else:
+            print("Voice Desk is already open in another window.")
         sys.exit(1)
     VoiceDesk().run()
 

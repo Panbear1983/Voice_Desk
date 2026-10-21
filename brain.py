@@ -401,6 +401,67 @@ def hermes_display_name(profile: str) -> str:
     return S.HERMES_DISPLAY_NAMES.get(profile) or profile.replace("_", " ").replace("-", " ").title()
 
 
+def _plain(text: str) -> str:
+    """lowercase, punctuation to spaces, single spaces (CJK kept)."""
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s']", " ", (text or "").lower())).strip()
+
+
+def name_aliases() -> list[tuple[str, str]]:
+    """(spoken form, target) for every name on this Mac, longest first so 'tax angel esther'
+    wins over 'tax angel'. Names in settings.NAMES first; any other Hermes profile answers to
+    its profile name in words (e.g. 'builder')."""
+    pairs: list[tuple[str, str]] = []
+    have = {f"hermes:{p}" for p in hermes_profiles()} | {"claude"} | ({"gemini"} if Path(S.GEMINI_BIN).exists() else set())
+    for target, (display, spoken) in S.NAMES.items():
+        if target in have:
+            pairs += [(_plain(a), target) for a in (display, *spoken)]
+    named = {t for _, t in pairs}
+    for p in hermes_profiles():
+        if f"hermes:{p}" not in named:
+            pairs.append((_plain(p.replace("_", " ").replace("-", " ")), f"hermes:{p}"))
+    return sorted(set(pairs), key=lambda x: len(x[0]), reverse=True)
+
+
+_LEAD = r"(?:(?:ok|okay|hey|hi|hello|yo|oh|um|so)\s+|(?:嘿|嗨|哈囉)\s*)*"
+_SWITCH = (r"(?:(?:please\s+)?(?:let me\s+|can i\s+|could i\s+|i want to\s+|i'd like to\s+)?"
+           r"(?:talk|speak|switch|switch over|hand me over|put me through|go back)\s+(?:to|with)\s+(?:the\s+)?)?")
+_TAIL = r"(?:\s+(?:please|now|instead)(?=$))?"     # only when nothing follows: "Esther, now that..." keeps "now"
+
+
+def _plain_map(text: str) -> tuple[str, list[int]]:
+    """_plain(text) plus, for every character of it, the index it came from in text."""
+    out: list[str] = []
+    idx: list[int] = []
+    for i, ch in enumerate(text or ""):
+        for c in ch.lower():
+            if re.match(r"[\w']", c):
+                out.append(c); idx.append(i)
+            elif out and out[-1] != " ":
+                out.append(" "); idx.append(i)
+    while out and out[-1] == " ":
+        out.pop(); idx.pop()
+    return "".join(out), idx
+
+
+def addressed(text: str) -> Optional[tuple[str, str]]:
+    """Does this sentence START with a name? 'Jarvis, what time is it' ->
+    ('hermes:orchestrator', 'what time is it'); 'hey Kylie' / 'talk to Esther' ->
+    (target, ''); 'I told Jarvis yesterday' -> None. The rest keeps the speaker's own words."""
+    raw = (text or "").strip()
+    plain, idx = _plain_map(raw)
+    if not plain:
+        return None
+    for alias, target in name_aliases():
+        # an English name must end at a word edge ("jarvis" is not "jarvisville"); 克勞德 needs no space
+        edge = r"(?=\s|$)" if re.search(r"[a-z0-9]$", alias) else ""
+        m = re.match(rf"^{_LEAD}{_SWITCH}{re.escape(alias)}{edge}{_TAIL}{edge}", plain)
+        if not m:
+            continue
+        rest = raw[idx[m.end() - 1] + 1:]
+        return target, rest.strip().lstrip(",.!?;:，。！？、 ").strip()
+    return None
+
+
 class Brain:
     """Front door: picks the thread ("claude" or "hermes:<profile>"), handles "talk to X"."""
 
@@ -441,7 +502,7 @@ class Brain:
 
     def resolve(self, spoken: str) -> Optional[str]:
         """'claude' / 'esther' / 'tax angel esther' / 'hermes:tax_angel_esther' -> a target id."""
-        s = re.sub(r"[^\w\s:]", "", (spoken or "").lower()).strip()
+        s = re.sub(r"[^\w\s:\-]", "", (spoken or "").lower()).strip()
         if not s:
             return None
         if s in self.targets():
@@ -451,6 +512,9 @@ class Brain:
         if s in ("gemini", "google", "google gemini", "antigravity") and "gemini" in self.targets():
             return "gemini"
         s = re.sub(r"^(the|to)\s+", "", s)
+        for alias, target in name_aliases():            # "jarvis", "kylie", "wanna buffet", ...
+            if s == alias:
+                return target
         hits = []
         for p in hermes_profiles():
             words = [w for w in re.split(r"[_\-\s]+", p.lower()) if w]
@@ -496,7 +560,9 @@ class Brain:
         backend = self.backend(to)
         self._current = backend
         with open(S.TURN_LOCK_FILE, "w") as lockf:
-            fcntl.flock(lockf, fcntl.LOCK_EX)          # phone and window take turns
+            fcntl.flock(lockf, fcntl.LOCK_EX)          # phone, window and listener take turns
+            # another door may have moved this thread on (or started a new one) since we last looked
+            backend.session_id = backend._load_session()
             return backend.ask(text, on_status, on_text)
 
     @property

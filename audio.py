@@ -25,14 +25,21 @@ def _rms(block: np.ndarray) -> float:
 
 
 class Microphone:
-    """Keeps one input stream open and hands out 30 ms int16 blocks through a queue."""
+    """Keeps one input stream open and hands out 30 ms int16 blocks through a queue.
 
-    def __init__(self) -> None:
+    `deaf` is an optional gate: while it returns True every block is thrown away before
+    anyone sees it (the always-on listener uses it so its own voice, and any other program
+    speaking on this Mac, never reaches whisper)."""
+
+    def __init__(self, deaf: Optional[Callable[[], bool]] = None) -> None:
         self._blocks: collections.deque[np.ndarray] = collections.deque(maxlen=400)   # ~12 s
         self._cv = threading.Condition()
         self._stream: Optional[sd.InputStream] = None
         self.noise_floor = S.NOISE_FLOOR_START
         self.level = 0.0            # latest RMS, for the UI meter
+        self.deaf = deaf
+        self.dropped = 0            # blocks thrown away while deaf (the echo test reads this)
+        self.gaps = 0               # bumps on every deaf block; listen() restarts an utterance cut by one
 
     def start(self) -> None:
         if self._stream:
@@ -52,6 +59,12 @@ class Microphone:
     def _on_audio(self, indata, frames, time_info, status) -> None:  # sounddevice callback thread
         block = indata[:, 0].copy()
         self.level = _rms(block)
+        if self.deaf is not None and self.deaf():
+            self.dropped += 1
+            self.gaps += 1
+            with self._cv:
+                self._blocks.clear()            # nothing heard before or during the gap survives it
+            return
         with self._cv:
             self._blocks.append(block)
             self._cv.notify_all()
@@ -69,7 +82,8 @@ class Microphone:
     # -- the two things the loop asks for ------------------------------------------------
 
     def listen(self, timeout_sec: float, should_abort: Callable[[], bool] = lambda: False,
-               on_state: Callable[[str], None] = lambda s: None) -> Optional[np.ndarray]:
+               on_state: Callable[[str], None] = lambda s: None,
+               max_sec: float = S.MAX_UTTERANCE_SEC) -> Optional[np.ndarray]:
         """Block until one utterance is complete. Returns int16 audio, or None if nothing
         was said within timeout_sec (or should_abort() turned true)."""
         self.drain()
@@ -82,12 +96,19 @@ class Microphone:
         start = time.monotonic()
         blocks_start = int(S.SPEECH_START_SEC * 1000 / S.BLOCK_MS)
         blocks_send = int(S.SILENCE_SEND_SEC * 1000 / S.BLOCK_MS)
-        max_blocks = int(S.MAX_UTTERANCE_SEC * 1000 / S.BLOCK_MS)
+        max_blocks = int(max_sec * 1000 / S.BLOCK_MS)
+        gaps = self.gaps
 
         while True:
             if should_abort():
                 return None
             block = self.next_block()
+            if self.gaps != gaps:               # the mic went deaf mid-way: whatever came before is not one utterance
+                gaps = self.gaps
+                if speaking:
+                    on_state("listening")
+                pre_roll.clear()
+                speaking, voiced, loud_run, quiet_run = False, [], 0, 0
             if block is None:
                 if not speaking and time.monotonic() - start > timeout_sec:
                     return None

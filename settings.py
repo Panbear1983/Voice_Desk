@@ -51,6 +51,10 @@ WHISPER_MODEL = HOME / ".local/share/whisper-models/ggml-small.bin"   # 1.2 s pe
 WHISPER_PORT = int(os.environ.get("VOICE_DESK_WHISPER_PORT", "8178"))
 WHISPER_THREADS = 8
 WHISPER_LANGUAGE = "auto"       # English and Mandarin both land correctly
+# A hint of the words to expect. Without it the small model hears "Javas", "Piley" and
+# "Juanaba Faye" (measured 2026-10-21 with three Mac voices); with it all four names land.
+# Mandarin still comes back as Mandarin.
+WHISPER_PROMPT = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini. Mute, unmute."
 
 # whisper invents these on silence / breaths; drop them.
 WHISPER_HALLUCINATIONS = {
@@ -98,7 +102,20 @@ Do not ask more than one question at a time. Never end with a summary of what yo
 HERMES_BIN = os.environ.get("VOICE_DESK_HERMES_BIN", str(HOME / ".local/bin/hermes"))
 HERMES_PROFILES_DIR = Path(os.environ.get("HERMES_PROFILES_DIR", HOME / ".hermes/profiles"))
 HERMES_SKIP_PROFILES = {"default"}                # lives at ~/.hermes itself and has no session store
-HERMES_DISPLAY_NAMES = {"tax_angel_esther": "Esther"}   # spoken names; everything else is the profile name in words
+# ---- names: who answers to what ------------------------------------------------------------
+# Saying a name at the start of a sentence ("Jarvis, what time is it", "hey Kylie", "talk to
+# Esther") wakes the line AND switches to that thread. Each entry: target -> (the name spoken
+# back, every spelling whisper has been heard to produce for it). Names Peter picked 2026-10-21.
+NAMES = {
+    "claude": ("Claude", ("claude", "claud", "clod", "claude code", "克勞德", "克劳德")),
+    "gemini": ("Gemini", ("gemini", "jemini", "google gemini")),
+    "hermes:orchestrator": ("Jarvis", ("jarvis", "javis", "jaarvis", "javas", "jervis", "jarvas", "orchestrator")),
+    "hermes:assistant": ("Kylie", ("kylie", "kiley", "kylee", "kyley", "assistant")),
+    "hermes:tax_angel_esther": ("Esther", ("esther", "ester", "tax angel esther", "tax angel")),
+    "hermes:wanna-buffet": ("Wanna Buffet", ("wanna buffet", "wanna buffett", "wannabuffet", "wana buffet",
+                                             "wanna buff it", "warren buffett", "warren buffet")),
+}
+HERMES_DISPLAY_NAMES = {t.split(":", 1)[1]: n for t, (n, _) in NAMES.items() if t.startswith("hermes:")}
 HERMES_TURN_TIMEOUT_SEC = 600
 HERMES_SESSION_DIR = STATE_DIR / "hermes_sessions"      # one session id per profile
 BRAIN_FILE = STATE_DIR / "brain"                        # "claude" or "hermes:<profile>", set by voice: "talk to Esther"
@@ -113,6 +130,23 @@ GEMINI_BIN = os.environ.get("VOICE_DESK_GEMINI_BIN", str(HOME / ".local/bin/agy"
 GEMINI_MODEL = "gemini-3.8-flash-medium"          # `agy models` lists the choices
 GEMINI_TURN_TIMEOUT_SEC = 600
 GEMINI_SESSION_FILE = STATE_DIR / "gemini_session"
+
+# ---- the always-on listener (listener.py, run by launchd) ----------------------------------
+# Sleeps with the mic open, listening only for a name; runs one turn; speaks; sleeps again.
+LISTENER_LABEL = "com.peter.voice-desk-listener"
+LISTENER_STATUS = STATE_DIR / "listener.json"     # what the dashboard shows; written by the listener only
+LISTENER_INBOX = STATE_DIR / "listener.inbox"      # one-word orders from the dashboard: hush, new_thread
+MUTE_FILE = STATE_DIR / "muted"                    # exists = muted (spoken "mute", or M in the dashboard)
+ECHO_TAIL_SEC = 1.0             # the mic stays deaf this long after any speech ends (room echo)
+# Speech from anything else on this Mac (the Claude Stop hook, Hermes voice mode, kokoro) plays
+# through these programs; while one runs the listener is deaf, so it can never hear itself.
+FOREIGN_PLAYERS = ("afplay", "say")
+FOLLOW_UP_SEC = 10             # after a bare name ("Jarvis?" -> "Jarvis here.") the question needs no name for this long
+ASLEEP_MAX_UTTERANCE_SEC = 20   # while asleep only short sentences matter: a name comes first
+MUTE_WORDS = {"mute", "mute yourself", "mute the mic", "mute microphone", "mute please", "go mute",
+              "mewed", "mude", "muse", "靜音", "静音"}
+UNMUTE_WORDS = {"unmute", "un mute", "unmute yourself", "unmute please", "unmuted", "on mute", "on mude",
+                "done mute", "done mewed", "listen again", "start listening", "you can listen", "取消靜音", "取消静音"}
 
 # ---- phone receiver ------------------------------------------------------------------
 RECEIVER_HOST = os.environ.get("VOICE_DESK_RECEIVER_HOST", "0.0.0.0")   # Tailscale + LAN; token-protected

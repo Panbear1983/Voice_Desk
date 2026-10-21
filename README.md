@@ -132,18 +132,49 @@ The first time it opens, macOS asks whether Terminal may use the microphone. Cli
 |---|---|
 | *anything, then pause* | sent to Claude |
 | "stop", "wait", "hold on", 「等一下」 | cuts the answer off (or just start talking over it) |
-| "go to sleep", 「休息」 | stops listening until you say "hey Claude" |
+| "go to sleep", 「休息」 | stops listening until you say a name ("hey Claude", "Jarvis", …) |
 | "hey Claude, …" | wakes it up; the rest of the sentence is your question |
+| "Jarvis, …" / "hey Kylie" / "Esther, …" / "Wanna Buffet, …" | wakes it **and** puts that brain on the line: Jarvis = the orchestrator, Kylie = the assistant, Esther = tax_angel_esther, Wanna Buffet = wanna-buffet ([Hermes](https://github.com/NousResearch/hermes-agent) profiles). The rest of the sentence is the question; the confirmation uses the name ("Jarvis here.") |
+| "mute" / "unmute" | the always-on listener ignores everything until "unmute" (or <kbd>M</kbd> in the dashboard) |
 | "use Opus" / "switch to Sonnet" / "use Haiku" / "use Fable" | changes the model from the next question on |
 | "which model" | tells you which model it's using |
 | "think deep" / "quick mode" / "max effort" / "normal mode" | how hard Claude thinks |
 | "which effort" | tells you the current effort level |
-| "talk to Gemini" / "talk to Esther" / "talk to the orchestrator" / "talk to Claude" | switches to another brain, each with its own separate conversation: Gemini, and every [Hermes](https://github.com/NousResearch/hermes-agent) profile on the Mac |
+| "talk to Gemini" / "talk to Jarvis" / "talk to Kylie" / "talk to Esther" / "talk to Wanna Buffet" / "talk to Claude" | switches to another brain, each with its own separate conversation: Gemini, and every [Hermes](https://github.com/NousResearch/hermes-agent) profile on the Mac |
 | "who am I talking to" / "who can I talk to" | which brain is on, and the list |
 | "open mic" / "tap to talk" | switches listening mode (tap mode is for noisy rooms) |
 | "goodbye", 「再見」 | ends the session; Claude saves a short note about what you discussed |
 
 Ending a sentence with "over" or "send" also works, and the word is dropped.
+
+## Always on: just say a name
+
+The window is for a sit-down conversation. For the rest of the day there is a listener that
+runs in the background from login, with no window and no keyboard:
+
+```bash
+./install_listener.sh      # login job com.peter.voice-desk-listener; starts it now
+./dashboard.sh             # small control panel for it
+```
+
+It sleeps with the microphone open and reacts only to a sentence that **starts with a
+name**: "Jarvis, what time is it?" runs one turn with Jarvis, speaks the answer and goes back
+to sleep. "Hey Kylie" on its own gets "Kylie here." and ten seconds to ask. A name in the
+middle of a sentence ("I told Jarvis yesterday") is ignored. Everything is transcribed on
+the Mac; only a sentence that starts with a name goes anywhere. The threads are the same ones
+the window and the phone use.
+
+It never hears itself: the mic is deaf while it speaks and for a second after, and also
+while any other program on the Mac is speaking (`afplay` / `say`, which is how the Claude
+read-aloud hook and Hermes voice mode talk). It holds `~/.voice_desk/window.lock`, so the
+read-aloud hook stays silent while it runs, and the window and the listener never share the
+mic: open the window and the listener waits (light: *standby*) until you close it.
+
+The dashboard never touches the mic. It reads `~/.voice_desk/listener.json` and shows the
+light (asleep · listening · hearing · thinking · speaking · muted), who is on the line, the
+last thing heard and the last reply. Keys: <kbd>M</kbd> mute/unmute · <kbd>H</kbd> hush ·
+<kbd>N</kbd> new conversation · <kbd>R</kbd> restart the listener · <kbd>K</kbd> stop it ·
+<kbd>Q</kbd> close the panel (the listener keeps running).
 
 **Keys** (you never *need* them): <kbd>Space</kbd> talk in tap mode or interrupt ·
 <kbd>M</kbd> mode · <kbd>S</kbd> sleep/wake · <kbd>N</kbd> new conversation · <kbd>Q</kbd> quit.
@@ -209,6 +240,9 @@ Everything adjustable is a plain constant in `settings.py`:
 | `TTS_VOICE_ZH_MAC` | Meijia | any Mac voice (`say -v '?'` lists them) |
 | `TTS_CHAIN` / `TTS_ORDER` | optional script | your own voice pipeline (Piper, Edge…); without it, the built-in Mac voice speaks |
 | `WAKE_WORDS`, `STOP_WORDS`, … | see file | your own phrases, in any language |
+| `NAMES` | Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini | who answers to which name, and the spellings whisper produces for it |
+| `WHISPER_PROMPT` | the names | the words whisper should expect; it is what makes "Jarvis" land instead of "Javas" |
+| `ECHO_TAIL_SEC` | `1.0` | how long the listener stays deaf after any speech ends |
 
 Claude calls you by the first name on your Mac account. Set `VOICE_DESK_NAME` to
 change it. Other environment overrides: `VOICE_DESK_STATE`, `VOICE_DESK_TTS_ORDER`,
@@ -226,9 +260,12 @@ change it. Other environment overrides: `VOICE_DESK_STATE`, `VOICE_DESK_TTS_ORDE
   Tailscale address. To rotate the token, delete `~/.voice_desk/receiver_token`, restart
   the receiver and rebuild the Shortcut.
 - **It won't hear itself.** Each voice turn sets `VOICE_DESK_LOOP=1`, so Claude Code hooks
-  can skip anything that would speak twice. While the window is open, it holds
-  `~/.voice_desk/window.lock`, which other read-aloud hooks can check. That stops the
+  can skip anything that would speak twice. While the window or the always-on listener runs,
+  it holds `~/.voice_desk/window.lock`, which other read-aloud hooks can check. That stops the
   open mic from mistaking another session's spoken answer for you.
+- **The always-on listener is a microphone that is always open.** Nothing leaves the Mac
+  unless a sentence starts with a name, but whisper still hears the room. Say "mute", press
+  <kbd>M</kbd> in the dashboard, or <kbd>K</kbd> to stop it.
 
 <details>
 <summary><b>Where things are kept</b></summary>
@@ -242,7 +279,10 @@ Nothing personal lives in the repo. The app's memory is `~/.voice_desk/`:
 | `receiver_token` | the phone's password (owner-only) |
 | `transcript.log` | every question and answer, time-stamped |
 | `detail.md` | long answers Claude chose not to read aloud |
-| `window.lock`, `turn.lock` | "window open" and "turn running" markers |
+| `window.lock`, `turn.lock` | "window or listener has the mic" and "turn running" markers |
+| `listener.json` | the always-on listener's state, for the dashboard |
+| `muted` | present while the listener is muted |
+| `listener.log` | the listener's log: one line per turn |
 | `receiver.log`, `remote-control.log` | background job logs |
 
 </details>
@@ -256,6 +296,8 @@ Nothing personal lives in the repo. The app's memory is `~/.voice_desk/`:
 | "already open in another window" | only one window at a time; close the other |
 | Light stuck on *hearing you* | room too loud for open mic; press <kbd>M</kbd> for tap mode |
 | It answers things you didn't say | something else on the Mac is talking; mute it or use tap mode |
+| Dashboard light says *off* | the listener is not running: <kbd>R</kbd> in the dashboard, or `./install_listener.sh`; `~/.voice_desk/listener.log` says why |
+| "The always-on listener has the microphone" | the listener is running; <kbd>K</kbd> in the dashboard stops it if you want the window |
 | Siri says "something went wrong" | Tailscale off on the phone, or the receiver isn't running (`curl http://<mac-tailscale-ip>:8765/health`); `~/.voice_desk/receiver.log` has one line per request. An old Shortcut built before the check-back design times out on long answers: rebuild and re-add it |
 | A new conversation started by itself | you opened the voice thread in another `claude --resume` window and left it open; read it, then quit |
 | Slow to start speaking | your `TTS_ORDER` tries a voice that keeps failing first; reorder it |
@@ -268,6 +310,7 @@ Nothing personal lives in the repo. The app's memory is `~/.voice_desk/`:
 ```bash
 .venv/bin/python tests/selftest.py              # every stage, including two real Claude turns
 .venv/bin/python tests/selftest.py --no-brain   # everything except Claude (no tokens)
+.venv/bin/python tests/test_listener.py         # the always-on listener: names, mute, echo, status file
 ```
 
 The self-test needs no mic and no screen. It checks the silence detector on synthetic
@@ -295,9 +338,12 @@ python3 docs/render_images.py          # PNGs + loop.gif (needs playwright + Pil
 | `tts.py` | read-aloud cleanup, voice choice, playback |
 | `settings.py` | every adjustable value |
 | `receiver.py`, `start_receiver.sh`, `install_receiver.sh` | iPhone receiver and its login job |
+| `listener.py`, `start_listener.sh`, `install_listener.sh` | the always-on listener and its login job |
+| `service.py` | the listener's status file, mute flag and launchd controls |
+| `dashboard.py`, `dashboard.sh` | the control panel for the listener |
 | `make_shortcut.py` | builds the signed iPhone Shortcut |
 | `install_remote_control.sh` | Remote Control login job for the Claude app |
-| `tests/selftest.py` | headless end-to-end check |
+| `tests/selftest.py`, `tests/test_listener.py` | headless end-to-end checks |
 | `docs/` | screenshots, diagram and the scripts that make them |
 
 </details>
