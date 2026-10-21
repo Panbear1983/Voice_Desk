@@ -601,6 +601,10 @@ class FakePanes:
             self.bar[pane] = "recording"
         return self.start_result
 
+    def rearm(self, pane):
+        self.rearmed = getattr(self, "rearmed", []) + [pane]
+        return False
+
 
 def test_switchboard() -> None:
     import panes as P
@@ -711,6 +715,23 @@ def test_switchboard() -> None:
     typed = "\x1b[0m\x1b[38;5;116m🎤 ❯ \x1b[0mcontinue with accountant questions\r\n"
     report("panes: the placeholder is not a draft", not P.has_draft(empty))
     report("panes: typed text on the input line is a draft", P.has_draft(typed))
+    # an end phrase leaves voice ON (Peter: "just press another control B and wait"), /voice off does not
+    by_phrase = "assistant ❯ that's all\nStop phrase detected — ending voice chat.\n\nVoice mode disabled.\n"
+    by_hand = "assistant ❯ /voice off\n\nVoice mode disabled.\n"
+    later_off = by_phrase + "\nVoice mode enabled (TTS enabled)\n  Ctrl+B to start/stop recording\n\nVoice mode disabled.\n"
+    report("panes: an end phrase is recognised as the reason voice went off", P.stopped_by_phrase(by_phrase))
+    report("panes: a typed /voice off is left alone", not P.stopped_by_phrase(by_hand))
+    report("panes: a /voice off after an earlier end phrase is left alone", not P.stopped_by_phrase(later_off))
+    report("panes: once voice is back on, nothing more to undo",
+           not P.stopped_by_phrase(by_phrase + "\nVoice mode enabled (TTS enabled)\n"))
+    lst._rearm_next = 0.0
+    lst._pane_cache_until = 0.0
+    lst._rearm_windows()
+    report("switchboard: all four windows are checked for an end phrase to undo",
+           sorted(getattr(fp, "rearmed", [])) == ["wH:pN", "wH:pR"], str(getattr(fp, "rearmed", None)))
+    fp.rearmed = []
+    lst._rearm_windows()
+    report("switchboard: ... not on every tick (PANE_REARM_SEC)", fp.rearmed == [])
     S.PANE_MODE = False
 
 

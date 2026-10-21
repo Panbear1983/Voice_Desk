@@ -85,6 +85,40 @@ def state(pane: str) -> str:
     return state_of(screen_tail(pane))
 
 
+def stopped_by_phrase(tail: Optional[str]) -> bool:
+    """Did the window's voice mode just end because Peter said an end phrase (not /voice off)?
+    Hermes prints "Stop phrase detected — ending voice chat." then "Voice mode disabled."; a typed
+    /voice off prints only the second. Only the LAST "disabled" counts, so a later /voice off wins."""
+    if not tail:
+        return False
+    rows = [r.strip() for r in tail.splitlines() if r.strip()]
+    for i in range(len(rows) - 1, -1, -1):
+        if rows[i].startswith("Voice mode disabled"):
+            return i > 0 and rows[i - 1].startswith(("Stop phrase detected", "Stop phrase typed"))
+        if rows[i].startswith("Voice mode enabled"):
+            return False
+    return False
+
+
+def _type_line(pane: str, text: str) -> None:
+    """Type a command and press Enter. An Enter sent in the same instant as the text is dropped by
+    the Hermes prompt (seen live 2026-10-21), so give the text a moment to land first."""
+    _herdr("pane", "send-text", pane, text)
+    time.sleep(0.3)
+    _herdr("pane", "send-keys", pane, "enter")
+
+
+def rearm(pane: str) -> bool:
+    """Peter 2026-10-21: an end phrase should put the window back to 'voice on, waiting for Ctrl+B',
+    not switch voice off. Hermes turns it off, so turn it straight back on (input line must be empty)."""
+    if state(pane) != "off" or not stopped_by_phrase(screen_tail(pane, lines=30)):
+        return False
+    if has_draft(screen_tail(pane, ansi=True)):
+        return False
+    _type_line(pane, "/voice on")
+    return True
+
+
 def has_draft(ansi_tail: Optional[str]) -> bool:
     """Is there half-typed text on the input line? The input row is the one with the ❯ prompt;
     an empty line shows nothing after it, or the placeholder, which Hermes draws in italics
@@ -112,8 +146,7 @@ def start(pane: str, wait_sec: float = S.PANE_START_SEC) -> str:
     if now == "off":
         if has_draft(screen_tail(pane, ansi=True)):
             return "draft"                     # never type into Peter's half-written message
-        _herdr("pane", "send-text", pane, "/voice on")
-        _herdr("pane", "send-keys", pane, "enter")
+        _type_line(pane, "/voice on")
         deadline = time.monotonic() + wait_sec
         while state(pane) == "off":
             if time.monotonic() > deadline:

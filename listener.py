@@ -97,6 +97,9 @@ class Listener:
         self._hand_quiet = 0            # status-bar reads in a row with no voice chat in that window
         self._hand_hold = 0.0           # pending: do not press Ctrl+B again before this
         self._hand_since = 0.0          # pending since (give up after PANE_GIVE_UP_SEC)
+        self._rearm_next = 0.0          # next look at the four windows for an end phrase to undo
+        self._pane_cache: dict = {}     # profile -> pane id, refreshed every 30 s
+        self._pane_cache_until = 0.0
         self._in_conversation = False   # a reply was spoken and the open line has not lapsed yet
         self.speaking = False
         self.quiet_until = 0.0          # deaf until then (echo tail after any speech)
@@ -404,6 +407,21 @@ class Listener:
         if self._hand_quiet >= S.PANE_END_POLLS:
             self._take_back({"voice-idle": "voice chat over", "gone": "window gone"}.get(st, "voice mode off (end phrase)"))
 
+    def _rearm_windows(self) -> None:
+        """Every PANE_REARM_SEC: any of the four windows whose voice an end phrase just switched off
+        gets voice mode back on, idle, waiting for the next Ctrl+B (Peter: "just press another
+        control B and wait for me to call upon you")."""
+        now = self.clock()
+        if now < self._rearm_next:
+            return
+        self._rearm_next = now + S.PANE_REARM_SEC
+        if now >= self._pane_cache_until:
+            self._pane_cache = {p: self.panes.find(p) for p in S.HERMES_DISPLAY_NAMES}
+            self._pane_cache_until = now + 30
+        for profile, pane in self._pane_cache.items():
+            if pane and self.panes.rearm(pane):
+                log(f"switchboard: {S.HERMES_DISPLAY_NAMES[profile]}'s end phrase -> voice back on, waiting ({pane})")
+
     def _take_back(self, why: str) -> None:
         log(f"switchboard: back to listening for a name ({why})")
         self.handed, self._hand_pending, self._hand_quiet = None, False, 0
@@ -446,7 +464,12 @@ class Listener:
                     self._watch_hand()
                 except Exception as exc:               # a herdr hiccup never wedges the mic deaf
                     log(f"switchboard watch failed: {exc}")
-            elif self.status.state in ("asleep", "listening", "muted"):
+            if S.PANE_MODE:
+                try:
+                    self._rearm_windows()
+                except Exception as exc:
+                    log(f"switchboard rearm failed: {exc}")
+            if not self.handed and self.status.state in ("asleep", "listening", "muted"):
                 self._maybe_end_conversation()
                 self.settle()                     # the follow-up window ran out, or M was pressed
             reason = ("speaking" if self.speaking else "other speech" if self.foreign.playing()

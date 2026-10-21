@@ -137,6 +137,7 @@ PANE_START_SEC = 3.0             # how long Ctrl+B may take to show "● REC" be
 PANE_END_POLLS = 3               # status-bar reads (one per 0.5 s tick) with no voice chat = it is over
 PANE_RETRY_SEC = 2.0             # window busy answering something typed: press Ctrl+B again this often
 PANE_GIVE_UP_SEC = 300           # still busy after this long: stop waiting, listen for a name again
+PANE_REARM_SEC = 1.5             # how often the four windows are checked for an end phrase to undo
 BRAIN_FILE = STATE_DIR / "brain"                        # "claude" or "hermes:<profile>", set by voice: "talk to Esther"
 HERMES_VOICE_NOTE = (f"(Voice call with {USER_NAME}: they hear you and are not reading a screen. Answer the way you "
                      "would speak on the phone, one to four short sentences, in Mandarin if they spoke Mandarin, "
