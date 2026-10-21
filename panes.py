@@ -108,12 +108,23 @@ def _type_line(pane: str, text: str) -> None:
     _herdr("pane", "send-keys", pane, "enter")
 
 
+def stash_draft(pane: str) -> bool:
+    """Peter 2026-10-21: "make all of the profiles exactly the same as Jarvis and Kylie" - a
+    half-typed message must not stop voice coming back. Ctrl+S is Hermes' own draft stash: it keeps
+    the text (Ctrl+S on an empty line brings it back) and clears the line. Never deletes anything."""
+    if not has_draft(screen_tail(pane, ansi=True)):
+        return True
+    _herdr("pane", "send-keys", pane, "ctrl+s")
+    time.sleep(0.5)
+    return not has_draft(screen_tail(pane, ansi=True))
+
+
 def rearm(pane: str) -> bool:
     """Peter 2026-10-21: an end phrase should put the window back to 'voice on, waiting for Ctrl+B',
-    not switch voice off. Hermes turns it off, so turn it straight back on (input line must be empty)."""
+    not switch voice off. Hermes turns it off, so turn it straight back on (a draft is stashed first)."""
     if state(pane) != "off" or not stopped_by_phrase(screen_tail(pane, lines=30)):
         return False
-    if has_draft(screen_tail(pane, ansi=True)):
+    if not stash_draft(pane):
         return False
     _type_line(pane, "/voice on")
     return True
@@ -144,8 +155,8 @@ def start(pane: str, wait_sec: float = S.PANE_START_SEC) -> str:
     if now in ACTIVE:
         return "started"                       # already talking there
     if now == "off":
-        if has_draft(screen_tail(pane, ansi=True)):
-            return "draft"                     # never type into Peter's half-written message
+        if not stash_draft(pane):
+            return "draft"                     # the stash did not take: never type into Peter's message
         _type_line(pane, "/voice on")
         deadline = time.monotonic() + wait_sec
         while state(pane) == "off":
