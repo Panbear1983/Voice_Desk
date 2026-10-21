@@ -1,15 +1,18 @@
-"""Voice Desk, always on: the Mac listens for a name and answers.
+"""Voice Desk, always on: the Mac listens for a name and hands you to that agent.
 
 Run by launchd (install_listener.sh, label com.peter.voice-desk-listener). It sits ASLEEP with
 the microphone open and only reacts to a sentence that starts with a name:
 
-    "Jarvis, what time is it"   -> one turn with the orchestrator, spoken back, then asleep
-    "hey Kylie" / "Kylie?"      -> "Kylie here." and ten seconds to say the question
-    "talk to Esther"            -> switches the line to Esther and says so
+    "hey Kylie" / "hey Jarvis"  -> the switchboard (panes.py, Peter 2026-10-21): presses Ctrl+B in
+                                   that profile's open herdr window and goes deaf; the real session
+                                   answers by its own voice mode. "that's all" / "that's all the
+                                   questions I have" / "no further questions" end it there (Hermes
+                                   voice.stop_phrases) and the listener waits for the next name.
+    "hey Claude, what time is it" -> one turn here, spoken back (no window to hand to)
     "mute" / "unmute"           -> ignores everything except "unmute" (or M in the dashboard)
 
-After the reply it is asleep again: every turn starts with a name. Everything is transcribed
-locally by whisper-server; only a sentence that starts with a name ever leaves the Mac.
+VOICE_DESK_PANES=0 brings back the old one-shot Hermes turns. Everything is transcribed locally
+by whisper-server; only a sentence that starts with a name ever leaves the Mac.
 
 Echo: the mic is DEAF while it speaks and for a second after, and also while any other
 program on this Mac is speaking (afplay / say: the Claude Stop hook, Hermes voice mode).
@@ -34,6 +37,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import settings as S
+import panes
 import service
 import stt
 import tts
@@ -83,9 +87,16 @@ class Listener:
                  synth: Callable[..., Optional[Path]] = tts.synthesize,
                  foreign=None, status: Optional[service.Status] = None,
                  clock: Callable[[], float] = time.monotonic,
-                 chime: Callable[[str], None] = tts.chime) -> None:
+                 chime: Callable[[str], None] = tts.chime,
+                 pane_api=None) -> None:
         self.clock = clock
         self.chime = chime              # turn-taking tones (tests pass a recorder)
+        self.panes = pane_api or panes  # the switchboard: find a herdr window, press Ctrl+B in it
+        self.handed: Optional[str] = None   # pane id whose own voice chat has the conversation now
+        self._hand_pending = False      # handed, but Ctrl+B not yet confirmed (a typed question is running)
+        self._hand_quiet = 0            # status-bar reads in a row with no voice chat in that window
+        self._hand_hold = 0.0           # pending: do not press Ctrl+B again before this
+        self._hand_since = 0.0          # pending since (give up after PANE_GIVE_UP_SEC)
         self._in_conversation = False   # a reply was spoken and the open line has not lapsed yet
         self.speaking = False
         self.quiet_until = 0.0          # deaf until then (echo tail after any speech)
@@ -110,6 +121,8 @@ class Listener:
         """True while the mic must not be heard: we are speaking, something else on this Mac
         is speaking, or less than ECHO_TAIL_SEC has passed since either stopped."""
         now = self.clock()
+        if self.handed:                 # a Hermes window has the conversation; its own voice mode listens
+            return True
         if self.speaking:
             return True
         if self.foreign.playing():
@@ -122,6 +135,8 @@ class Listener:
         return self.clock() < self.follow_until
 
     def _rest_state(self) -> str:
+        if self.handed:
+            return "handed"
         if service.is_muted():
             return "muted"
         return "listening" if self.awake() else "asleep"
@@ -220,6 +235,8 @@ class Listener:
 
         if hit:
             target, rest = hit
+            if S.PANE_MODE and target.startswith("hermes:"):
+                return self.hand_off(target, rest)
             self.brain.set_target(target)
             self._on_the_line(target)
             if not rest:
@@ -314,6 +331,88 @@ class Listener:
         self._chime(S.SOUND_YOUR_TURN)
         self.settle()
 
+    # -- the switchboard: hand the conversation to an open Hermes window ---------------------------
+    def hand_off(self, target: str, rest: str) -> str:
+        """'hey Kylie [, question]': press Ctrl+B in Kylie's herdr window and get out of the way.
+        Her own voice mode does the conversation; ours stays deaf until it ends."""
+        name = self.brain.name(target)
+        profile = target.split(":", 1)[1]
+        self._on_the_line(target)
+        self.brain.set_target(target)
+        pane = self.panes.find(profile)
+        if pane is None:
+            log(f"switchboard: no open window for {profile}")
+            self.speak(f"{name}'s window is not open.", after="asleep")
+            self.follow_until = 0.0
+            self.settle()
+            return "no-window"
+        self.follow_until = 0.0
+        self._in_conversation = False
+        self._hand_quiet = 0
+        self.status.update(heard=rest or "", reply="", note=f"talking in {name}'s window", pane=pane)
+        if rest:
+            # Peter's spec: the name picks the window, then her own mic takes the question. A question
+            # glued to the name was heard only by us, so say so instead of silently losing it.
+            log(f"switchboard: {name}: question with the name not passed on ({rest[:60]!r})")
+            self.speak(f"{name} is listening, say that again after the beep.")
+        result = self.panes.start(pane)
+        if result == "started":
+            self.handed, self._hand_pending = pane, False
+            log(f"switchboard: {name} ({pane}) is listening")
+            self.settle()
+            return "handed"
+        if result == "busy":                       # she is mid-answer to something typed: open it when she is done
+            self.handed, self._hand_pending = pane, True
+            self._hand_hold = self.clock() + S.PANE_RETRY_SEC
+            self._hand_since = self.clock()
+            log(f"switchboard: {name} ({pane}) is busy; mic opens when she is done")
+            self.settle()
+            return "handed"
+        log(f"switchboard: {name} ({pane}) would not start voice ({result})")
+        self.speak(f"{name}'s window has unsent typing, so I left it alone." if result == "draft"
+                   else f"I could not start {name}'s microphone.", after="asleep")
+        self.settle()
+        return "no-window"
+
+    def _watch_hand(self) -> None:
+        """Called by the ticker while a window has the conversation: open its mic when it is free
+        (pending), and take the line back when its voice chat is over."""
+        pane = self.handed
+        if not pane:
+            return
+        if self._hand_pending:
+            if self.foreign.playing():             # she is still speaking her answer: Ctrl+B now would cut her off
+                self._hand_hold = self.clock() + S.ECHO_TAIL_SEC + 0.5
+                return
+            if self.clock() < self._hand_hold:
+                return
+            if self.clock() - self._hand_since > S.PANE_GIVE_UP_SEC:
+                return self._take_back("window stayed busy")
+            self._hand_hold = self.clock() + S.PANE_RETRY_SEC
+            result = self.panes.start(pane, wait_sec=1.0)
+            if result == "started":
+                self._hand_pending, self._hand_quiet = False, 0
+                log(f"switchboard: {pane} is listening")
+            elif result in ("gone", "no-voice", "draft"):
+                self._take_back(f"window {result}")
+            return                                 # busy: try again in PANE_RETRY_SEC
+        st = self.panes.state(pane)
+        if st in self.panes.ACTIVE:
+            self._hand_quiet = 0
+            return
+        self._hand_quiet += 1                      # "gone" too: one empty herdr read must not end it
+        if self._hand_quiet >= S.PANE_END_POLLS:
+            self._take_back({"voice-idle": "voice chat over", "gone": "window gone"}.get(st, "voice mode off (end phrase)"))
+
+    def _take_back(self, why: str) -> None:
+        log(f"switchboard: back to listening for a name ({why})")
+        self.handed, self._hand_pending, self._hand_quiet = None, False, 0
+        self.quiet_until = max(self.quiet_until, self.clock() + S.ECHO_TAIL_SEC)
+        self.status.update(note="", pane="")
+        self.mic.drain()
+        self._chime(S.SOUND_ASLEEP)
+        self.settle()
+
     def _chime(self, sound: str) -> None:
         try:
             self.chime(sound)
@@ -340,7 +439,14 @@ class Listener:
                     self.status.update(note=f"new conversation with {self.brain.name()}")
                 elif order == "sleep":
                     self.follow_until = 0.0
-            if self.status.state in ("asleep", "listening", "muted"):
+                elif order == "release" and self.handed:
+                    self._take_back("released from the dashboard")
+            if self.handed:
+                try:
+                    self._watch_hand()
+                except Exception as exc:               # a herdr hiccup never wedges the mic deaf
+                    log(f"switchboard watch failed: {exc}")
+            elif self.status.state in ("asleep", "listening", "muted"):
                 self._maybe_end_conversation()
                 self.settle()                     # the follow-up window ran out, or M was pressed
             reason = ("speaking" if self.speaking else "other speech" if self.foreign.playing()

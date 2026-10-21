@@ -28,6 +28,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ["VOICE_DESK_STATE"] = tempfile.mkdtemp(prefix="vd-test-")
+os.environ["VOICE_DESK_PANES"] = "0"     # the old one-shot turns are tested first; the switchboard has its own section
 # a fake Hermes profiles dir with the four real profile names, so routing does not depend on this Mac
 _profiles = Path(tempfile.mkdtemp(prefix="vd-profiles-"))
 # each with the voice its real config carries (the shape Hermes writes: tts.providers.<p>.voice)
@@ -152,6 +153,8 @@ class FakeClock:
     def __call__(self) -> float:
         return self.t
 
+    def advance(self, secs: float) -> None:
+        self.t += secs
 
 class FakePlayer:
     """Plays for `secs` of real time; records what the mic gate said while playing."""
@@ -575,11 +578,148 @@ def test_status_file() -> None:
     report("dashboard: never opened the microphone", not opened)
 
 
+# -- 6 the switchboard: "hey Kylie" presses Ctrl+B in Kylie's open herdr window ------------------
+class FakePanes:
+    """herdr stand-in: one window per profile, a status bar we set, a log of what was pressed."""
+    ACTIVE = ("recording", "transcribing", "conversation")
+
+    def __init__(self) -> None:
+        self.windows = {"assistant": "wH:pR", "orchestrator": "wH:pN"}
+        self.bar = {"wH:pR": "voice-idle", "wH:pN": "voice-idle"}
+        self.pressed: list = []
+        self.start_result = "started"
+
+    def find(self, profile):
+        return self.windows.get(profile)
+
+    def state(self, pane):
+        return self.bar.get(pane, "gone")
+
+    def start(self, pane, wait_sec=0):
+        self.pressed.append(pane)
+        if self.start_result == "started":
+            self.bar[pane] = "recording"
+        return self.start_result
+
+
+def test_switchboard() -> None:
+    import panes as P
+    S.PANE_MODE = True
+    clock = FakeClock()
+    lst = make_listener(clock=clock)
+    fp = FakePanes()
+    lst.panes = fp
+    CHIMES.clear()
+    n_asked = len(lst.brain.asked)
+
+    what = lst.handle("Hey Kylie")
+    report("switchboard: 'hey Kylie' presses Ctrl+B in Kylie's window", what == "handed" and fp.pressed == ["wH:pR"],
+           f"{what} {fp.pressed}")
+    report("switchboard: ... and runs no turn of its own (the window answers)", len(lst.brain.asked) == n_asked)
+    report("switchboard: ... and the room mic goes deaf (her voice mode has it)", lst.deaf() and lst.status.state == "handed")
+    fp.bar["wH:pR"] = "conversation"
+    for _ in range(10):
+        lst._watch_hand()
+    report("switchboard: stays handed while her voice chat runs", lst.handed == "wH:pR")
+    fp.bar["wH:pR"] = "off"                 # Peter said "that's all the questions I have": Hermes turned voice off
+    for _ in range(S.PANE_END_POLLS):
+        lst._watch_hand()
+    report("switchboard: end phrase in her window -> back to listening for a name, falling tone",
+           lst.handed is None and lst.status.state == "asleep" and CHIMES[-1:] == [S.SOUND_ASLEEP],
+           f"{lst.handed} {lst.status.state} {CHIMES}")
+    report("switchboard: the deaf gate opens again (after the echo tail)",
+           (clock.advance(S.ECHO_TAIL_SEC + 0.1) or True) and not lst.deaf())
+
+    fp.bar["wH:pR"] = "recording"
+    lst.handle("Hey Kylie")
+    fp.bar["wH:pR"] = "conversation"
+    lst._watch_hand()
+    fp.bar["wH:pR"] = "voice-idle"          # three silent turns: Hermes left continuous mode by itself
+    for _ in range(S.PANE_END_POLLS):
+        lst._watch_hand()
+    report("switchboard: three silent turns in her window also hand back", lst.handed is None)
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.handle("Hey Kylie")
+    fp.bar["wH:pR"] = "recording"
+    lst._watch_hand()
+    fp.bar["wH:pR"] = "voice-idle"
+    lst._watch_hand()
+    fp.bar["wH:pR"] = "transcribing"        # a one-tick gap between recording and transcribing is not the end
+    lst._watch_hand()
+    report("switchboard: a brief gap between her states does not end it", lst.handed == "wH:pR")
+    lst._take_back("test")
+
+    fp.pressed.clear()
+    what = lst.handle("Hey Esther")
+    report("switchboard: no open window -> says so, presses nothing",
+           what == "no-window" and fp.pressed == [] and "not open" in lst.player.played[-1], lst.player.played[-1])
+
+    fp.start_result = "busy"                # Jarvis is mid-answer to something typed
+    fp.bar["wH:pN"] = "voice-idle"
+    what = lst.handle("Hey Jarvis")
+    report("switchboard: a busy window -> waits, mic stays deaf", what == "handed" and lst._hand_pending and lst.deaf())
+    lst._watch_hand()
+    report("switchboard: ... does not hammer Ctrl+B (waits PANE_RETRY_SEC)", fp.pressed == ["wH:pN"], str(fp.pressed))
+    clock.advance(S.PANE_RETRY_SEC + 0.1)
+    fp.start_result = "started"
+    lst._watch_hand()
+    report("switchboard: ... and opens Jarvis's mic once he is free",
+           not lst._hand_pending and fp.pressed == ["wH:pN", "wH:pN"], str(fp.pressed))
+    lst._take_back("test")
+    fp.start_result = "busy"
+    lst.handle("Hey Jarvis")
+    clock.advance(S.PANE_GIVE_UP_SEC + 1)
+    lst._watch_hand()
+    report("switchboard: busy for too long -> gives up and listens for a name", lst.handed is None)
+
+    fp.start_result = "started"
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.player.played.clear()
+    lst.handle("Hey Kylie, find me a flight to Phoenix")
+    report("switchboard: a question glued to the name is not lost silently (asks to repeat after the beep)",
+           any("say that again" in p for p in lst.player.played) and lst.handed == "wH:pR", str(lst.player.played))
+    lst._take_back("test")
+    fp.start_result = "draft"
+    fp.bar["wH:pR"] = "off"
+    report("switchboard: never types into a window with unsent typing",
+           lst.handle("Hey Kylie") == "no-window" and "unsent typing" in lst.player.played[-1])
+    fp.start_result = "started"
+    report("switchboard: Claude still runs here (no window to hand to)",
+           lst.handle("Hey Claude, what time is it") == "turn")
+    lst.follow_until = 0.0
+
+    # the status bar parser, on the strings Hermes really draws
+    rule = "─" * 40
+    report("panes: REC bar -> recording", P.state_of(f"{rule}\n ● REC  Ctrl+B to stop \n") == "recording")
+    report("panes: transcribing bar", P.state_of(f"{rule}\n ◉ Transcribing... \n") == "transcribing")
+    report("panes: continuous voice chat", P.state_of(f"{rule}\n 🎤 Voice mode | TTS on | Continuous  —  Ctrl+B to record \n")
+           == "conversation")
+    report("panes: voice on, nobody talking", P.state_of(f"{rule}\n 🎤 Voice mode | TTS on  —  Ctrl+B to record\n") == "voice-idle")
+    report("panes: voice off (no voice bar)", P.state_of(f"{rule}\n ☤ claude-fable-5-1 │ 143K/1M │ 14% \n") == "off")
+    report("panes: unreadable -> gone", P.state_of(None) == "gone" and P.state_of("") == "gone")
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.handle("Hey Kylie")
+    fp.bar["wH:pR"] = "gone"                # one empty herdr read
+    lst._watch_hand()
+    fp.bar["wH:pR"] = "conversation"
+    lst._watch_hand()
+    report("switchboard: one empty herdr read does not end the conversation", lst.handed == "wH:pR")
+    lst._take_back("test")
+    report("panes: an old REC line in the scrollback does not count",
+           P.state_of(f"● REC  Ctrl+B to stop\n{rule}\n 🎤 Voice mode | TTS on  —  Ctrl+B to record\n") == "voice-idle")
+    empty = "\x1b[0m\x1b[38;5;116m🎤 ❯ \x1b[0m\x1b[3m\x1b[38;5;26mtype or Ctrl+B to record\x1b[0m\r\n"
+    typed = "\x1b[0m\x1b[38;5;116m🎤 ❯ \x1b[0mcontinue with accountant questions\r\n"
+    report("panes: the placeholder is not a draft", not P.has_draft(empty))
+    report("panes: typed text on the input line is a draft", P.has_draft(typed))
+    S.PANE_MODE = False
+
+
 if __name__ == "__main__":
     test_routing()
     test_stripping()
     test_listener_decisions()
     test_mute_during_speech()
     test_status_file()
+    test_switchboard()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)

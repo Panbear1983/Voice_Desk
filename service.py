@@ -16,7 +16,7 @@ from typing import Optional
 
 import settings as S
 
-STATES = ("starting", "asleep", "listening", "hearing", "thinking", "speaking", "muted", "standby", "error", "off")
+STATES = ("starting", "asleep", "listening", "hearing", "thinking", "speaking", "handed", "muted", "standby", "error", "off")
 HISTORY = 40          # state changes kept in the file (the live test reads the order from here)
 STALE_SEC = 10        # no heartbeat for this long -> the listener is not running
 

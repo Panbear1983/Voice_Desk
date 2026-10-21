@@ -27,6 +27,7 @@ LIGHT = {
     "hearing": ("●  hearing you", "#27ae60"),
     "thinking": ("●  thinking", "#f39c12"),
     "speaking": ("●  speaking", "#3498db"),
+    "handed": ("●  talking in the agent's window · end phrase hands back", "#16a085"),
     "muted": ("●  muted · say unmute", "#8e44ad"),
     "standby": ("●  standby · the window has the mic", "#555555"),
     "error": ("●  error", "#e74c3c"),
@@ -54,6 +55,7 @@ class Dashboard(App):
         Binding("h", "hush", "hush"),
         Binding("n", "new_thread", "new conversation"),
         Binding("v", "voices", "voices: per profile / shared"),
+        Binding("x", "release", "hand the mic back"),
         Binding("r", "restart", "restart listener"),
         Binding("k", "kill", "kill listener"),
         Binding("q", "quit", "close panel"),
@@ -111,7 +113,9 @@ class Dashboard(App):
                 + (f"[dim]{note}[/dim]\n" if note else "")
                 + f"[b #9b59b6]Voices[/] ({mode}{spoke}) — V toggles\n[dim]{table}[/dim]\n\n"
                 + f"[dim]turns {data.get('turns', 0)} · last took {data.get('took', '—')}s · "
-                  f"say \"hey Jarvis, …\", \"hey Kylie\", \"hey Esther, …\", \"hey Wanna Buffet, …\", \"hey Claude\"; \"mute\" / \"unmute\"[/dim]")
+                  f"say \"hey Jarvis\" / \"hey Kylie\" / \"hey Esther\" / \"hey Wanna Buffet\": their own window starts "
+                  f"listening; end with \"that's all\" / \"that's all the questions I have\" / \"no further questions\". "
+                  f"\"hey Claude, …\" answers here · \"mute\" / \"unmute\" · X hands the mic back[/dim]")
         self.query_one("#body", Static).update(body)
         msg = self._msg if time.monotonic() < self._msg_until else ""
         self.query_one("#msg", Static).update(msg)
@@ -129,6 +133,10 @@ class Dashboard(App):
     def action_hush(self) -> None:
         service.send("hush")
         self.say("told it to stop talking")
+
+    def action_release(self) -> None:
+        service.send("release")
+        self.say("the listener takes the mic back and waits for a name")
 
     def action_new_thread(self) -> None:
         service.send("new_thread")

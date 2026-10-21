@@ -124,6 +124,18 @@ HERMES_TURN_TIMEOUT_SEC = 600
 # (29 s on a trading question) is thinking time.
 HERMES_VOICE_REASONING = os.environ.get("VOICE_DESK_HERMES_REASONING", "low")
 HERMES_SESSION_DIR = STATE_DIR / "hermes_sessions"      # one session id per profile
+# ---- the switchboard (panes.py) ---------------------------------------------------------------
+# Peter 2026-10-21: "hey Kylie" should press Ctrl+B in Kylie's open herdr window, not start a
+# separate voice thread. On: a Hermes name hands the conversation to that window, and the listener
+# stays deaf until the window's voice chat ends (an end phrase, or three silent turns).
+# Off (VOICE_DESK_PANES=0): the old behaviour, a one-shot background turn per question.
+PANE_MODE = os.environ.get("VOICE_DESK_PANES", "1") != "0"
+HERDR_BIN = os.environ.get("VOICE_DESK_HERDR_BIN", "/opt/homebrew/bin/herdr")
+PANE_WORKSPACE = "wH"            # the Hermes Agents workspace, preferred if a profile is open twice
+PANE_START_SEC = 3.0             # how long Ctrl+B may take to show "● REC" before we call it busy
+PANE_END_POLLS = 3               # status-bar reads (one per 0.5 s tick) with no voice chat = it is over
+PANE_RETRY_SEC = 2.0             # window busy answering something typed: press Ctrl+B again this often
+PANE_GIVE_UP_SEC = 300           # still busy after this long: stop waiting, listen for a name again
 BRAIN_FILE = STATE_DIR / "brain"                        # "claude" or "hermes:<profile>", set by voice: "talk to Esther"
 HERMES_VOICE_NOTE = (f"(Voice call with {USER_NAME}: they hear you and are not reading a screen. Answer the way you "
                      "would speak on the phone, one to four short sentences, in Mandarin if they spoke Mandarin, "
