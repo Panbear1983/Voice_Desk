@@ -148,10 +148,19 @@ ECHO_TAIL_SEC = 1.0             # the mic stays deaf this long after any speech 
 # name; silence that long ends the conversation (falling tone). "goodbye" / "go to sleep" end it at once.
 CONVERSATION_SEC = 20
 # Audible turn-taking (Peter: "a beeping signal to know when my prompt gets cut ... before it goes
-# into thinking"). Mac system sounds, played through afplay (the listener is deaf while they play).
-SOUND_GOT_IT = "/System/Library/Sounds/Tink.aiff"       # your words were cut off here and sent
-SOUND_YOUR_TURN = "/System/Library/Sounds/Pop.aiff"     # it finished speaking: talk now, no name needed
-SOUND_ASLEEP = "/System/Library/Sounds/Bottle.aiff"     # conversation over: say hey <name> next time
+# into thinking"; "the beeping like what we have here" = the Hermes CLI voice-mode cues).
+# "beep:<Hz>x<count>" is generated with Hermes' own recipe (tts._beep_file); a path plays a file.
+SOUND_GOT_IT = "beep:660x2"          # your words were cut off here and sent (Hermes "stopped recording")
+SOUND_YOUR_TURN = "beep:880x1"       # it finished speaking: talk now, no name needed (Hermes "recording")
+SOUND_ASLEEP = "beep:660-440x2"      # conversation over (falling pair): say hey <name> next time
+BEEP_VOLUME = 0.3                    # Hermes voice.beep_volume default
+# Peter 2026-10-21: a safe phrase that ends the conversation with this profile ("I have no further
+# questions, something like that"). Matched anywhere in the sentence, so "thanks Jarvis, I have no
+# further questions" works too. The profile says a short sign-off, then the falling pair.
+END_PHRASES = ("no further questions", "no more questions", "that's all for now", "that is all for now",
+               "end the conversation", "end conversation", "we're done here", "we are done here",
+               "over and out", "沒有問題了", "没有问题了")   # not 就這樣: it also means "do it like this"
+SIGN_OFF = "Okay, talk later."
 # Speech from anything else on this Mac (the Claude Stop hook, Hermes voice mode, kokoro) plays
 # through these programs; while one runs the listener is deaf, so it can never hear itself.
 FOREIGN_PLAYERS = ("afplay", "say")

@@ -265,6 +265,32 @@ def test_listener_decisions() -> None:
     clock.t += S.CONVERSATION_SEC + 1
     lst._maybe_end_conversation()
     report("listener: ... and then no falling tone (Okay. already said it)", CHIMES == [], str(CHIMES))
+
+    # -- the safe phrase (Peter 2026-10-21: "I have no further questions, something like that") ------
+    lst.handle("Hey Jarvis, what time is it?")
+    CHIMES.clear()
+    n_asked = len(lst.brain.asked)
+    what = lst.handle("Thanks Jarvis, I have no further questions.")
+    report("safe phrase: 'thanks Jarvis, I have no further questions' ends the conversation",
+           what == "ended" and lst.status.state == "asleep" and not lst.awake(), f"{what} {lst.status.state}")
+    report("safe phrase: ... with a spoken sign-off and the falling pair, nothing sent to the agent",
+           lst.player.played[-1] == S.SIGN_OFF and CHIMES[-1:] == [S.SOUND_ASLEEP] and len(lst.brain.asked) == n_asked,
+           f"{lst.player.played[-1]} {CHIMES}")
+    report("safe phrase: afterwards a follow-up needs a name again", lst.handle("and tomorrow?") == "ignored")
+    lst.handle("Hey Jarvis, what time is it?")
+    CHIMES.clear()
+    what = lst.handle("What's the weather in Taipei tomorrow, no further questions.")
+    report("safe phrase: a question that comes with it is answered first, then the line closes",
+           what == "ended" and lst.brain.asked[-1][0] == "What's the weather in Taipei tomorrow"
+           and CHIMES == [S.SOUND_ASLEEP] and not lst.awake(), f"{lst.brain.asked[-1]} {CHIMES}")
+    report("safe phrase: ignored while asleep (nothing to end, no hail)",
+           lst.handle("I have no further questions") == "ignored")
+    report("safe phrase: Mandarin works too", (lst.handle("Hey Jarvis") and lst.handle("沒有問題了")) == "ended")
+    import tts as _T
+    wav = Path(_T._beep_file("beep:880x1"))
+    report("beeps: generated with Hermes' recipe (880 Hz, 120 ms, mono 16 kHz)",
+           wav.exists() and 3_000 < wav.stat().st_size < 5_000, f"{wav} {wav.stat().st_size if wav.exists() else 0}")
+    report("beeps: a plain file path plays as-is", _T._beep_file("/System/Library/Sounds/Tink.aiff") == "/System/Library/Sounds/Tink.aiff")
     what = lst.handle("Hey Kylie.")
     report("listener: bare 'hey Kylie' -> 'Kylie here.' and listening",
            what == "awake" and lst.player.played[-1] == "Kylie here." and lst.status.state == "listening", str(lst.player.played[-1]))

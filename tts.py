@@ -117,10 +117,45 @@ def say_now(text: str, player: Player) -> None:
 
 
 def tick() -> None:
-    """A soft click: 'I have your words, thinking.'"""
+    """'I have your words, thinking.' (the Hermes CLI 'stopped recording' cue)"""
     chime(S.SOUND_GOT_IT)
 
 
+# Turn-taking beeps, generated the way Hermes CLI voice mode makes its own (tools/voice_mode.py
+# play_beep: sine, 120 ms per beep, 60 ms gap, 10 ms fades, volume 0.3) so the two feel the same.
+# A setting that names a Mac system sound file is played as-is; "beep:<Hz>x<count>" is generated.
+def _beep_file(spec: str) -> str:
+    m = re.match(r"^beep:(\d+)(?:-(\d+))?x(\d+)$", spec)
+    if not m:
+        return spec
+    f1, f2, count = int(m.group(1)), int(m.group(2) or m.group(1)), int(m.group(3))
+    path = S.STATE_DIR / "sounds" / f"{spec.replace(':', '_')}.wav"
+    if path.exists():
+        return str(path)
+    import wave
+    import numpy as np
+    rate, dur, vol = 16_000, 0.12, S.BEEP_VOLUME
+    n = int(rate * dur)
+    fade = int(rate * 0.01)
+    parts = []
+    for i in range(count):
+        f = f1 + (f2 - f1) * (i / max(1, count - 1))      # "660-440x2": a falling pair
+        t = np.linspace(0, dur, n, endpoint=False)
+        tone = np.sin(2 * np.pi * f * t)
+        tone[:fade] *= np.linspace(0, 1, fade)
+        tone[-fade:] *= np.linspace(1, 0, fade)
+        parts.append((tone * vol * 32767).astype(np.int16))
+        if i < count - 1:
+            parts.append(np.zeros(int(rate * 0.06), dtype=np.int16))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(np.concatenate(parts).tobytes())
+    return str(path)
+
+
 def chime(sound: str) -> None:
-    """A short system sound, not waited for."""
-    subprocess.Popen([S.AFPLAY, sound], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """A short cue, not waited for."""
+    subprocess.Popen([S.AFPLAY, _beep_file(sound)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

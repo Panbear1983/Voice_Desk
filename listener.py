@@ -241,6 +241,19 @@ class Listener:
             self._on_the_line(target)
 
         norm = stt.normalize(text)
+        ending = self._end_phrase(text)
+        if ending is not None:
+            # the safe phrase (Peter 2026-10-21): answer whatever came with it, then close the line
+            if ending:
+                self.turn(ending, target, last=True)
+            else:
+                self.speak(S.SIGN_OFF, after="asleep")
+            self.follow_until = 0.0
+            self._in_conversation = False
+            log(f"conversation ended by safe phrase ({self.brain.name(target)})")
+            self._chime(S.SOUND_ASLEEP)
+            self.settle()
+            return "ended"
         if norm in {stt.normalize(w) for w in S.STOP_WORDS | S.SLEEP_WORDS | S.GOODBYE_WORDS}:
             self.follow_until = 0.0
             self._in_conversation = False             # ended on purpose: "Okay." says so, no falling tone
@@ -254,7 +267,26 @@ class Listener:
         self.turn(text, target)
         return "turn"
 
-    def turn(self, text: str, target: str) -> None:
+    _FILLER = re.compile(r"\b(i have|ive got|i've got|i got|i have got|thanks|thank you|okay|ok|so|well|alright|"
+                         r"all right|thats it|that's it|thats all|that's all|for now|and|then|good|great|perfect|cool)\b")
+
+    def _end_phrase(self, text: str) -> Optional[str]:
+        """None = no safe phrase. "" = only the phrase (plus thanks/names): just sign off.
+        Otherwise the question that came with it, phrase removed, to be answered last."""
+        norm = stt.normalize(text)
+        for phrase in S.END_PHRASES:
+            p = stt.normalize(phrase)
+            if not p or p not in norm:
+                continue
+            left = self._FILLER.sub(" ", norm.replace(p, " "))
+            names = {stt.normalize(a) for _, (_, aliases) in S.NAMES.items() for a in aliases}
+            words = [w for w in left.split() if w not in names and w not in {"hey", "hi"}]
+            if len(words) <= 3:
+                return ""
+            return re.sub(re.escape(phrase), " ", text, flags=re.I).strip(" ,.;:!?-") or ""
+        return None
+
+    def turn(self, text: str, target: str, last: bool = False) -> None:
         self.status.update(heard=text, reply="", note="", turns=self.status.data.get("turns", 0) + 1)
         self.status.set_state("thinking")
         log(f"turn -> {self.brain.name(target)}: {text[:80]!r}")
@@ -273,6 +305,8 @@ class Listener:
         self.status.update(reply=reply, note="", took=round(time.monotonic() - t0, 1))
         log(f"reply from {self.brain.name(target)} in {time.monotonic()-t0:.1f}s: {reply[:80]!r}")
         self.speak(tts.speakable(reply) or "I did not get an answer back.")
+        if last:                                      # the safe phrase came with this question: no open line
+            return
         # Peter 2026-10-21: keep the conversation open after every reply, so the back-and-forth needs
         # no name; the pop says "your turn", silence for CONVERSATION_SEC ends it (falling tone).
         self.follow_until = self.clock() + S.CONVERSATION_SEC
