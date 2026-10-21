@@ -423,9 +423,14 @@ def name_aliases() -> list[tuple[str, str]]:
 
 
 _LEAD = r"(?:(?:ok|okay|hey|hi|hello|yo|oh|um|so)\s+|(?:嘿|嗨|哈囉)\s*)*"
-_SWITCH = (r"(?:(?:please\s+)?(?:let me\s+|can i\s+|could i\s+|i want to\s+|i'd like to\s+)?"
-           r"(?:talk|speak|switch|switch over|hand me over|put me through|go back)\s+(?:to|with)\s+(?:the\s+)?)?")
+_SWITCH_CORE = (r"(?:please\s+)?(?:let me\s+|can i\s+|could i\s+|i want to\s+|i'd like to\s+)?"
+                r"(?:talk|speak|switch|switch over|hand me over|put me through|go back)\s+(?:to|with)\s+(?:the\s+)?")
+_SWITCH = rf"(?:{_SWITCH_CORE})?"
 _TAIL = r"(?:\s+(?:please|now|instead)(?=$))?"     # only when nothing follows: "Esther, now that..." keeps "now"
+# A hail is what wakes a SLEEPING listener (Peter, 2026-10-21: a bare "Jarvis" fires too easily in
+# conversation): "hey Jarvis", "ok Kylie", "talk to Esther", "嘿 克勞德". Fillers alone ("um Jarvis") do not count.
+_HAIL = r"(?:(?:oh|um|so|uh)\s+)*(?:(?:ok|okay|hey|hi|hello|yo)\s+|(?:嘿|嗨|哈囉)\s*)+"
+_HAILED = rf"(?:{_HAIL}{_SWITCH}|{_LEAD}{_SWITCH_CORE})"
 
 
 def _plain_map(text: str) -> tuple[str, list[int]]:
@@ -443,18 +448,21 @@ def _plain_map(text: str) -> tuple[str, list[int]]:
     return "".join(out), idx
 
 
-def addressed(text: str) -> Optional[tuple[str, str]]:
+def addressed(text: str, hailed: bool = False) -> Optional[tuple[str, str]]:
     """Does this sentence START with a name? 'Jarvis, what time is it' ->
     ('hermes:orchestrator', 'what time is it'); 'hey Kylie' / 'talk to Esther' ->
-    (target, ''); 'I told Jarvis yesterday' -> None. The rest keeps the speaker's own words."""
+    (target, ''); 'I told Jarvis yesterday' -> None. The rest keeps the speaker's own words.
+    hailed=True (the listener asleep): the name alone is not enough, it needs a hail in front,
+    'hey Jarvis' / 'ok Kylie' / 'talk to Esther'; a bare 'Jarvis, what time is it' -> None."""
     raw = (text or "").strip()
     plain, idx = _plain_map(raw)
     if not plain:
         return None
+    front = _HAILED if hailed else f"{_LEAD}{_SWITCH}"
     for alias, target in name_aliases():
         # an English name must end at a word edge ("jarvis" is not "jarvisville"); 克勞德 needs no space
         edge = r"(?=\s|$)" if re.search(r"[a-z0-9]$", alias) else ""
-        m = re.match(rf"^{_LEAD}{_SWITCH}{re.escape(alias)}{edge}{_TAIL}{edge}", plain)
+        m = re.match(rf"^{front}{re.escape(alias)}{edge}{_TAIL}{edge}", plain)
         if not m:
             continue
         rest = raw[idx[m.end() - 1] + 1:]

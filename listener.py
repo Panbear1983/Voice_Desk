@@ -176,8 +176,14 @@ class Listener:
         if not text:
             return "ignored"
         norm = stt.normalize(text)
-        hit = addressed(text)
-        bare = stt.normalize(hit[1]) if hit else norm          # "Jarvis, mute" counts as "mute"
+        # Asleep, the listener needs a hail ("hey Jarvis", "ok Kylie", "talk to Esther"); a bare name in
+        # passing ("Jarvis said...") stays ignored. Once awake, the name alone still switches the line.
+        hit = addressed(text, hailed=not self.awake())
+        if hit is None and not self.awake():
+            hit_bare = addressed(text)                           # "Jarvis, mute" still counts as "mute" below
+        else:
+            hit_bare = hit
+        bare = stt.normalize(hit_bare[1]) if hit_bare else norm
         mute_words = {stt.normalize(w) for w in S.MUTE_WORDS}
         unmute_words = {stt.normalize(w) for w in S.UNMUTE_WORDS}
 
@@ -210,6 +216,11 @@ class Listener:
                 return "awake"
             text = rest
         elif not self.awake():
+            # a bare name + a control word ("Jarvis, stop") is harmless and still obeyed while asleep
+            if hit_bare and bare in {stt.normalize(w) for w in S.STOP_WORDS | S.SLEEP_WORDS | S.GOODBYE_WORDS}:
+                self.follow_until = 0.0
+                self.settle()
+                return "stopped"
             self.status.update(ignored=text[:80])
             return "ignored"
         else:

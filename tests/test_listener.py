@@ -84,6 +84,18 @@ def test_routing() -> None:
     for said in ("I told Jarvis yesterday", "what time is it", "the weather in Taipei", "Jarvisville is a town",
                  "Tell Kylie I said hi", "Claudette called", ""):
         report(f"routing: no name at the start -> no wake: {said!r}", addressed(said) is None, str(addressed(said)))
+    # asleep, the listener wants a hail (Peter 2026-10-21: a bare "Jarvis" fires too easily)
+    for said, target in {"Hey Jarvis, what time is it?": "hermes:orchestrator", "OK Kylie, remind me at five.": "hermes:assistant",
+                         "Talk to Esther.": "hermes:tax_angel_esther", "hey, wanna buffet! how is the market": "hermes:wanna-buffet",
+                         "um, hey Jarvis": "hermes:orchestrator", "嘿 克勞德，現在幾點": "claude",
+                         "let me talk to Jarvis please": "hermes:orchestrator"}.items():
+        hit = addressed(said, hailed=True)
+        report(f"hail: {said!r} wakes {target}", hit is not None and hit[0] == target, str(hit))
+    for said in ("Jarvis, what time is it?", "Jarvis.", "Kylie said no", "um Jarvis", "so Esther, what do I file",
+                 "Wanna Buffet, how is the market today?", "Javis, what time is it?"):
+        report(f"hail: bare name does not wake: {said!r}", addressed(said, hailed=True) is None, str(addressed(said, hailed=True)))
+    report("hail: 'Hey Jarvis, what time is it?' strips to the question",
+           (addressed("Hey Jarvis, what time is it?", hailed=True) or ("", ""))[1] == "what time is it?")
     # the old commands still work
     report("routing: 'switch to Opus' is still a model change", b.command("switch to Opus") is None)
     report("routing: 'talk to me about the budget' is a sentence", b.command("talk to me about the budget") is None)
@@ -209,8 +221,10 @@ def test_listener_decisions() -> None:
     lst.settle()
     report("listener: starts asleep", lst.status.state == "asleep", lst.status.state)
     report("listener: asleep, no name -> ignored, nothing sent", lst.handle("what time is it") == "ignored" and not lst.brain.asked)
-    what = lst.handle("Jarvis, what time is it?")
-    report("listener: 'Jarvis, what time is it' runs one turn", what == "turn", what)
+    report("listener: asleep, a bare 'Jarvis, ...' is NOT enough (needs a hail)",
+           lst.handle("Jarvis, what time is it?") == "ignored" and not lst.brain.asked)
+    what = lst.handle("Hey Jarvis, what time is it?")
+    report("listener: 'Hey Jarvis, what time is it' runs one turn", what == "turn", what)
     report("listener: ... with the orchestrator", lst.brain.asked[-1] == ("what time is it?", "hermes:orchestrator"),
            str(lst.brain.asked))
     report("listener: ... the sticky line is now Jarvis", lst.brain.target() == "hermes:orchestrator"
