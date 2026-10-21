@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import settings as S
+import voices
 
 _CJK = re.compile(r"[一-鿿　-〿＀-￯]")
 
@@ -31,13 +32,27 @@ def is_mandarin(text: str) -> bool:
     return len(_CJK.findall(text)) > len(re.findall(r"[A-Za-z]", text))
 
 
-def synthesize(text: str) -> Optional[Path]:
-    """Return a playable audio file for text, or None if every voice failed."""
+def _chain(txt: Path, out: Path, voice: str) -> Optional[Path]:
+    """Hermes' voice chain (Edge -> Gemini -> Mac) with one named Edge voice."""
+    if not S.TTS_CHAIN.exists():
+        return None
+    r = subprocess.run([str(S.TTS_CHAIN), str(txt), str(out), voice, S.TTS_ORDER],
+                       capture_output=True, timeout=120)
+    return out if r.returncode == 0 and out.exists() and out.stat().st_size > 0 else None
+
+
+def synthesize(text: str, voice: Optional[voices.Voice] = None) -> Optional[Path]:
+    """Return a playable audio file for text, or None if every voice failed.
+    `voice` is the speaker's (voices.voice_for(target)); None = the shared Voice Desk voice."""
+    v = voice or voices.shared_voice()
     tmp = Path(tempfile.mkdtemp(prefix="cv-tts-"))
     txt = tmp / "say.txt"
     txt.write_text(text, encoding="utf-8")
     out = tmp / "say.wav"
     if is_mandarin(text):
+        got = _chain(txt, out, v.zh)
+        if got:
+            return got
         aiff = tmp / "say.aiff"
         r = subprocess.run(["/usr/bin/say", "-v", S.TTS_VOICE_ZH_MAC, "-f", str(txt), "-o", str(aiff)],
                            capture_output=True)
@@ -45,11 +60,9 @@ def synthesize(text: str) -> Optional[Path]:
             subprocess.run([S.FFMPEG, "-loglevel", "error", "-y", "-i", str(aiff), str(out)], capture_output=True)
             return out if out.exists() else None
         return None
-    if S.TTS_CHAIN.exists():                 # optional voice chain; without it the Mac voice below speaks
-        r = subprocess.run([str(S.TTS_CHAIN), str(txt), str(out), S.TTS_VOICE_EN, S.TTS_ORDER],
-                           capture_output=True, timeout=120)
-        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
-            return out
+    got = _chain(txt, out, v.en)
+    if got:
+        return got
     # last resort: the plain Mac voice, so the loop never goes silent
     aiff = tmp / "say.aiff"
     r = subprocess.run(["/usr/bin/say", "-r", "185", "-f", str(txt), "-o", str(aiff)], capture_output=True)

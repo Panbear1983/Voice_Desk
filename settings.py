@@ -64,13 +64,13 @@ WHISPER_HALLUCINATIONS = {
 }
 
 # ---- text to speech ------------------------------------------------------------------
-# Hermes' voice chain: edge Jenny (refused by Microsoft since 2026-10-10) -> Piper -> Mac voice.
-TTS_CHAIN = HOME / ".hermes/profiles/orchestrator/scripts/tts_jenny_or_mac.sh"
-# "piper mac" for now: trying Jenny first costs ~6 s per reply while Microsoft keeps refusing her.
-# Put "edge" back in front when Jenny works again.
-TTS_ORDER = os.environ.get("VOICE_DESK_TTS_ORDER", "piper mac")
-TTS_VOICE_EN = "en-US-JennyNeural"
-TTS_VOICE_ZH_MAC = "Meijia"      # Taiwan Mandarin, the voice Peter uses elsewhere
+# Hermes' voice chain, the same script the Telegram bots use: Microsoft Edge neural voices
+# through the new host (~/.local/bin/edge_tts_newhost.py), then Gemini, then a Mac voice.
+# (The older tts_jenny_or_mac.sh still dials Edge's dead host and falls through to Piper.)
+TTS_CHAIN = HOME / ".hermes/scripts/tts_natural.sh"
+TTS_ORDER = os.environ.get("VOICE_DESK_TTS_ORDER", "edge google mac")
+TTS_VOICE_EN = "en-US-JennyNeural"   # the shared voice: used when per-profile voices are off (dashboard V)
+TTS_VOICE_ZH_MAC = "Meijia"      # Taiwan Mandarin, the Mac fallback when Edge is down
 AFPLAY = "/usr/bin/afplay"
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 STATUS_EVERY_SEC = 10           # spoken "still working" while Claude thinks

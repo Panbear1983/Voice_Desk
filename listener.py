@@ -37,6 +37,7 @@ import settings as S
 import service
 import stt
 import tts
+import voices
 from brain import Brain, addressed
 
 # VOICE_DESK_LISTENER_DEBUG=1 also logs what it heard and ignored. Off by default: the mic is
@@ -79,7 +80,7 @@ class ForeignSpeech:
 
 class Listener:
     def __init__(self, mic=None, whisper=None, brain: Optional[Brain] = None, player=None,
-                 synth: Callable[[str], Optional[Path]] = tts.synthesize,
+                 synth: Callable[..., Optional[Path]] = tts.synthesize,
                  foreign=None, status: Optional[service.Status] = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
@@ -134,7 +135,16 @@ class Listener:
         a second caller waits; `only_if` is checked again once it is its turn."""
         if not text:
             return
-        path = self.synth(text)
+        # Speak as whoever is on the line: each Hermes profile's own voice (voices.py), unless
+        # the dashboard switched per-profile voices off. Test stubs take one argument.
+        try:
+            voice = voices.voice_for(self.brain.target())
+            path = self.synth(text, voice)
+        except TypeError:
+            voice = None
+            path = self.synth(text)
+        if voice is not None:
+            self.status.update(voice=voices.short(voice), voice_source=voice.source)
         if not path:
             self.status.update(note="no voice available")
             return

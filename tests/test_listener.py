@@ -30,9 +30,16 @@ sys.path.insert(0, str(ROOT))
 os.environ["VOICE_DESK_STATE"] = tempfile.mkdtemp(prefix="vd-test-")
 # a fake Hermes profiles dir with the four real profile names, so routing does not depend on this Mac
 _profiles = Path(tempfile.mkdtemp(prefix="vd-profiles-"))
+# each with the voice its real config carries (the shape Hermes writes: tts.providers.<p>.voice)
+_VOICE_CFG = {
+    "assistant": "tts:\n  provider: natural\n  providers:\n    natural:\n      type: command\n      voice: en-US-AvaNeural\n  edge:\n    voice: en-US-JennyNeural\n",
+    "wanna-buffet": "tts:\n  provider: natural\n  providers:\n    natural:\n      type: command\n      voice: en-US-AndrewNeural\n  edge:\n    voice: en-US-AndrewNeural\n",
+    "orchestrator": "tts:\n  provider: natural\n  providers:\n    natural:\n      voice: en-US-JennyNeural\n",
+    "tax_angel_esther": "tts:\n  provider: natural\n  providers:\n    natural:\n      type: command\n      voice: alloy\n",
+}
 for _p in ("assistant", "builder", "orchestrator", "tax_angel_esther", "wanna-buffet"):
     (_profiles / _p).mkdir()
-    (_profiles / _p / "config.yaml").write_text("model: x\n")
+    (_profiles / _p / "config.yaml").write_text("model: x\n" + _VOICE_CFG.get(_p, ""))
 os.environ["HERMES_PROFILES_DIR"] = str(_profiles)
 _agy = Path(tempfile.mkdtemp(prefix="vd-agy-")) / "agy"
 _agy.write_text("#!/bin/sh\n")
@@ -449,6 +456,31 @@ def test_status_file() -> None:
     report("dashboard: M mutes (the listener reads the same flag)", "muted=True" in body and "muted" in light2, light2)
     report("dashboard: M again unmutes, H leaves a hush order", not service.is_muted() and service.take_orders() == ["hush"])
     report("dashboard: a dead listener shows as off", "off" in light3, light3)
+
+    # -- voices: each profile speaks with its own Hermes voice (Peter 2026-10-21) --------------------
+    import voices
+    voices.set_per_profile(True)
+    tbl = dict(voices.table())
+    report("voices: Kylie speaks as Ava (assistant config.yaml), Mandarin as HsiaoChen",
+           tbl["Kylie"].en == "en-US-AvaNeural" and tbl["Kylie"].zh == "zh-TW-HsiaoChenNeural" and tbl["Kylie"].source == "profile", str(tbl["Kylie"]))
+    report("voices: Wanna Buffet speaks as Andrew (male), Mandarin as YunJhe (male)",
+           tbl["Wanna Buffet"].en == "en-US-AndrewNeural" and tbl["Wanna Buffet"].zh == "zh-TW-YunJheNeural", str(tbl["Wanna Buffet"]))
+    report("voices: Esther's Kokoro voice is not an Edge voice -> a chosen Edge fallback, not Jenny",
+           tbl["Esther"].source == "fallback" and tbl["Esther"].en != S.TTS_VOICE_EN, str(tbl["Esther"]))
+    report("voices: Claude (not a Hermes profile) gets the shared voice", voices.voice_for("claude").source == "shared")
+    voices.set_per_profile(False)
+    report("voices: V off -> everyone shares one voice", voices.voice_for("hermes:wanna-buffet") == voices.shared_voice())
+    voices.set_per_profile(True)
+    report("voices: V on again -> per profile", voices.voice_for("hermes:wanna-buffet").en == "en-US-AndrewNeural")
+    spoken: list = []
+    lst2 = make_listener(clock=FakeClock())
+    _snd = Path(tempfile.mkdtemp(prefix="vd-voice-")) / "say.wav"   # a real file: speak() removes its folder after playing
+    lst2.synth = lambda text, voice=None: (spoken.append(voice), _snd.write_bytes(b""), _snd)[2]
+    lst2.brain.set_target("hermes:wanna-buffet")
+    lst2.speak("hello")
+    report("listener: speaks with the voice of whoever is on the line", bool(spoken) and spoken[0].en == "en-US-AndrewNeural", str(spoken))
+    report("listener: the status file says which voice spoke (dashboard shows it)",
+           lst2.status.data.get("voice") == "Andrew · YunJhe", str(lst2.status.data.get("voice")))
     report("dashboard: never opened the microphone", not opened)
 
 

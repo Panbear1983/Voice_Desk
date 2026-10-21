@@ -18,6 +18,7 @@ from textual.widgets import Footer, Static
 
 import service
 import settings as S
+import voices
 
 LIGHT = {
     "starting": ("●  starting", "#555555"),
@@ -52,6 +53,7 @@ class Dashboard(App):
         Binding("m", "mute", "mute / unmute"),
         Binding("h", "hush", "hush"),
         Binding("n", "new_thread", "new conversation"),
+        Binding("v", "voices", "voices: per profile / shared"),
         Binding("r", "restart", "restart listener"),
         Binding("k", "kill", "kill listener"),
         Binding("q", "quit", "close panel"),
@@ -102,8 +104,12 @@ class Dashboard(App):
         if len(reply) > 600:
             reply = reply[:600] + " …"
         note = data.get("note") or ""
+        mode = "per profile" if voices.per_profile_enabled() else f"shared ({voices.short(voices.shared_voice())})"
+        table = "   ".join(f"{name}: {voices.short(v)}" for name, v in voices.table())
+        spoke = f" · spoke as {data['voice']}" if data.get("voice") else ""
         body = (f"[b #2ecc71]Heard:[/] {heard}\n\n[b #3498db]{data.get('name') or 'Reply'}:[/] {reply}\n\n"
                 + (f"[dim]{note}[/dim]\n" if note else "")
+                + f"[b #9b59b6]Voices[/] ({mode}{spoke}) — V toggles\n[dim]{table}[/dim]\n\n"
                 + f"[dim]turns {data.get('turns', 0)} · last took {data.get('took', '—')}s · "
                   f"say \"hey Jarvis, …\", \"hey Kylie\", \"hey Esther, …\", \"hey Wanna Buffet, …\", \"hey Claude\"; \"mute\" / \"unmute\"[/dim]")
         self.query_one("#body", Static).update(body)
@@ -127,6 +133,12 @@ class Dashboard(App):
     def action_new_thread(self) -> None:
         service.send("new_thread")
         self.say("the next turn starts a fresh conversation with whoever is on the line")
+
+    def action_voices(self) -> None:
+        on = not voices.per_profile_enabled()
+        voices.set_per_profile(on)
+        self.say("voices: each profile speaks with its own Hermes voice" if on
+                 else f"voices: everyone speaks with the shared voice ({voices.short(voices.shared_voice())})")
 
     def action_restart(self) -> None:
         self.say("listener: " + service.service_restart())
