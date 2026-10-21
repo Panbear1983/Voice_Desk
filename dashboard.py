@@ -105,7 +105,7 @@ class Dashboard(App):
         body = (f"[b #2ecc71]Heard:[/] {heard}\n\n[b #3498db]{data.get('name') or 'Reply'}:[/] {reply}\n\n"
                 + (f"[dim]{note}[/dim]\n" if note else "")
                 + f"[dim]turns {data.get('turns', 0)} · last took {data.get('took', '—')}s · "
-                  f"say \"Jarvis, …\", \"hey Kylie\", \"Esther, …\", \"Wanna Buffet, …\", \"hey Claude\"; \"mute\" / \"unmute\"[/dim]")
+                  f"say \"hey Jarvis, …\", \"hey Kylie\", \"hey Esther, …\", \"hey Wanna Buffet, …\", \"hey Claude\"; \"mute\" / \"unmute\"[/dim]")
         self.query_one("#body", Static).update(body)
         msg = self._msg if time.monotonic() < self._msg_until else ""
         self.query_one("#msg", Static).update(msg)
