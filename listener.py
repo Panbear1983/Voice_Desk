@@ -82,8 +82,11 @@ class Listener:
     def __init__(self, mic=None, whisper=None, brain: Optional[Brain] = None, player=None,
                  synth: Callable[..., Optional[Path]] = tts.synthesize,
                  foreign=None, status: Optional[service.Status] = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 chime: Callable[[str], None] = tts.chime) -> None:
         self.clock = clock
+        self.chime = chime              # turn-taking tones (tests pass a recorder)
+        self._in_conversation = False   # a reply was spoken and the open line has not lapsed yet
         self.speaking = False
         self.quiet_until = 0.0          # deaf until then (echo tail after any speech)
         self.follow_until = 0.0         # awake (no name needed) until then
@@ -240,6 +243,7 @@ class Listener:
         norm = stt.normalize(text)
         if norm in {stt.normalize(w) for w in S.STOP_WORDS | S.SLEEP_WORDS | S.GOODBYE_WORDS}:
             self.follow_until = 0.0
+            self._in_conversation = False             # ended on purpose: "Okay." says so, no falling tone
             if norm not in {stt.normalize(w) for w in S.STOP_WORDS}:
                 self.speak("Okay.", after="asleep")
             self.settle()
@@ -269,8 +273,26 @@ class Listener:
         self.status.update(reply=reply, note="", took=round(time.monotonic() - t0, 1))
         log(f"reply from {self.brain.name(target)} in {time.monotonic()-t0:.1f}s: {reply[:80]!r}")
         self.speak(tts.speakable(reply) or "I did not get an answer back.")
-        self.follow_until = 0.0                       # back to sleep: the next turn starts with a name again
+        # Peter 2026-10-21: keep the conversation open after every reply, so the back-and-forth needs
+        # no name; the pop says "your turn", silence for CONVERSATION_SEC ends it (falling tone).
+        self.follow_until = self.clock() + S.CONVERSATION_SEC
+        self._in_conversation = True
+        self._chime(S.SOUND_YOUR_TURN)
         self.settle()
+
+    def _chime(self, sound: str) -> None:
+        try:
+            self.chime(sound)
+        except Exception:
+            pass
+
+    def _maybe_end_conversation(self) -> None:
+        """The open line ran out with no reply from Peter: say so with a falling tone."""
+        if self._in_conversation and not self.awake() and not self._thinking and not self.speaking:
+            self._in_conversation = False
+            log("conversation over (silence)")
+            if not service.is_muted():
+                self._chime(S.SOUND_ASLEEP)
 
     # -- the dashboard's orders and the heartbeat ---------------------------------------------------
     def _ticker(self) -> None:
@@ -285,6 +307,7 @@ class Listener:
                 elif order == "sleep":
                     self.follow_until = 0.0
             if self.status.state in ("asleep", "listening", "muted"):
+                self._maybe_end_conversation()
                 self.settle()                     # the follow-up window ran out, or M was pressed
             reason = ("speaking" if self.speaking else "other speech" if self.foreign.playing()
                       else "echo tail" if self.clock() < self.quiet_until else "")

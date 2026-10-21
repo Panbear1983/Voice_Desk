@@ -210,11 +210,14 @@ def fake_synth(text: str) -> Path:
     return p
 
 
+CHIMES: list = []      # turn-taking tones the listener asked for (never played in tests)
+
+
 def make_listener(clock=None, player=None, foreign=None) -> L.Listener:
     clock = clock or FakeClock()
     foreign = foreign or FakeForeign()
     lst = L.Listener(mic=None, whisper=object(), brain=FakeBrain(), player=player or FakePlayer(),
-                     synth=fake_synth, foreign=foreign, clock=clock)
+                     synth=fake_synth, foreign=foreign, clock=clock, chime=CHIMES.append)
     S.ECHO_TAIL_SEC = 0.0 if isinstance(clock, FakeClock) else S.ECHO_TAIL_SEC
     return lst
 
@@ -239,10 +242,29 @@ def test_listener_decisions() -> None:
     report("listener: ... the reply is spoken without markdown",
            lst.player.played[-1] == "It is ten past nine, says Jarvis.", str(lst.player.played))
     hist = [s for _, s in lst.status.data["history"]]
-    report("listener: states in order asleep -> thinking -> speaking -> asleep",
-           hist[-4:] == ["asleep", "thinking", "speaking", "asleep"], str(hist))
-    report("listener: after the reply it is asleep again (next turn needs a name)",
-           lst.handle("and tomorrow?") == "ignored", str(lst.brain.asked))
+    report("listener: states in order asleep -> thinking -> speaking -> listening (conversation open)",
+           hist[-4:] == ["asleep", "thinking", "speaking", "listening"], str(hist))
+    report("listener: after the reply a 'your turn' pop plays", CHIMES[-1:] == [S.SOUND_YOUR_TURN], str(CHIMES))
+    what = lst.handle("and tomorrow?")
+    report("listener: within the open line a follow-up needs no name",
+           what == "turn" and lst.brain.asked[-1] == ("and tomorrow?", "hermes:orchestrator"), str(lst.brain.asked))
+    CHIMES.clear()
+    clock.t += S.CONVERSATION_SEC + 1
+    lst._maybe_end_conversation()
+    lst.settle()
+    report("listener: silence for the whole open line ends it with the falling tone",
+           CHIMES == [S.SOUND_ASLEEP] and lst.status.state == "asleep", f"{CHIMES} {lst.status.state}")
+    lst._maybe_end_conversation()
+    report("listener: ... the falling tone plays only once", CHIMES == [S.SOUND_ASLEEP], str(CHIMES))
+    report("listener: after the line lapses, the next turn needs a name again",
+           lst.handle("and the day after?") == "ignored", str(lst.brain.asked[-1]))
+    lst.handle("Hey Jarvis, one more thing")
+    CHIMES.clear()
+    report("listener: 'goodbye' ends the open line at once",
+           lst.handle("goodbye") == "stopped" and lst.status.state == "asleep")
+    clock.t += S.CONVERSATION_SEC + 1
+    lst._maybe_end_conversation()
+    report("listener: ... and then no falling tone (Okay. already said it)", CHIMES == [], str(CHIMES))
     what = lst.handle("Hey Kylie.")
     report("listener: bare 'hey Kylie' -> 'Kylie here.' and listening",
            what == "awake" and lst.player.played[-1] == "Kylie here." and lst.status.state == "listening", str(lst.player.played[-1]))
@@ -481,6 +503,49 @@ def test_status_file() -> None:
     report("listener: speaks with the voice of whoever is on the line", bool(spoken) and spoken[0].en == "en-US-AndrewNeural", str(spoken))
     report("listener: the status file says which voice spoke (dashboard shows it)",
            lst2.status.data.get("voice") == "Andrew · YunJhe", str(lst2.status.data.get("voice")))
+
+    # -- speed: voice turns ask Hermes for low reasoning; Edge is retried before any fallback voice ----
+    import brain as B
+    import tts as T
+    seen: list = []
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            seen.append(cmd)
+            self.returncode = 0
+        def communicate(self, timeout=None):
+            return "ok", ""
+    real_popen = B.subprocess.Popen
+    B.subprocess.Popen = _P                     # type: ignore[assignment]
+    try:
+        hb = B.HermesBrain("wanna-buffet")
+        hb.session_id = None
+        hb._ask("how did yesterday go", lambda s: None, retry=False)
+    finally:
+        B.subprocess.Popen = real_popen         # type: ignore[assignment]
+    report("speed: a Hermes voice turn passes --reasoning low", bool(seen) and seen[0][-2:] == ["--reasoning", "low"]
+           or (bool(seen) and "--reasoning" in seen[0] and seen[0][seen[0].index("--reasoning") + 1] == "low"), str(seen[:1])[:200])
+    calls: list = []
+
+    class _R:
+        def __init__(self, rc):
+            self.returncode = rc
+    def _run(cmd, **kw):
+        calls.append(cmd[-1])
+        if cmd[-1] == "edge" and len(calls) == 1:
+            return _R(1)                        # Edge hiccups once ...
+        Path(cmd[2]).write_bytes(b"RIFF")       # ... and works on the retry
+        return _R(0)
+    real_run = T.subprocess.run
+    T.subprocess.run = _run                     # type: ignore[assignment]
+    try:
+        d = Path(tempfile.mkdtemp(prefix="vd-chain-"))
+        (d / "t.txt").write_text("hi")
+        got = T._chain(d / "t.txt", d / "o.wav", "en-US-AndrewNeural")
+    finally:
+        T.subprocess.run = real_run             # type: ignore[assignment]
+    report("voices: one Edge hiccup is retried with Edge, never handed to the fallback voice",
+           got is not None and calls == ["edge", "edge"], str(calls))
     report("dashboard: never opened the microphone", not opened)
 
 

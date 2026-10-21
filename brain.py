@@ -274,6 +274,8 @@ class HermesBrain:
     def _ask(self, text: str, on_status: StatusCb, retry: bool) -> str:
         prompt = text + "\n\n" + S.HERMES_VOICE_NOTE
         cmd = [S.HERMES_BIN, "-p", self.profile, "-z", prompt]
+        if S.HERMES_VOICE_REASONING:                  # a spoken turn: think briefly (the profile's own level is for typed work)
+            cmd += ["--reasoning", S.HERMES_VOICE_REASONING]
         if self.session_id:
             cmd += ["--resume", self.session_id]
         env = dict(os.environ, HERMES_HOME=str(self.home), VOICE_DESK_LOOP="1")

@@ -69,6 +69,7 @@ WHISPER_HALLUCINATIONS = {
 # (The older tts_jenny_or_mac.sh still dials Edge's dead host and falls through to Piper.)
 TTS_CHAIN = HOME / ".hermes/scripts/tts_natural.sh"
 TTS_ORDER = os.environ.get("VOICE_DESK_TTS_ORDER", "edge google mac")
+TTS_FALLBACK_STATE = HOME / ".hermes/cache/tts_fallback"   # where the chain benches a voice for 10 minutes
 TTS_VOICE_EN = "en-US-JennyNeural"   # the shared voice: used when per-profile voices are off (dashboard V)
 TTS_VOICE_ZH_MAC = "Meijia"      # Taiwan Mandarin, the Mac fallback when Edge is down
 AFPLAY = "/usr/bin/afplay"
@@ -117,6 +118,11 @@ NAMES = {
 }
 HERMES_DISPLAY_NAMES = {t.split(":", 1)[1]: n for t, (n, _) in NAMES.items() if t.startswith("hermes:")}
 HERMES_TURN_TIMEOUT_SEC = 600
+# Peter 2026-10-21: "Voice Desk is responding way too slow". Wanna Buffet runs reasoning_effort
+# high for trading; a spoken question does not need it. Every Hermes voice turn uses this level
+# instead ("" = the profile's own). Measured: a one-word reply ~5-9 s either way, the long tail
+# (29 s on a trading question) is thinking time.
+HERMES_VOICE_REASONING = os.environ.get("VOICE_DESK_HERMES_REASONING", "low")
 HERMES_SESSION_DIR = STATE_DIR / "hermes_sessions"      # one session id per profile
 BRAIN_FILE = STATE_DIR / "brain"                        # "claude" or "hermes:<profile>", set by voice: "talk to Esther"
 HERMES_VOICE_NOTE = (f"(Voice call with {USER_NAME}: they hear you and are not reading a screen. Answer the way you "
@@ -138,6 +144,14 @@ LISTENER_STATUS = STATE_DIR / "listener.json"     # what the dashboard shows; wr
 LISTENER_INBOX = STATE_DIR / "listener.inbox"      # one-word orders from the dashboard: hush, new_thread
 MUTE_FILE = STATE_DIR / "muted"                    # exists = muted (spoken "mute", or M in the dashboard)
 ECHO_TAIL_SEC = 1.0             # the mic stays deaf this long after any speech ends (room echo)
+# Peter 2026-10-21: after every reply, keep the line open this long so the back-and-forth needs no
+# name; silence that long ends the conversation (falling tone). "goodbye" / "go to sleep" end it at once.
+CONVERSATION_SEC = 20
+# Audible turn-taking (Peter: "a beeping signal to know when my prompt gets cut ... before it goes
+# into thinking"). Mac system sounds, played through afplay (the listener is deaf while they play).
+SOUND_GOT_IT = "/System/Library/Sounds/Tink.aiff"       # your words were cut off here and sent
+SOUND_YOUR_TURN = "/System/Library/Sounds/Pop.aiff"     # it finished speaking: talk now, no name needed
+SOUND_ASLEEP = "/System/Library/Sounds/Bottle.aiff"     # conversation over: say hey <name> next time
 # Speech from anything else on this Mac (the Claude Stop hook, Hermes voice mode, kokoro) plays
 # through these programs; while one runs the listener is deaf, so it can never hear itself.
 FOREIGN_PLAYERS = ("afplay", "say")

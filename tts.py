@@ -33,9 +33,18 @@ def is_mandarin(text: str) -> bool:
 
 
 def _chain(txt: Path, out: Path, voice: str) -> Optional[Path]:
-    """Hermes' voice chain (Edge -> Gemini -> Mac) with one named Edge voice."""
+    """Hermes' voice chain with one named Edge voice. Edge is tried twice first, every time:
+    the shared script benches Edge for 10 minutes after one failure and falls back to Gemini's
+    female voice, which turned Wanna Buffet into a woman mid-conversation (Peter 2026-10-21).
+    Only after two fresh Edge misses does the rest of the chain speak."""
     if not S.TTS_CHAIN.exists():
         return None
+    for _ in range(2):
+        (S.TTS_FALLBACK_STATE / "edge.down").unlink(missing_ok=True)
+        r = subprocess.run([str(S.TTS_CHAIN), str(txt), str(out), voice, "edge"],
+                           capture_output=True, timeout=60)
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            return out
     r = subprocess.run([str(S.TTS_CHAIN), str(txt), str(out), voice, S.TTS_ORDER],
                        capture_output=True, timeout=120)
     return out if r.returncode == 0 and out.exists() and out.stat().st_size > 0 else None
@@ -109,4 +118,9 @@ def say_now(text: str, player: Player) -> None:
 
 def tick() -> None:
     """A soft click: 'I have your words, thinking.'"""
-    subprocess.Popen([S.AFPLAY, "/System/Library/Sounds/Tink.aiff"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    chime(S.SOUND_GOT_IT)
+
+
+def chime(sound: str) -> None:
+    """A short system sound, not waited for."""
+    subprocess.Popen([S.AFPLAY, sound], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
