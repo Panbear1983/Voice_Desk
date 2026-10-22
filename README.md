@@ -172,8 +172,10 @@ mic: open the window and the listener waits (light: *standby*) until you close i
 
 The dashboard never touches the mic. It reads `~/.voice_desk/listener.json` and shows the
 light (asleep · listening · hearing · thinking · speaking · muted), who is on the line, the
-last thing heard and the last reply. Keys: <kbd>M</kbd> mute/unmute · <kbd>H</kbd> hush ·
-<kbd>N</kbd> new conversation · <kbd>R</kbd> restart the listener · <kbd>K</kbd> stop it ·
+last thing heard and the last reply, plus every agent's voice (from `agents.toml`) and a
+warning if a profile drifted from it. Keys: <kbd>M</kbd> mute/unmute · <kbd>H</kbd> hush ·
+<kbd>N</kbd> new conversation · <kbd>V</kbd> per-agent voices / one shared voice ·
+<kbd>R</kbd> restart the listener · <kbd>K</kbd> stop it ·
 <kbd>Q</kbd> close the panel (the listener keeps running).
 
 **Keys** (you never *need* them): <kbd>Space</kbd> talk in tap mode or interrupt ·
@@ -225,29 +227,52 @@ what you said. Nothing to configure: the profiles are found at start.
 
 Each Hermes turn runs that profile headlessly (`hermes -p <profile> -z … --resume <id>`),
 in its own home, with its own model, tools and memory. The session id is kept per profile in
-`~/.voice_desk/hermes_sessions/`. Spoken names can be overridden in `HERMES_DISPLAY_NAMES`.
+`~/.voice_desk/hermes_sessions/`. Spoken names and their spellings live in `agents.toml`.
 
 ## Make it yours
 
-Everything adjustable is a plain constant in `settings.py`:
+**Voices, names and the mic: `agents.toml`.** One file owns everything voice-related for every
+agent: each agent's spoken names (and the spellings whisper produces), reply voice and Mandarin
+voice, speed, voice-mode knobs, the greetings that wake an agent ("hey", "hi", "hello"…), the
+whisper hint words, the end phrases that close a voice chat, and the microphone sensitivity
+(`[shared.mic]`). Change a value there, then:
+
+```bash
+.venv/bin/python -m voicecfg check              # what differs from the live settings (read-only)
+.venv/bin/python -m voicecfg sync --dry-run     # the exact line changes it would make
+.venv/bin/python -m voicecfg sync --apply       # back up, write, re-read with Hermes' own parser
+```
+
+`sync` writes each Hermes agent's values into `~/.hermes/profiles/<profile>/config.yaml`, so
+the agent's own window **and** its Telegram voice bubbles use the same voice, and Claude's into
+`~/.claude/voice-defaults.conf`, which the Claude read-aloud hook already reads. It edits single
+lines only (comments and every other setting stay as they were), backs every file up to
+`~/.hermes/profile-backups/<date>-voicecfg/` first, and puts a file back at once if Hermes cannot
+read the result. Hermes reads voice settings when a session starts: reopen the agent's window,
+and restart the Telegram gateway from a separate terminal, to hear a change. The listener reads
+names, greetings, hint words and mic settings at start (restart it after changing those); voices
+are read fresh before every spoken line. The dashboard lists every agent's voice and warns when a
+profile was hand-edited away from `agents.toml`.
+
+Esther keeps her own Kokoro voice everywhere: Voice Desk speaks her lines through her script
+(`command` in her block), with an Edge voice (`fallback`) only if Kokoro fails.
+
+Everything else adjustable is a plain constant in `settings.py`:
 
 | Setting | Default | Change it to… |
 |---|---|---|
-| `SILENCE_SEND_SEC` | `1.5` | wait longer or shorter before sending |
 | `SLEEP_AFTER_SEC` | `60` | nap sooner or later |
 | `WHISPER_MODEL` | small | `large-v3-turbo` is more accurate but about 3× slower |
 | `DEFAULT_MODEL` / `DEFAULT_EFFORT` | Fable / medium | your usual model |
 | `TTS_VOICE_ZH_MAC` | Meijia | any Mac voice (`say -v '?'` lists them) |
 | `TTS_CHAIN` / `TTS_ORDER` | optional script | your own voice pipeline (Piper, Edge…); without it, the built-in Mac voice speaks |
 | `WAKE_WORDS`, `STOP_WORDS`, … | see file | your own phrases, in any language |
-| `NAMES` | Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini | who answers to which name, and the spellings whisper produces for it |
-| `WHISPER_PROMPT` | the names | the words whisper should expect; it is what makes "Jarvis" land instead of "Javas" |
 | `ECHO_TAIL_SEC` | `1.0` | how long the listener stays deaf after any speech ends |
 
 Claude calls you by the first name on your Mac account. Set `VOICE_DESK_NAME` to
 change it. Other environment overrides: `VOICE_DESK_STATE`, `VOICE_DESK_TTS_ORDER`,
 `VOICE_DESK_CLAUDE_BIN`, `VOICE_DESK_WHISPER_PORT`, `VOICE_DESK_RECEIVER_HOST`,
-`VOICE_DESK_RECEIVER_PORT`.
+`VOICE_DESK_RECEIVER_PORT`, `VOICE_DESK_AGENTS` (another `agents.toml`).
 
 ## Safety, in plain words
 
@@ -336,14 +361,18 @@ python3 docs/render_images.py          # PNGs + loop.gif (needs playwright + Pil
 | `stt.py` | whisper-server control and transcript cleanup |
 | `brain.py` | the Claude thread, model / effort switching, spoken status |
 | `tts.py` | read-aloud cleanup, voice choice, playback |
-| `settings.py` | every adjustable value |
+| `agents.toml` | every agent's names, voices, voice-mode knobs, greetings, end phrases and mic sensitivity |
+| `agents.py` | reads `agents.toml` |
+| `voices.py` | which voice speaks for whom (from `agents.toml`) |
+| `voicecfg.py` | `python -m voicecfg check / sync`: keeps the Hermes profiles and Claude's voice file in step |
+| `settings.py` | every other adjustable value |
 | `receiver.py`, `start_receiver.sh`, `install_receiver.sh` | iPhone receiver and its login job |
 | `listener.py`, `start_listener.sh`, `install_listener.sh` | the always-on listener and its login job |
 | `service.py` | the listener's status file, mute flag and launchd controls |
 | `dashboard.py`, `dashboard.sh` | the control panel for the listener |
 | `make_shortcut.py` | builds the signed iPhone Shortcut |
 | `install_remote_control.sh` | Remote Control login job for the Claude app |
-| `tests/selftest.py`, `tests/test_listener.py` | headless end-to-end checks |
+| `tests/selftest.py`, `tests/test_listener.py`, `tests/test_voicecfg.py` | headless end-to-end checks |
 | `docs/` | screenshots, diagram and the scripts that make them |
 
 </details>
