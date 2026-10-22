@@ -95,7 +95,7 @@ def test_routing() -> None:
     # asleep, the listener wants a hail (Peter 2026-10-21: a bare "Jarvis" fires too easily)
     for said, target in {"Hey Jarvis, what time is it?": "hermes:orchestrator", "OK Kylie, remind me at five.": "hermes:assistant",
                          "Talk to Esther.": "hermes:tax_angel_esther", "hey, wanna buffet! how is the market": "hermes:wanna-buffet",
-                         "um, hey Jarvis": "hermes:orchestrator", "嘿 克勞德，現在幾點": "claude",
+                         "um, hey Jarvis": "hermes:orchestrator", "Hi Jarvis.": "hermes:orchestrator", "High, Kylie.": "hermes:assistant", "Hello, Esther.": "hermes:tax_angel_esther", "Hay Wanna Buffet": "hermes:wanna-buffet", "Hai Jarvis, what time is it?": "hermes:orchestrator", "嘿 克勞德，現在幾點": "claude",
                          "let me talk to Jarvis please": "hermes:orchestrator"}.items():
         hit = addressed(said, hailed=True)
         report(f"hail: {said!r} wakes {target}", hit is not None and hit[0] == target, str(hit))

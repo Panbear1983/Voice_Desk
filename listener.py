@@ -531,7 +531,7 @@ class Listener:
                 if what == "ignored":
                     # a sentence that starts with a hail ("hey ...") was meant for us: log what whisper made
                     # of it, so a misheard name can be fixed (Peter 2026-10-21: "hey Kylie ... did not start")
-                    if DEBUG or re.match(r"^\W*(hey|hi|hello|ok|okay|yo)\b", text or "", re.I):
+                    if DEBUG or re.match(r"^\W*(hey|hay|heya|hi|high|hai|hiya|hello|hallo|hullo|helo|ok|okay|yo|i)\b", text or "", re.I):
                         log(f"ignored ({len(audio) / S.SAMPLE_RATE:.1f}s): {text[:120]!r}")
                     self.settle()
                 else:

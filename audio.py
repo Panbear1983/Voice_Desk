@@ -93,6 +93,7 @@ class Microphone:
         loud_run = 0
         quiet_run = 0
         speaking = False
+        span = 0                        # blocks from the first loud block on (the too-short test)
         start = time.monotonic()
         blocks_start = int(S.SPEECH_START_SEC * 1000 / S.BLOCK_MS)
         blocks_send = int(S.SILENCE_SEND_SEC * 1000 / S.BLOCK_MS)
@@ -108,7 +109,7 @@ class Microphone:
                 if speaking:
                     on_state("listening")
                 pre_roll.clear()
-                speaking, voiced, loud_run, quiet_run = False, [], 0, 0
+                speaking, voiced, loud_run, quiet_run, span = False, [], 0, 0, 0
             if block is None:
                 if not speaking and time.monotonic() - start > timeout_sec:
                     return None
@@ -124,6 +125,7 @@ class Microphone:
                         speaking = True
                         voiced = list(pre_roll)
                         quiet_run = 0
+                        span = loud_run
                         on_state("hearing")
                 else:
                     loud_run = 0
@@ -134,15 +136,19 @@ class Microphone:
                 continue
 
             voiced.append(block)
+            span += 1
             if level > threshold * 0.6:
                 quiet_run = 0
             else:
                 quiet_run += 1
             if quiet_run >= blocks_send or len(voiced) >= max_blocks:
                 audio = np.concatenate(voiced)
-                if audio.size / S.SAMPLE_RATE - S.SILENCE_SEND_SEC - S.PRE_ROLL_SEC < S.MIN_SPEECH_SEC:
-                    # too short to be words; keep listening
-                    speaking, voiced, loud_run, quiet_run = False, [], 0, 0
+                # Too short to be words? Measure from the first loud block to the last one. (Peter 2026-10-22: a
+                # quick "Hi Jarvis" often needed several loud tries. The old test was total length minus the whole
+                # 0.6 s pre-roll and the 1.5 s silence, which also subtracted the 0.25 s of speech that triggered
+                # detection, so a short greeting needed ~0.65 s of sound and was dropped before whisper saw it.)
+                if (span - quiet_run) * S.BLOCK_MS / 1000 < S.MIN_SPEECH_SEC:
+                    speaking, voiced, loud_run, quiet_run, span = False, [], 0, 0, 0
                     start = time.monotonic()
                     on_state("listening")
                     continue

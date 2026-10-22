@@ -424,14 +424,17 @@ def name_aliases() -> list[tuple[str, str]]:
     return sorted(set(pairs), key=lambda x: len(x[0]), reverse=True)
 
 
-_LEAD = r"(?:(?:ok|okay|hey|hi|hello|yo|oh|um|so)\s+|(?:嘿|嗨|哈囉)\s*)*"
+# Greetings that may come before a name. Peter 2026-10-22: "hi", "hey" and "hello" must all wake an agent;
+# the extra spellings are how whisper writes a short greeting ("Hi" -> "High"/"Hai", "Hey" -> "Hay").
+_GREET = r"(?:ok|okay|hey|hay|heya|hi|high|hai|hiya|hello|hallo|hullo|helo|yo)"
+_LEAD = rf"(?:(?:{_GREET}|oh|um|so)\s+|(?:嘿|嗨|哈囉)\s*)*"
 _SWITCH_CORE = (r"(?:please\s+)?(?:let me\s+|can i\s+|could i\s+|i want to\s+|i'd like to\s+)?"
                 r"(?:talk|speak|switch|switch over|hand me over|put me through|go back)\s+(?:to|with)\s+(?:the\s+)?")
 _SWITCH = rf"(?:{_SWITCH_CORE})?"
 _TAIL = r"(?:\s+(?:please|now|instead)(?=$))?"     # only when nothing follows: "Esther, now that..." keeps "now"
 # A hail is what wakes a SLEEPING listener (Peter, 2026-10-21: a bare "Jarvis" fires too easily in
 # conversation): "hey Jarvis", "ok Kylie", "talk to Esther", "嘿 克勞德". Fillers alone ("um Jarvis") do not count.
-_HAIL = r"(?:(?:oh|um|so|uh)\s+)*(?:(?:ok|okay|hey|hi|hello|yo)\s+|(?:嘿|嗨|哈囉)\s*)+"
+_HAIL = rf"(?:(?:oh|um|so|uh)\s+)*(?:{_GREET}\s+|(?:嘿|嗨|哈囉)\s*)+"
 _HAILED = rf"(?:{_HAIL}{_SWITCH}|{_LEAD}{_SWITCH_CORE})"
 
 
