@@ -50,6 +50,16 @@ def _chain(txt: Path, out: Path, voice: str) -> Optional[Path]:
     return out if r.returncode == 0 and out.exists() and out.stat().st_size > 0 else None
 
 
+def _script(cmd: tuple[str, ...], txt: Path, out: Path, voice: str, timeout: float = 120) -> Optional[Path]:
+    """A non-Edge voice made by the agent's own script (Esther's Kokoro):
+    <cmd...> <text file> <out file> <voice>. None if it fails or is too slow."""
+    try:
+        r = subprocess.run([*cmd, str(txt), str(out), voice], capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out if r.returncode == 0 and out.exists() and out.stat().st_size > 0 else None
+
+
 def synthesize(text: str, voice: Optional[voices.Voice] = None) -> Optional[Path]:
     """Return a playable audio file for text, or None if every voice failed.
     `voice` is the speaker's (voices.voice_for(target)); None = the shared Voice Desk voice."""
@@ -69,7 +79,11 @@ def synthesize(text: str, voice: Optional[voices.Voice] = None) -> Optional[Path
             subprocess.run([S.FFMPEG, "-loglevel", "error", "-y", "-i", str(aiff), str(out)], capture_output=True)
             return out if out.exists() else None
         return None
-    got = _chain(txt, out, v.en)
+    if v.command:                    # Esther: her own Kokoro voice (Peter 2026-10-22), Edge only if it fails
+        got = _script(v.command, txt, out, v.en)
+        if got:
+            return got
+    got = _chain(txt, out, v.fallback if v.command and v.fallback else v.en)
     if got:
         return got
     # last resort: the plain Mac voice, so the loop never goes silent

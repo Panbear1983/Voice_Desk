@@ -512,12 +512,12 @@ def test_status_file() -> None:
     import voices
     voices.set_per_profile(True)
     tbl = dict(voices.table())
-    report("voices: Kylie speaks as Ava (assistant config.yaml), Mandarin as HsiaoChen",
-           tbl["Kylie"].en == "en-US-AvaNeural" and tbl["Kylie"].zh == "zh-TW-HsiaoChenNeural" and tbl["Kylie"].source == "profile", str(tbl["Kylie"]))
+    report("voices: Kylie speaks as Ava (agents.toml), Mandarin as HsiaoChen",
+           tbl["Kylie"].en == "en-US-AvaNeural" and tbl["Kylie"].zh == "zh-TW-HsiaoChenNeural" and tbl["Kylie"].source == "agents", str(tbl["Kylie"]))
     report("voices: Wanna Buffet speaks as Andrew (male), Mandarin as YunJhe (male)",
            tbl["Wanna Buffet"].en == "en-US-AndrewNeural" and tbl["Wanna Buffet"].zh == "zh-TW-YunJheNeural", str(tbl["Wanna Buffet"]))
-    report("voices: Esther's Kokoro voice is not an Edge voice -> a chosen Edge fallback, not Jenny",
-           tbl["Esther"].source == "fallback" and tbl["Esther"].en != S.TTS_VOICE_EN, str(tbl["Esther"]))
+    report("voices: Esther keeps her Kokoro voice through her own script; Aria only if it fails (Peter 2026-10-22)",
+           tbl["Esther"].en == "alloy" and bool(tbl["Esther"].command) and tbl["Esther"].fallback == "en-US-AriaNeural", str(tbl["Esther"]))
     report("voices: Claude (not a Hermes profile) gets the shared voice", voices.voice_for("claude").source == "shared")
     voices.set_per_profile(False)
     report("voices: V off -> everyone shares one voice", voices.voice_for("hermes:wanna-buffet") == voices.shared_voice())

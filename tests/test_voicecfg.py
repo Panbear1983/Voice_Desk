@@ -106,8 +106,75 @@ def test_settings_read_agents_toml() -> None:
            out)
 
 
+# 4 ---------------------------------------------------------------------------------------------
+def test_voices_from_agents_toml() -> None:
+    import agents
+    import voices
+    voices.set_per_profile(True)
+    tbl = {name: v for name, v in voices.table()}
+    want = {"Jarvis": ("en-US-JennyNeural", "zh-TW-HsiaoChenNeural"), "Kylie": ("en-US-AvaNeural", "zh-TW-HsiaoChenNeural"),
+            "Esther": ("alloy", "zh-TW-HsiaoYuNeural"), "Wanna Buffet": ("en-US-AndrewNeural", "zh-TW-YunJheNeural")}
+    report("voices: table() gives today's four voices, read from agents.toml",
+           {n: (v.en, v.zh) for n, v in tbl.items()} == want and all(v.source == "agents" for v in tbl.values()),
+           str(tbl))
+    report("voices: the profile config.yaml no longer decides (fake profiles here carry no voice)",
+           voices.voice_for("hermes:assistant").en == "en-US-AvaNeural")
+    report("voices: Claude and Gemini keep the shared voice", voices.voice_for("claude") == voices.shared_voice()
+           and voices.shared_voice().en == "en-US-JennyNeural" and voices.shared_voice().zh == "zh-TW-HsiaoChenNeural")
+    real = agents.PATH
+    agents.PATH = _edited_copy(lambda t: t.replace('voice = "en-US-AvaNeural"', 'voice = "en-US-EmmaNeural"'))
+    try:
+        got = voices.voice_for("hermes:assistant").en
+    finally:
+        agents.PATH = real
+    report("voices: a voice changed in agents.toml is used for the next line, no restart", got == "en-US-EmmaNeural", got)
+    voices.voice_for("hermes:assistant")                                                       # last good = the real file
+    agents.PATH = _edited_copy(lambda t: t.replace('[agents.kylie]', '[agents.kylie\n'))   # a typo mid-edit
+    try:
+        got = voices.voice_for("hermes:assistant").en
+    finally:
+        agents.PATH = real
+    report("voices: a broken agents.toml mid-edit keeps the last good voices (never silent)", got == "en-US-AvaNeural", got)
+
+
+# 4b --------------------------------------------------------------------------------------------
+def test_esther_speaks_through_kokoro() -> None:
+    import tts
+    import voices
+    esther = voices.voice_for("hermes:tax_angel_esther")
+    report("esther: her voice is Kokoro 'alloy' through her own script, Aria only as the fallback",
+           esther.en == "alloy" and esther.command and esther.command[-1].endswith("tax_angel_esther/scripts/esther_tts.py")
+           and esther.fallback == "en-US-AriaNeural", str(esther))
+    d = Path(tempfile.mkdtemp(prefix="vd-kokoro-"))
+    good = d / "good.sh"
+    good.write_text('#!/bin/sh\nprintf "RIFF%s" "$3" > "$2"\n')       # writes the voice it was asked for
+    bad = d / "bad.sh"
+    bad.write_text("#!/bin/sh\nexit 1\n")
+    for f in (good, bad):
+        f.chmod(0o755)
+    chained: list = []
+    real_chain = tts._chain
+    tts._chain = lambda txt, out, voice: (chained.append(voice), out.write_bytes(b"RIFFedge"), out)[2]
+    try:
+        p = tts.synthesize("Your return is filed.", esther._replace(command=(str(good),)))
+        report("esther: an English line is made by her Kokoro script, with her voice name",
+               p is not None and p.read_bytes() == b"RIFFalloy" and p.suffix == ".wav" and chained == [],
+               f"{p} {p.read_bytes() if p else None} {chained}")
+        p = tts.synthesize("Your return is filed.", esther._replace(command=(str(bad),)))
+        report("esther: Kokoro failing -> the Aria fallback speaks, never silence",
+               p is not None and chained == ["en-US-AriaNeural"], str(chained))
+        chained.clear()
+        p = tts.synthesize("你的報稅已經送出了。", esther._replace(command=(str(good),)))
+        report("esther: a Mandarin line uses her Mandarin Edge voice (Kokoro is English only)",
+               p is not None and chained == ["zh-TW-HsiaoYuNeural"], str(chained))
+    finally:
+        tts._chain = real_chain
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
     test_settings_read_agents_toml()
+    test_voices_from_agents_toml()
+    test_esther_speaks_through_kokoro()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)
