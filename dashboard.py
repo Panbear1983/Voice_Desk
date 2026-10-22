@@ -16,8 +16,10 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Static
 
+import agents
 import service
 import settings as S
+import voicecfg
 import voices
 
 LIGHT = {
@@ -48,6 +50,7 @@ class Dashboard(App):
     #light { width: 1fr; height: 100%; content-align: center middle; text-style: bold; color: white; }
     #who { width: 30; height: 100%; content-align: center middle; color: #dddddd; }
     #body { height: 1fr; border: round #444444; padding: 0 1; }
+    #voices { height: auto; border: round #444444; padding: 0 1; }
     #msg { height: 1; color: #888888; padding: 0 1; }
     """ + "".join(f"#light.{state} {{ background: {colour}; }}\n" for state, (_, colour) in LIGHT.items())
     BINDINGS = [
@@ -72,12 +75,34 @@ class Dashboard(App):
                 yield Static("●  starting", id="light", classes="starting")
                 yield Static("", id="who")
             yield Static("", id="body")
+            yield Static("", id="voices")
             yield Static("", id="msg")
             yield Footer()
 
     def on_mount(self) -> None:
         self.refresh_status()
+        self.refresh_voices()
         self.set_interval(0.5, self.refresh_status)
+        self.set_interval(5.0, self.refresh_voices)
+
+    # -- the voices panel (read-only; agents.toml is the one place to change a voice) ---------------
+    def refresh_voices(self) -> None:
+        cfg = voices.config()
+        mode = "per agent" if voices.per_profile_enabled() else f"shared ({voices.short(voices.shared_voice())})"
+        rows = [f"{name}: {voices.short(v)}" for name, v in voices.table()]
+        claude = next((a for a in agents.agents(cfg) if a.target == "claude"), None)
+        if claude and claude.voice:
+            rows.append(f"Claude: {voices.short(voices.Voice(claude.voice, claude.voice_zh or voices.zh_for(claude.voice), 'agents'))}")
+        text = f"[b #9b59b6]Voices[/] ({mode}) — V toggles · change them in agents.toml\n[dim]{'   '.join(rows)}[/dim]"
+        try:
+            off = voicecfg.drift(voicecfg.collect(cfg, voicecfg.PROFILES, voicecfg.CLAUDE_CONF))
+        except Exception as exc:                     # never let a bad file take the panel down
+            off, text = [], text + f"\n[#e67e22]voice check failed: {exc}[/]"
+        if off:
+            who = sorted({i.label.split(" (")[0] for i in off})
+            text += (f"\n[b #e67e22]⚠ drift:[/] {len(off)} voice setting(s) differ from agents.toml ({', '.join(who)}). "
+                     f"Run [b].venv/bin/python -m voicecfg check[/b] to see them, then sync --dry-run.")
+        self.query_one("#voices", Static).update(text)
 
     # -- reading the listener -------------------------------------------------------------------
     def state_of(self, data: dict) -> str:
@@ -106,12 +131,10 @@ class Dashboard(App):
         if len(reply) > 600:
             reply = reply[:600] + " …"
         note = data.get("note") or ""
-        mode = "per profile" if voices.per_profile_enabled() else f"shared ({voices.short(voices.shared_voice())})"
-        table = "   ".join(f"{name}: {voices.short(v)}" for name, v in voices.table())
-        spoke = f" · spoke as {data['voice']}" if data.get("voice") else ""
+        spoke = f"[dim]last line spoken as {data['voice']}[/dim]\n" if data.get("voice") else ""
         body = (f"[b #2ecc71]Heard:[/] {heard}\n\n[b #3498db]{data.get('name') or 'Reply'}:[/] {reply}\n\n"
                 + (f"[dim]{note}[/dim]\n" if note else "")
-                + f"[b #9b59b6]Voices[/] ({mode}{spoke}) — V toggles\n[dim]{table}[/dim]\n\n"
+                + spoke + "\n"
                 + f"[dim]turns {data.get('turns', 0)} · last took {data.get('took', '—')}s · "
                   f"say \"hey Jarvis\" / \"hey Kylie\" / \"hey Esther\" / \"hey Wanna Buffet\": their own window starts "
                   f"listening; end with \"that's all\" / \"that's all the questions I have\" / \"no further questions\". "
@@ -145,6 +168,7 @@ class Dashboard(App):
     def action_voices(self) -> None:
         on = not voices.per_profile_enabled()
         voices.set_per_profile(on)
+        self.refresh_voices()
         self.say("voices: each profile speaks with its own Hermes voice" if on
                  else f"voices: everyone speaks with the shared voice ({voices.short(voices.shared_voice())})")
 

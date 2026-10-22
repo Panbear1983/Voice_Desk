@@ -57,7 +57,7 @@ def zh_for(en: str) -> str:
 _last_good: Optional[dict] = None
 
 
-def _cfg() -> dict:
+def config() -> dict:
     """agents.toml as it is now; the last good copy if it is broken mid-edit."""
     global _last_good
     try:
@@ -107,7 +107,7 @@ def _config_voice(profile: str) -> Optional[str]:
 
 
 def shared_voice() -> Voice:
-    sh = agents.shared(_cfg())
+    sh = agents.shared(config())
     en = sh.get("voice", S.TTS_VOICE_EN)
     return Voice(en, sh.get("voice_zh") or zh_for(en), "shared")
 
@@ -116,7 +116,7 @@ def voice_for(target: str) -> Voice:
     """The voice for a brain target ("hermes:<profile>", "claude", "gemini")."""
     if not per_profile_enabled() or not target.startswith("hermes:"):
         return shared_voice()
-    a = next((a for a in agents.agents(_cfg()) if a.target == target), None)
+    a = next((a for a in agents.agents(config()) if a.target == target), None)
     if a is None or not a.voice:
         return shared_voice()
     if is_edge(a.voice):
@@ -130,7 +130,7 @@ def voice_for(target: str) -> Voice:
 
 def table() -> list[tuple[str, Voice]]:
     """(spoken name, voice) for every Hermes agent in agents.toml, for the dashboard."""
-    return [(a.display, voice_for(a.target)) for a in agents.agents(_cfg()) if a.target.startswith("hermes:")]
+    return [(a.display, voice_for(a.target)) for a in agents.agents(config()) if a.target.startswith("hermes:")]
 
 
 def short(v: Voice) -> str:

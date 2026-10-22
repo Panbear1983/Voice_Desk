@@ -552,6 +552,38 @@ def test_sync_claude() -> None:
            "neural=en-US-AriaNeural" in r.stdout and "The build passed." in r.stdout, (r.stdout + r.stderr)[-300:])
 
 
+# 9 ---------------------------------------------------------------------------------------------
+def test_dashboard_panel() -> None:
+    import asyncio
+    import voicecfg as V
+    import dashboard as D
+    from textual.widgets import Static
+    profiles, conf = make_fixtures()
+    real_p, real_c = V.PROFILES, V.CLAUDE_CONF
+    V.PROFILES, V.CLAUDE_CONF = profiles, conf
+
+    async def render() -> str:
+        app = D.Dashboard()
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            app.refresh_voices()
+            return str(app.query_one("#voices", Static).render())
+
+    try:
+        clean = asyncio.run(render())
+        a = profiles / "assistant" / "config.yaml"
+        a.write_text(a.read_text().replace("voice: en-US-AvaNeural", "voice: en-US-EmmaNeural", 1))
+        drifted = asyncio.run(render())
+    finally:
+        V.PROFILES, V.CLAUDE_CONF = real_p, real_c
+    report("dashboard: a read-only panel lists each agent's voice",
+           all(s in clean for s in ("Jarvis", "Kylie", "Esther", "Wanna Buffet", "Claude", "Ava", "Andrew", "Kokoro alloy")),
+           clean)
+    report("dashboard: no warning when the profiles match agents.toml", "drift" not in clean.lower(), clean)
+    report("dashboard: a warning when check finds drift, naming the agent and the fix",
+           "drift" in drifted.lower() and "Kylie" in drifted and "voicecfg" in drifted, drifted)
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
     test_settings_read_agents_toml()
@@ -561,5 +593,6 @@ if __name__ == "__main__":
     test_check()
     test_sync()
     test_sync_claude()
+    test_dashboard_panel()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)
