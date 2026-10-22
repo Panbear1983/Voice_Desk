@@ -191,11 +191,231 @@ def test_end_phrases() -> None:
     report("end phrases: 'stop' first", got[0] == "stop")
 
 
+# 6 ---------------------------------------------------------------------------------------------
+import json as _json  # noqa: E402
+
+_STOP = _json.dumps(DAY_ONE_STOP, ensure_ascii=False)
+# The shapes of the four live config.yaml files on 2026-10-22 (voice parts only, no secrets),
+# including the awkward bits: column-0 comments INSIDE a block, a sub-block after a blank line,
+# several providers of which only one is active.
+FIXTURES = {
+    "orchestrator": f"""model:
+  default: x
+display:
+  skin: orchestrator   # per-profile skin
+voice:
+  # Peter 2026-10-21: end phrases hand the mic back to Voice Desk (exact sentence; listed variants).
+  stop_phrases: {_STOP}
+  auto_tts: true
+  name: natural
+  silence_duration: 1.5
+  silence_threshold: 200
+  barge_in: false
+# a comment between blocks
+moa:
+  presets:
+    default:
+      enabled: false
+tts:
+  # To go back to plain Edge: set provider back to edge.
+  provider: jenny_only
+  edge:
+    voice: en-US-JennyNeural
+    speed: 1.0
+  providers:
+    natural:   # shared script for every profile
+      type: command
+      voice: en-US-JennyNeural
+      model: edge google mac
+    jenny_only:
+      type: command
+      command: /x/tts_jenny_only.sh {{input_path}} {{output_path}} {{voice}}
+      voice: en-US-JennyNeural
+      output_format: mp3
+      timeout: 90
+mcp_servers:
+  playwright:
+    command: node
+""",
+    "assistant": f"""agent:
+  reasoning_effort: high
+tts:
+  # comment
+  provider: natural
+  providers:
+    natural:
+      type: command
+      voice: en-US-AvaNeural
+      model: edge google mac
+      voice_compatible: true   # Telegram voice bubbles need Ogg/Opus
+
+# ── Security ──────────────────────────────────────────────────────────
+# security:
+#   redact_secrets: true
+  edge:
+    voice: en-US-AvaNeural
+    speed: 1.0
+voice:
+  # Peter 2026-10-21: end phrases hand the mic back to Voice Desk (exact sentence; listed variants).
+  stop_phrases: {_STOP}
+  auto_tts: true
+  silence_duration: 1.5
+  silence_threshold: 200
+  barge_in: false
+  name: natural
+cron:
+  wrap_response: false
+""",
+    "tax_angel_esther": f"""onboarding:
+  seen:
+    tool_progress_prompt: true
+tts:
+  providers:
+    esther:
+      type: command
+      command: /x/python /x/esther_tts.py {{input_path}} {{output_path}} {{voice}}
+      voice: alloy
+      output_format: ogg
+      # long replies come back in short pieces
+      max_text_length: 700
+      timeout: 300
+  provider: esther
+  # Spoken pieces of at least ~2 sentences.
+  streaming:
+    min_len: 120
+voice:
+  # Peter 2026-10-21: end phrases hand the mic back to Voice Desk (exact sentence; listed variants).
+  stop_phrases: {_STOP}
+  auto_tts: true
+  barge_in: false
+  barge_in_grace_seconds: 0.5
+  silence_duration: 1.5
+mcp_servers:
+  mempalace:
+    enabled: true
+""",
+    "wanna-buffet": f"""agent:
+  reasoning_effort: high
+tts:
+  provider: natural
+  providers:
+    natural:
+      type: command
+      # male voice for Wanna Buffet
+      voice: en-US-AndrewNeural
+      voice_compatible: true   # true makes .ogg
+      timeout: 60
+  edge:
+    voice: en-US-AndrewNeural
+    speed: 0.92
+  openai:
+    model: gpt-4o-mini-tts
+    voice: onyx
+voice:
+  # Peter 2026-10-21: end phrases hand the mic back to Voice Desk (exact sentence; listed variants).
+  stop_phrases: {_STOP}
+  auto_tts: true
+  barge_in: false
+# 2026-09-23 lock-down: a column-0 comment in the middle of the voice block
+# (Hermes still reads the next line as voice.silence_threshold).
+  silence_threshold: 500
+command_allowlist:
+  - delete in root path
+""",
+}
+CLAUDE_CONF = """# Peter's spoken-reply defaults (chosen by ear 2026-09-17). THE place to change voices.
+NEURAL_VOICE_EN="en-US-JennyNeural"        # English: Jenny
+NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"    # Chinese: HsiaoChen, Taiwan Mandarin
+VOICE_ALWAYS_ON=1                          # 1 = every Claude Code session starts with voice on
+VOICE_MODE="hold"                          # push-to-talk mode restored if missing
+"""
+LIVE_PROFILES = Path.home() / ".hermes/profiles"
+LIVE_CLAUDE_CONF = Path.home() / ".claude/voice-defaults.conf"
+HERMES_PY = Path.home() / ".hermes/hermes-agent/venv/bin/python"
+
+
+def make_fixtures() -> tuple[Path, Path]:
+    """A profiles dir and a Claude conf in a temp dir, shaped like today's live files."""
+    d = Path(tempfile.mkdtemp(prefix="vd-cfg-fix-"))
+    for p, text in FIXTURES.items():
+        (d / "profiles" / p).mkdir(parents=True)
+        (d / "profiles" / p / "config.yaml").write_text(text, encoding="utf-8")
+        (d / "profiles" / p / "config.yaml").chmod(0o600)
+    (d / "voice-defaults.conf").write_text(CLAUDE_CONF, encoding="utf-8")
+    return d / "profiles", d / "voice-defaults.conf"
+
+
+def test_check() -> None:
+    import agents
+    import voicecfg as V
+    cfg = agents.load()
+    profiles, conf = make_fixtures()
+    items = V.collect(cfg, profiles, conf)
+    keys = {(i.where, i.key) for i in items}
+    report("check: covers each agent's active voice, speed, end phrases and knobs, and Claude's file",
+           {("kylie", "tts.providers.natural.voice"), ("jarvis", "tts.providers.jenny_only.voice"),
+            ("esther", "tts.providers.esther.voice"), ("wanna_buffet", "tts.edge.speed"),
+            ("wanna_buffet", "voice.silence_threshold"), ("esther", "voice.barge_in_grace_seconds"),
+            ("jarvis", "voice.stop_phrases"), ("claude", "NEURAL_VOICE_EN"), ("claude", "VOICE_MODE")} <= keys,
+           str(sorted(keys)))
+    report("check: today's shapes -> zero drift", V.drift(items) == [], str(V.drift(items)))
+    wb = next(i for i in items if (i.where, i.key) == ("wanna_buffet", "voice.silence_threshold"))
+    report("check: reads a key that sits after a column-0 comment inside its block (as Hermes does)",
+           wb.have == 500 and wb.line is not None, str(wb))
+    ky = next(i for i in items if (i.where, i.key) == ("kylie", "tts.providers.natural.voice"))
+    report("check: reads the active provider's voice, not a commented or inactive one",
+           ky.have == "en-US-AvaNeural" and FIXTURES["assistant"].splitlines()[ky.line].strip() == "voice: en-US-AvaNeural")
+
+    a = profiles / "assistant" / "config.yaml"
+    a.write_text(a.read_text().replace("silence_threshold: 200", "silence_threshold: 300"))
+    e = profiles / "tax_angel_esther" / "config.yaml"
+    e.write_text(e.read_text().replace(', "thank you, no further question"]', "]"))
+    j = profiles / "orchestrator" / "config.yaml"
+    j.write_text(j.read_text().replace('stop_phrases: ["stop", "that\'s all", ', 'stop_phrases: ["that\'s all", "stop", '))
+    conf.write_text(conf.read_text().replace('VOICE_MODE="hold"', 'VOICE_MODE="tap"'))
+    d = {(i.where, i.key): (i.have, i.want) for i in V.drift(V.collect(cfg, profiles, conf))}
+    report("check: a hand edit shows up as drift, with both values",
+           d.get(("kylie", "voice.silence_threshold")) == (300, 200), str(d))
+    report("check: a missing end phrase shows up", ("esther", "voice.stop_phrases") in d)
+    report("check: end phrases in another order are not drift (Hermes matches them as a set)",
+           ("jarvis", "voice.stop_phrases") not in d)
+    report("check: Claude's voice file is checked too", d.get(("claude", "VOICE_MODE")) == ("tap", "hold"), str(d))
+    report("check: nothing else is reported", len(d) == 3, str(sorted(d)))
+    out = _cli(["check", "--profiles", str(profiles), "--claude-conf", str(conf)])
+    report("check: the command prints each difference and exits 1 on drift",
+           out[0] == 1 and "silence_threshold" in out[1] and "3 differences" in out[1], out[1][-400:])
+    report("check: it changed nothing", "silence_threshold: 300" in a.read_text())
+
+    if LIVE_PROFILES.is_dir() and LIVE_CLAUDE_CONF.exists():
+        live = V.drift(V.collect(cfg, LIVE_PROFILES, LIVE_CLAUDE_CONF))
+        report("check: today's LIVE profiles and Claude file match agents.toml (read-only)", live == [], str(live))
+    if HERMES_PY.exists() and LIVE_PROFILES.is_dir():
+        ok_all, detail = True, []
+        for i in V.collect(cfg, LIVE_PROFILES, LIVE_CLAUDE_CONF):
+            if i.where == "claude":
+                continue
+            seen = V.hermes_readback(i.path)
+            hv = V.dig(seen, i.key)
+            same = V.same(i.key, hv, i.have)
+            ok_all &= same
+            if not same:
+                detail.append((i.where, i.key, hv, i.have))
+        report("check: voicecfg's line reader agrees with Hermes' own YAML loader on every live key", ok_all, str(detail))
+
+
+def _cli(args: list[str]) -> tuple[int, str]:
+    import subprocess
+    r = subprocess.run([sys.executable, "-m", "voicecfg", *args], cwd=ROOT, capture_output=True, text=True, timeout=120,
+                       env=dict(os.environ, VOICE_DESK_STATE=tempfile.mkdtemp(prefix="vd-cli-")))
+    return r.returncode, r.stdout + r.stderr
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
     test_settings_read_agents_toml()
     test_voices_from_agents_toml()
     test_esther_speaks_through_kokoro()
     test_end_phrases()
+    test_check()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)
