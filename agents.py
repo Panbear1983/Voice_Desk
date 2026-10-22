@@ -74,3 +74,26 @@ def shared(cfg: dict) -> dict[str, Any]:
 def mic(cfg: dict) -> dict[str, Any]:
     """[shared.mic] as the settings.py constant names (pre_roll_sec -> PRE_ROLL_SEC)."""
     return {k.upper(): v for k, v in shared(cfg).get("mic", {}).items()}
+
+
+def _spelled(phrase: str, spellings: dict[str, list[str]]) -> list[str]:
+    """Every spelling of a phrase: "that's all" -> that's all, that is all, that’s all."""
+    out = [phrase]
+    for word, forms in spellings.items():
+        out = [p.replace(word, f, 1) for p in out for f in (forms if word in p else [word])]
+    return out
+
+
+def end_phrases(cfg: dict) -> list[str]:
+    """voice.stop_phrases for every Hermes profile, generated from [shared.end_phrases]:
+    always + "<lead-in>, <phrase>" for every phrase, lead-in and spelling. Hermes matches them as
+    a set, so voicecfg compares sets and only the strings matter, not their order."""
+    ep = shared(cfg).get("end_phrases", {})
+    out = list(ep.get("always", []))
+    for phrase in ep.get("phrases", []):
+        for lead in ep.get("lead_ins", [""]):
+            for p in _spelled(phrase, ep.get("spellings", {})):
+                s = f"{lead}, {p}" if lead else p
+                if s not in out:
+                    out.append(s)
+    return out

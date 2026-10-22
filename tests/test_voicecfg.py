@@ -171,10 +171,31 @@ def test_esther_speaks_through_kokoro() -> None:
         tts._chain = real_chain
 
 
+# 5 ---------------------------------------------------------------------------------------------
+# voice.stop_phrases as written in all four profiles on 2026-10-22 (identical in each)
+_S = ["that's", "that is", "that’s"]
+_LEADS = ["", "oh, ", "okay, ", "ok, ", "thanks, ", "thank you, "]
+DAY_ONE_STOP = (["stop"] + [f"{l}{s} all" for l in _LEADS for s in _S]
+                + [f"{l}{s} all the questions i have" for l in _LEADS for s in _S]
+                + [f"{l}{s} all the question i have" for l in _LEADS for s in _S]
+                + [f"{l}no further questions" for l in _LEADS] + [f"{l}no further question" for l in _LEADS])
+
+
+def test_end_phrases() -> None:
+    import agents
+    got = agents.end_phrases(agents.load())
+    report("end phrases: 67 of them (66 variants + 'stop'), no duplicates", len(got) == 67 == len(set(got)), str(len(got)))
+    report("end phrases: exactly the strings in today's profiles", set(got) == set(DAY_ONE_STOP),
+           f"missing {set(DAY_ONE_STOP) - set(got)} extra {set(got) - set(DAY_ONE_STOP)}")
+    report("end phrases: the curly phone apostrophe is there", "thank you, that’s all" in got)
+    report("end phrases: 'stop' first", got[0] == "stop")
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
     test_settings_read_agents_toml()
     test_voices_from_agents_toml()
     test_esther_speaks_through_kokoro()
+    test_end_phrases()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)
