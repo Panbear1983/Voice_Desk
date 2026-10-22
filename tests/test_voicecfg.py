@@ -13,6 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("VOICE_DESK_STATE", tempfile.mkdtemp(prefix="vd-cfg-test-"))
+# a fake Hermes profiles dir with the four profile names, so routing does not depend on this Mac
+_profiles = Path(tempfile.mkdtemp(prefix="vd-cfg-profiles-"))
+for _p in ("assistant", "orchestrator", "tax_angel_esther", "wanna-buffet"):
+    (_profiles / _p).mkdir()
+    (_profiles / _p / "config.yaml").write_text("model: x\n")
+os.environ["HERMES_PROFILES_DIR"] = str(_profiles)
 
 ok = True
 
@@ -63,7 +69,45 @@ def test_agents_toml_day_one() -> None:
     report("agents.toml: [shared.mic] holds today's mic sensitivity", agents.mic(cfg) == DAY_ONE_MIC, str(agents.mic(cfg)))
 
 
+def _edited_copy(edit) -> Path:
+    """A copy of agents.toml with `edit(text) -> text` applied, in a temp dir."""
+    import agents
+    p = Path(tempfile.mkdtemp(prefix="vd-agents-")) / "agents.toml"
+    p.write_text(edit(agents.PATH.read_text(encoding="utf-8")), encoding="utf-8")
+    return p
+
+
+def _run_with(toml: Path, code: str) -> str:
+    import subprocess
+    env = dict(os.environ, VOICE_DESK_AGENTS=str(toml), VOICE_DESK_STATE=tempfile.mkdtemp(prefix="vd-cfg-sub-"))
+    r = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+    return (r.stdout + r.stderr).strip()
+
+
+# 3 ---------------------------------------------------------------------------------------------
+def test_settings_read_agents_toml() -> None:
+    import settings as S
+    import brain as B
+    report("settings: NAMES comes out exactly as before", S.NAMES == DAY_ONE_NAMES)
+    report("settings: WHISPER_PROMPT comes out exactly as before", S.WHISPER_PROMPT == DAY_ONE_WHISPER_PROMPT)
+    report("settings: mic constants come out exactly as before",
+           all(getattr(S, k) == v for k, v in DAY_ONE_MIC.items()), str({k: getattr(S, k) for k in DAY_ONE_MIC}))
+    report("brain: the greeting pattern is today's",
+           B._GREET == r"(?:ok|okay|hey|hay|heya|hi|high|hai|hiya|hello|hallo|hullo|helo|yo)", B._GREET)
+    toml = _edited_copy(lambda t: t.replace('"helo", "yo"]', '"helo", "yo", "howdy"]')
+                        .replace('names = ["jarvis",', 'names = ["jarvie", "jarvis",')
+                        .replace("silence_send_sec = 1.5", "silence_send_sec = 2.0")
+                        .replace('whisper_prompt = "Jarvis,', 'whisper_prompt = "Jarvie, Jarvis,'))
+    out = _run_with(toml, "import settings as S, brain as B; "
+                          "print(B.addressed('howdy Jarvis, what time is it', hailed=True)); "
+                          "print(B.addressed('hey jarvie', hailed=True)); print(S.SILENCE_SEND_SEC); print(S.WHISPER_PROMPT[:7])")
+    report("settings: an edited agents.toml changes greetings, names, mic and hint words (no code edit)",
+           out.splitlines() == ["('hermes:orchestrator', 'what time is it')", "('hermes:orchestrator', '')", "2.0", "Jarvie,"],
+           out)
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
+    test_settings_read_agents_toml()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)

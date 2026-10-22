@@ -10,8 +10,13 @@ import os
 import pwd
 from pathlib import Path
 
+import agents as _agents
+
 HOME = Path.home()
 REPO = Path(__file__).resolve().parent
+# Names, greetings, hint words, voices and mic sensitivity live in agents.toml (Peter 2026-10-22:
+# one file for every voice setting). Read once at start: restart the listener after editing them.
+AGENTS = _agents.load()
 STATE_DIR = Path(os.environ.get("VOICE_DESK_STATE", HOME / ".voice_desk"))
 _OLD_STATE_DIR = HOME / ".claude_voice"            # the folder's name before the app became Voice Desk
 if "VOICE_DESK_STATE" not in os.environ and not STATE_DIR.exists() and _OLD_STATE_DIR.is_dir():
@@ -22,16 +27,20 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_RATE = 16_000            # whisper wants 16 kHz mono
 BLOCK_MS = 30                   # one analysis slice
 BLOCK = SAMPLE_RATE * BLOCK_MS // 1000
-PRE_ROLL_SEC = 0.6              # audio kept from before speech was detected
-SPEECH_START_SEC = 0.25         # how long sound must stay loud before we call it speech
-SILENCE_SEND_SEC = 1.5          # Peter's pause that acts as "send"
-MAX_UTTERANCE_SEC = 90          # hard stop so a stuck mic cannot record forever
-MIN_SPEECH_SEC = 0.4            # anything shorter is a cough or a click
-NOISE_FLOOR_START = 150.0       # int16 RMS guess before calibration
-SPEECH_OVER_FLOOR = 3.0         # speech = louder than floor * this (and above MIN_SPEECH_RMS)
-MIN_SPEECH_RMS = 350.0
-BARGE_IN_OVER_FLOOR = 4.0       # while Claude speaks, the mic hears the speakers too, so be stricter
-BARGE_IN_SEC = 0.5
+# PRE_ROLL_SEC, SPEECH_START_SEC, SILENCE_SEND_SEC (Peter's pause that acts as "send"),
+# MAX_UTTERANCE_SEC, MIN_SPEECH_SEC, NOISE_FLOOR_START, SPEECH_OVER_FLOOR, MIN_SPEECH_RMS,
+# BARGE_IN_OVER_FLOOR, BARGE_IN_SEC: agents.toml [shared.mic], explained there.
+_MIC = _agents.mic(AGENTS)
+PRE_ROLL_SEC = _MIC["PRE_ROLL_SEC"]
+SPEECH_START_SEC = _MIC["SPEECH_START_SEC"]
+SILENCE_SEND_SEC = _MIC["SILENCE_SEND_SEC"]
+MAX_UTTERANCE_SEC = _MIC["MAX_UTTERANCE_SEC"]
+MIN_SPEECH_SEC = _MIC["MIN_SPEECH_SEC"]
+NOISE_FLOOR_START = _MIC["NOISE_FLOOR_START"]
+SPEECH_OVER_FLOOR = _MIC["SPEECH_OVER_FLOOR"]
+MIN_SPEECH_RMS = _MIC["MIN_SPEECH_RMS"]
+BARGE_IN_OVER_FLOOR = _MIC["BARGE_IN_OVER_FLOOR"]
+BARGE_IN_SEC = _MIC["BARGE_IN_SEC"]
 
 # ---- sleep / wake --------------------------------------------------------------------
 SLEEP_AFTER_SEC = 60            # no speech for this long -> grey light, wake word needed
@@ -51,10 +60,9 @@ WHISPER_MODEL = HOME / ".local/share/whisper-models/ggml-small.bin"   # 1.2 s pe
 WHISPER_PORT = int(os.environ.get("VOICE_DESK_WHISPER_PORT", "8178"))
 WHISPER_THREADS = 8
 WHISPER_LANGUAGE = "auto"       # English and Mandarin both land correctly
-# A hint of the words to expect. Without it the small model hears "Javas", "Piley" and
-# "Juanaba Faye" (measured 2026-10-21 with three Mac voices); with it all four names land.
-# Mandarin still comes back as Mandarin.
-WHISPER_PROMPT = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini. Mute, unmute."
+# A hint of the words to expect (agents.toml [shared] whisper_prompt). Without it the small model
+# hears "Javas", "Piley" and "Juanaba Faye" (measured 2026-10-21); with it all four names land.
+WHISPER_PROMPT = _agents.whisper_prompt(AGENTS)
 
 # whisper invents these on silence / breaths; drop them.
 WHISPER_HALLUCINATIONS = {
@@ -106,17 +114,9 @@ HERMES_SKIP_PROFILES = {"default"}                # lives at ~/.hermes itself an
 # ---- names: who answers to what ------------------------------------------------------------
 # Saying a name at the start of a sentence ("Jarvis, what time is it", "hey Kylie", "talk to
 # Esther") wakes the line AND switches to that thread. Each entry: target -> (the name spoken
-# back, every spelling whisper has been heard to produce for it). Names Peter picked 2026-10-21.
-NAMES = {
-    "claude": ("Claude", ("claude", "claud", "clod", "claude code", "克勞德", "克劳德")),
-    "gemini": ("Gemini", ("gemini", "jemini", "google gemini")),
-    "hermes:orchestrator": ("Jarvis", ("jarvis", "javis", "jaarvis", "javas", "jervis", "jarvas", "orchestrator")),
-    "hermes:assistant": ("Kylie", ("kylie", "kiley", "kylee", "kyley", "kailey", "kaylee", "kayley", "kaley",
-                                   "kyli", "kylie's", "assistant")),
-    "hermes:tax_angel_esther": ("Esther", ("esther", "ester", "tax angel esther", "tax angel")),
-    "hermes:wanna-buffet": ("Wanna Buffet", ("wanna buffet", "wanna buffett", "wannabuffet", "wana buffet",
-                                             "wanna buff it", "warren buffett", "warren buffet")),
-}
+# back, every spelling whisper has been heard to produce for it). From agents.toml [agents.*].
+NAMES = _agents.names(AGENTS)
+GREETINGS = _agents.greetings(AGENTS)     # words before a name that wake an agent ("hi Jarvis")
 HERMES_DISPLAY_NAMES = {t.split(":", 1)[1]: n for t, (n, _) in NAMES.items() if t.startswith("hermes:")}
 HERMES_TURN_TIMEOUT_SEC = 600
 # Peter 2026-10-21: "Voice Desk is responding way too slow". Wanna Buffet runs reasoning_effort

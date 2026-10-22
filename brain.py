@@ -424,9 +424,9 @@ def name_aliases() -> list[tuple[str, str]]:
     return sorted(set(pairs), key=lambda x: len(x[0]), reverse=True)
 
 
-# Greetings that may come before a name. Peter 2026-10-22: "hi", "hey" and "hello" must all wake an agent;
-# the extra spellings are how whisper writes a short greeting ("Hi" -> "High"/"Hai", "Hey" -> "Hay").
-_GREET = r"(?:ok|okay|hey|hay|heya|hi|high|hai|hiya|hello|hallo|hullo|helo|yo)"
+# Greetings that may come before a name (agents.toml [shared] greetings). Peter 2026-10-22: "hi", "hey"
+# and "hello" must all wake an agent; the extra spellings are how whisper writes a short greeting.
+_GREET = "(?:" + "|".join(re.escape(g) for g in S.GREETINGS) + ")"
 _LEAD = rf"(?:(?:{_GREET}|oh|um|so)\s+|(?:嘿|嗨|哈囉)\s*)*"
 _SWITCH_CORE = (r"(?:please\s+)?(?:let me\s+|can i\s+|could i\s+|i want to\s+|i'd like to\s+)?"
                 r"(?:talk|speak|switch|switch over|hand me over|put me through|go back)\s+(?:to|with)\s+(?:the\s+)?")
