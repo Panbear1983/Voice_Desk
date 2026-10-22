@@ -410,6 +410,148 @@ def _cli(args: list[str]) -> tuple[int, str]:
     return r.returncode, r.stdout + r.stderr
 
 
+# 7 ---------------------------------------------------------------------------------------------
+def _changed_lines(before: str, after: str) -> list[tuple[str, str]]:
+    import difflib
+    a, b = before.splitlines(), after.splitlines()
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag != "equal":
+            out.append(("\n".join(a[i1:i2]), "\n".join(b[j1:j2])))
+    return out
+
+
+def _sync_case(profiles: Path, conf: Path, toml: Path, label: str) -> None:
+    import voicecfg as V
+    import agents
+    kylie = profiles / "assistant" / "config.yaml"
+    before = {p: (p / "config.yaml").read_text() for p in profiles.iterdir()}
+    bdir = Path(tempfile.mkdtemp(prefix="vd-bak-"))
+    rc, out = _cli(["sync", "--dry-run", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf)])
+    report(f"sync {label}: --dry-run prints the line changes for Kylie only",
+           rc == 0 and "-      voice: en-US-AvaNeural" in out and "+      voice: en-US-EmmaNeural" in out
+           and "+    voice: en-US-EmmaNeural" in out and "1 files would change" in out, out[-600:])
+    report(f"sync {label}: --dry-run wrote nothing", all((p / "config.yaml").read_text() == t for p, t in before.items()))
+    rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
+                    "--backup-dir", str(bdir)])
+    bak = bdir / "assistant-config.yaml"
+    report(f"sync {label}: --apply backs up first, then writes", rc == 0 and bak.exists()
+           and bak.read_text() == before[kylie.parent], out[-400:])
+    changed = _changed_lines(bak.read_text(), kylie.read_text())
+    report(f"sync {label}: only Kylie's voice lines changed (active provider + tts.edge), nothing else",
+           changed == [("      voice: en-US-AvaNeural", "      voice: en-US-EmmaNeural"),
+                       ("    voice: en-US-AvaNeural", "    voice: en-US-EmmaNeural")], str(changed))
+    report(f"sync {label}: the other three profiles are untouched",
+           all((p / "config.yaml").read_text() == t for p, t in before.items() if p.name != "assistant"))
+    report(f"sync {label}: file permissions kept (0600)", (kylie.stat().st_mode & 0o777) == 0o600, oct(kylie.stat().st_mode))
+    if HERMES_PY.exists():
+        seen = V.hermes_readback(kylie)
+        report(f"sync {label}: Hermes' own loader parses it and reads the new voice",
+               V.dig(seen, "tts.providers.natural.voice") == "en-US-EmmaNeural" and V.dig(seen, "tts.edge.voice") == "en-US-EmmaNeural"
+               and len(V.dig(seen, "voice.stop_phrases")) == 67)
+    report(f"sync {label}: check afterwards -> zero drift",
+           V.drift(V.collect(agents.load(toml), profiles, conf)) == [])
+    rc, out = _cli(["sync", "--dry-run", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf)])
+    report(f"sync {label}: a second run has nothing to do", rc == 0 and out.startswith("No changes"), out)
+
+
+def test_sync() -> None:
+    import shutil
+    import voicecfg as V
+    import agents
+    emma = _edited_copy(lambda t: t.replace('voice = "en-US-AvaNeural"', 'voice = "en-US-EmmaNeural"'))
+    profiles, conf = make_fixtures()
+    _sync_case(profiles, conf, emma, "(fixtures)")
+    if LIVE_PROFILES.is_dir():
+        # copies of today's live config.yaml files, in a temp dir; the live files are only read
+        d = Path(tempfile.mkdtemp(prefix="vd-live-copy-"))
+        for p in ("orchestrator", "assistant", "tax_angel_esther", "wanna-buffet"):
+            (d / "profiles" / p).mkdir(parents=True)
+            shutil.copy2(LIVE_PROFILES / p / "config.yaml", d / "profiles" / p / "config.yaml")
+        shutil.copy2(LIVE_CLAUDE_CONF, d / "voice-defaults.conf")
+        try:
+            _sync_case(d / "profiles", d / "voice-defaults.conf", emma, "(copies of the live files)")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    # a knob a profile does not have yet is added under its block, at the block's indent
+    profiles, conf = make_fixtures()
+    toml = _edited_copy(lambda t: t.replace("silence_threshold = 500\n", "silence_threshold = 500\nsilence_duration = 2.0\n"))
+    wb = profiles / "wanna-buffet" / "config.yaml"
+    before = wb.read_text()
+    rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
+                    "--backup-dir", tempfile.mkdtemp(prefix="vd-bak-")])
+    report("sync: a missing knob is inserted as one line under voice:", rc == 0
+           and _changed_lines(before, wb.read_text()) == [("", "  silence_duration: 2.0")], str(_changed_lines(before, wb.read_text())))
+    if HERMES_PY.exists():
+        seen = V.hermes_readback(wb)
+        report("sync: ... and Hermes reads it, with the column-0 comment's key still in voice:",
+               V.dig(seen, "voice.silence_duration") == 2.0 and V.dig(seen, "voice.silence_threshold") == 500)
+
+    # end phrases: a new phrase in agents.toml rewrites the one stop_phrases line in every profile
+    profiles, conf = make_fixtures()
+    toml = _edited_copy(lambda t: t.replace('"no further question"]', '"no further question", "over and out"]'))
+    rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
+                    "--backup-dir", tempfile.mkdtemp(prefix="vd-bak-")])
+    got = [V.parse_value(V.scan((profiles / p / "config.yaml").read_text())["voice.stop_phrases"].value) for p in FIXTURES]
+    report("sync: a new end phrase reaches all four profiles (73 phrases, with lead-ins)",
+           rc == 0 and all(len(g) == 73 and "thanks, over and out" in g for g in got), out[-300:])
+    report("sync: ... one line per profile", all(len(_changed_lines(FIXTURES[p], (profiles / p / "config.yaml").read_text())) == 1
+                                                  for p in FIXTURES))
+
+    # a written file that does not read back right is put back at once
+    profiles, conf = make_fixtures()
+    real = V.hermes_readback
+    V.hermes_readback = lambda path: (_ for _ in ()).throw(ValueError("Hermes cannot parse it"))
+    try:
+        done, errors = V.apply(V.collect(agents.load(emma), profiles, conf), Path(tempfile.mkdtemp(prefix="vd-bak-")))
+    finally:
+        V.hermes_readback = real
+    report("sync: if Hermes cannot parse the result, the file is restored and the error reported",
+           not done and errors and "restored" in errors[0]
+           and (profiles / "assistant" / "config.yaml").read_text() == FIXTURES["assistant"], str(errors))
+
+
+# 7b --------------------------------------------------------------------------------------------
+CLAUDE_HOOK = Path.home() / ".claude/hooks/speak-response.sh"
+
+
+def test_sync_claude() -> None:
+    import subprocess
+    profiles, conf = make_fixtures()
+    toml = _edited_copy(lambda t: t.replace('voice = "en-US-JennyNeural"          # Claude Code',
+                                            'voice = "en-US-AriaNeural"          # Claude Code'))
+    rc, out = _cli(["sync", "--dry-run", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf)])
+    report("claude: --dry-run shows the one NEURAL_VOICE_EN line", rc == 0 and '+NEURAL_VOICE_EN="en-US-AriaNeural"' in out
+           and "1 files would change" in out, out[-400:])
+    bdir = Path(tempfile.mkdtemp(prefix="vd-bak-"))
+    rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
+                    "--backup-dir", str(bdir)])
+    changed = _changed_lines(CLAUDE_CONF, conf.read_text())
+    report("claude: --apply backs up voice-defaults.conf and changes only that line, comment kept",
+           rc == 0 and (bdir / "claude-voice-defaults.conf").read_text() == CLAUDE_CONF
+           and changed == [('NEURAL_VOICE_EN="en-US-JennyNeural"        # English: Jenny',
+                            'NEURAL_VOICE_EN="en-US-AriaNeural"        # English: Jenny')], str(changed))
+    report("claude: the Hermes profiles are untouched",
+           all((profiles / p / "config.yaml").read_text() == t for p, t in FIXTURES.items()))
+    if not CLAUDE_HOOK.exists():
+        report("claude: speak-response.sh not on this Mac (dry-run skipped)", True)
+        return
+    # the real Stop hook, dry run, in a throwaway HOME: it must pick the voice from the synced file
+    home = Path(tempfile.mkdtemp(prefix="vd-home-"))
+    (home / ".claude").mkdir()
+    (home / ".claude/settings.json").write_text('{"voice": {"enabled": true}}')
+    transcript = home / "t.jsonl"
+    transcript.write_text("")
+    payload = _json.dumps({"transcript_path": str(transcript), "session_id": "voicecfg-test",
+                           "last_assistant_message": "The build passed.", "prompt_id": "p1"})
+    env = {k: v for k, v in os.environ.items() if k != "VOICE_DESK_LOOP"}
+    env.update(HOME=str(home), SPEAK_DRY_RUN="1", SPEAK_STATE_DIR=str(home / "state"), VOICE_DEFAULTS_CONF=str(conf))
+    r = subprocess.run(["/bin/bash", str(CLAUDE_HOOK)], input=payload, capture_output=True, text=True, env=env, timeout=60)
+    report("claude: a dry run of speak-response.sh speaks with the voice from agents.toml",
+           "neural=en-US-AriaNeural" in r.stdout and "The build passed." in r.stdout, (r.stdout + r.stderr)[-300:])
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
     test_settings_read_agents_toml()
@@ -417,5 +559,7 @@ if __name__ == "__main__":
     test_esther_speaks_through_kokoro()
     test_end_phrases()
     test_check()
+    test_sync()
+    test_sync_claude()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)
