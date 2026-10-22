@@ -1,0 +1,125 @@
+# Voice Desk: the ONE place to change anything voice-related for every agent.
+#
+# Peter 2026-10-22: "can all those that are like store inside of the Hermes profile like the voice
+# type and all that be engineered into the voice desk as well". Change a value here, then
+#
+#     .venv/bin/python -m voicecfg check            # what differs from the live profiles (read-only)
+#     .venv/bin/python -m voicecfg sync --dry-run   # the exact line changes it would make
+#     .venv/bin/python -m voicecfg sync --apply     # back up, then write them
+#
+# sync writes each Hermes agent's values into ~/.hermes/profiles/<profile>/config.yaml (so the
+# agent's own window AND its Telegram voice bubbles follow), and Claude's into
+# ~/.claude/voice-defaults.conf (read by ~/.claude/hooks/speak-response.sh).
+# The listener reads names, greetings, hint words and mic settings from here at start (restart it
+# after changing those); voices are read fresh before every spoken line.
+#
+# Order of the [agents.*] blocks matters: it is the order names are matched and listed.
+# Optional keys left out of an agent's block are simply not managed for that agent.
+
+[shared]
+# Words that may come before a name to wake an agent ("hey Jarvis", "hi Kylie"). The extra
+# spellings are how whisper writes a short greeting ("Hi" -> "High"/"Hai", "Hey" -> "Hay").
+greetings = ["ok", "okay", "hey", "hay", "heya", "hi", "high", "hai", "hiya", "hello", "hallo", "hullo", "helo", "yo"]
+# The words whisper is told to expect. Without it the small model hears "Javas", "Piley" and
+# "Juanaba Faye" (measured 2026-10-21); with it all four names land. Mandarin stays Mandarin.
+whisper_prompt = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini. Mute, unmute."
+# Voice Desk's own shared voice: used for Claude and Gemini turns, and for everyone when the
+# dashboard's V key turns per-agent voices off.
+voice = "en-US-JennyNeural"
+voice_zh = "zh-TW-HsiaoChenNeural"
+
+[shared.mic]
+# Microphone / silence detection for the listener and the window.
+pre_roll_sec = 0.6              # audio kept from before speech was detected
+speech_start_sec = 0.25         # how long sound must stay loud before it counts as speech
+silence_send_sec = 1.5          # Peter's pause that acts as "send"
+max_utterance_sec = 90          # hard stop so a stuck mic cannot record forever
+min_speech_sec = 0.4            # anything shorter is a cough or a click
+noise_floor_start = 150.0       # int16 RMS guess before calibration
+speech_over_floor = 3.0         # speech = louder than floor * this (and above min_speech_rms)
+min_speech_rms = 350.0
+barge_in_over_floor = 4.0       # while a reply plays the mic hears the speakers too, so be stricter
+barge_in_sec = 0.5
+
+[shared.end_phrases]
+# The sentences that end a voice chat in a Hermes agent's window and hand the mic back to Voice
+# Desk. Written into every profile's voice.stop_phrases as: always + (lead-in, phrase) for every
+# lead-in and phrase, with every spelling of each word listed under `spellings`.
+always = ["stop"]
+lead_ins = ["", "oh", "okay", "ok", "thanks", "thank you"]
+phrases = ["that's all", "that's all the questions i have", "that's all the question i have",
+           "no further questions", "no further question"]
+spellings = { "that's" = ["that's", "that is", "that’s"] }   # the last one has a phone's curly apostrophe
+
+# ---- the agents --------------------------------------------------------------------------------
+# names:     every spelling whisper has been heard to produce for the agent's name
+# voice:     the reply voice. Hermes agents: written into the profile's active tts provider (and
+#            tts.edge.voice when the profile has one). Claude: NEURAL_VOICE_EN.
+# voice_zh:  the Mandarin voice Voice Desk (and Claude's hook) speaks with
+# speed:     tts.edge.speed in the profile
+# auto_tts, silence_duration, silence_threshold, barge_in, barge_in_grace_seconds:
+#            the profile's voice-mode knobs (its top-level `voice:` block)
+
+[agents.claude]
+target = "claude"
+display = "Claude"
+names = ["claude", "claud", "clod", "claude code", "克勞德", "克劳德"]
+voice = "en-US-JennyNeural"          # Claude Code's spoken replies (NEURAL_VOICE_EN)
+voice_zh = "zh-TW-HsiaoChenNeural"   # NEURAL_VOICE_ZH
+always_on = true                     # VOICE_ALWAYS_ON: every Claude Code session starts with voice on
+mode = "hold"                        # VOICE_MODE: push-to-talk mode restored if missing
+
+[agents.gemini]
+target = "gemini"
+display = "Gemini"
+names = ["gemini", "jemini", "google gemini"]
+
+[agents.jarvis]
+profile = "orchestrator"
+display = "Jarvis"
+names = ["jarvis", "javis", "jaarvis", "javas", "jervis", "jarvas", "orchestrator"]
+voice = "en-US-JennyNeural"
+voice_zh = "zh-TW-HsiaoChenNeural"
+speed = 1.0
+auto_tts = true
+silence_duration = 1.5
+silence_threshold = 200
+barge_in = false
+
+[agents.kylie]
+profile = "assistant"
+display = "Kylie"
+names = ["kylie", "kiley", "kylee", "kyley", "kailey", "kaylee", "kayley", "kaley", "kyli", "kylie's", "assistant"]
+voice = "en-US-AvaNeural"
+voice_zh = "zh-TW-HsiaoChenNeural"
+speed = 1.0
+auto_tts = true
+silence_duration = 1.5
+silence_threshold = 200
+barge_in = false
+
+[agents.esther]
+profile = "tax_angel_esther"
+display = "Esther"
+names = ["esther", "ester", "tax angel esther", "tax angel"]
+voice = "alloy"                      # her Kokoro voice, everywhere (Peter 2026-10-22)
+voice_zh = "zh-TW-HsiaoYuNeural"     # Kokoro speaks English only; her Mandarin lines use this Edge voice
+# Voice Desk speaks her lines through her own Kokoro script: <command> <text file> <out.wav> <voice>
+command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python",
+           "~/.hermes/profiles/tax_angel_esther/scripts/esther_tts.py"]
+fallback = "en-US-AriaNeural"        # only if Kokoro fails, so the line never goes silent
+auto_tts = true
+silence_duration = 1.5
+barge_in = false
+barge_in_grace_seconds = 0.5
+
+[agents.wanna_buffet]
+profile = "wanna-buffet"
+display = "Wanna Buffet"
+names = ["wanna buffet", "wanna buffett", "wannabuffet", "wana buffet", "wanna buff it", "warren buffett", "warren buffet"]
+voice = "en-US-AndrewNeural"
+voice_zh = "zh-TW-YunJheNeural"
+speed = 0.92
+auto_tts = true
+silence_threshold = 500
+barge_in = false
