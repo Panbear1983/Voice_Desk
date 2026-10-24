@@ -32,15 +32,16 @@
   <path class="ln" d="M855,136 V170 H105 V140"/>
   <text class="s" x="385" y="188">the mic reopens · talk over a reply to interrupt</text>
 
-  <!-- Claude, shared by both rows -->
+  <!-- Provider router, shared by both rows -->
   <rect x="580" y="66" width="164" height="270" rx="12" fill="#1f1a14" stroke="#f39c12" stroke-width="2"/>
-  <text class="t" x="662" y="168" style="font-size:17px">The brain</text>
-  <text class="s" x="662" y="192">Claude · Gemini · Hermes</text>
-  <text class="s" x="662" y="208">one thread each</text>
-  <text class="s" x="662" y="224">"talk to Esther" switches</text>
-  <text class="s" x="662" y="240">reads files</text>
-  <text class="s" x="662" y="256">runs commands</text>
-  <text class="s" x="662" y="272">searches the web</text>
+  <text class="t" x="662" y="158" style="font-size:17px">The brain</text>
+  <text class="s" x="662" y="184">Claude · Gemini</text>
+  <text class="s" x="662" y="200">Codex · Hermes</text>
+  <text class="s" x="662" y="216">one thread each</text>
+  <text class="s" x="662" y="232">"talk to Codex" switches</text>
+  <text class="s" x="662" y="248">reads files</text>
+  <text class="s" x="662" y="264">runs commands</text>
+  <text class="s" x="662" y="280">searches the web</text>
   <text class="s" x="662" y="304" fill="#f39c12">"still running a command…"</text>
 
   <!-- iPhone row -->

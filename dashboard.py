@@ -93,6 +93,9 @@ class Dashboard(App):
         claude = next((a for a in agents.agents(cfg) if a.target == "claude"), None)
         if claude and claude.voice:
             rows.append(f"Claude: {voices.short(voices.Voice(claude.voice, claude.voice_zh or voices.zh_for(claude.voice), 'agents'))}")
+        for agent in agents.agents(cfg):
+            if agent.target in {"gemini", "codex"}:
+                rows.append(f"{agent.display}: {voices.short(voices.voice_for(agent.target))}")
         text = f"[b #9b59b6]Voices[/] ({mode}) — V toggles · change them in agents.toml\n[dim]{'   '.join(rows)}[/dim]"
         try:
             off = voicecfg.drift(voicecfg.collect(cfg, voicecfg.PROFILES, voicecfg.CLAUDE_CONF))
@@ -138,7 +141,8 @@ class Dashboard(App):
                 + f"[dim]turns {data.get('turns', 0)} · last took {data.get('took', '—')}s · "
                   f"say \"hey Jarvis\" / \"hey Kylie\" / \"hey Esther\" / \"hey Wanna Buffet\": their own window starts "
                   f"listening; end with \"that's all\" / \"that's all the questions I have\" / \"no further questions\". "
-                  f"\"hey Claude, …\" answers here · \"mute\" / \"unmute\" · X hands the mic back[/dim]")
+                  f"\"hey Claude, …\" / \"hey Gemini, …\" / \"hey Codex, …\" answer here · "
+                  f"\"mute\" / \"unmute\" · X hands the mic back[/dim]")
         self.query_one("#body", Static).update(body)
         msg = self._msg if time.monotonic() < self._msg_until else ""
         self.query_one("#msg", Static).update(msg)

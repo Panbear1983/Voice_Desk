@@ -79,7 +79,7 @@ conversation recorded from real Claude turns.
 
 ## How it works
 
-<img src="docs/img/how_it_works.svg" alt="Diagram: on the Mac, you talk, a pause sends, whisper turns speech into text, Claude Code answers, and the reply is spoken before the mic reopens. From the iPhone, Siri dictation goes through Tailscale to a receiver on the Mac and into the same Claude conversation." width="100%">
+<img src="docs/img/how_it_works.svg" alt="Diagram: the Mac voice loop and iPhone Siri receiver route text to Claude, Gemini, Codex or Hermes, each with its own saved conversation, and return a spoken reply." width="100%">
 
 Each step is one small Python file:
 
@@ -170,6 +170,32 @@ This adapter does not attach to an already-open interactive Codex session.
 Offline adapter checks (no model usage): `.venv/bin/python tests/test_codex.py`.
 They cover new/resumed sessions, name routing, private state, stdin handling, cancellation,
 timeouts and quota failures. A real phone/Siri test also needs your device and its permissions.
+
+### Codex in the Mac window and dashboard
+
+Codex uses the same Voice Desk window and listener dashboard as the other brains.
+The active name, conversation and voice list identify Codex; `./start.sh` opens the
+voice window, while `./dashboard.sh` shows the always-on Mac listener without opening
+another microphone. The listener dashboard reports Mac listener activity; it does not
+mirror the phone receiver's independent requests.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/img/08_codex_window.png" alt="Voice Desk window with Codex selected and two recorded test replies proving conversation resume" width="100%"><br><sub><b>Codex voice window.</b> The active service and transcript identify Codex.</sub></td>
+<td width="50%"><img src="docs/img/09_codex_dashboard.png" alt="Voice Desk listener dashboard displaying Codex as the active service, its recorded reply, and its shared voice" width="100%"><br><sub><b>Codex dashboard view.</b> The same control panel displays the active Codex conversation.</sub></td>
+</tr>
+</table>
+
+These images are headless renders of the real UI using the recorded two-turn Codex
+adapter/phone-endpoint test in `docs/codex_demo.json`. The displayed speaking state is a
+UI replay, not a live audio capture or an iPhone screenshot. The code-word recall verified
+session continuity; Peter separately confirmed the Siri shortcut worked on 2026-10-24.
+Reproduce these views without a microphone or model calls:
+
+```bash
+.venv/bin/python docs/codex_screenshots.py
+python3 docs/render_images.py --only 08_codex_window 09_codex_dashboard --no-gif
+```
 
 ## Talk to it
 

@@ -101,7 +101,7 @@ class VoiceDesk(App):
             log.write(f"[dim #f39c12]… {text}[/]")
         elif kind == "note":
             log.write(f"[dim]({text})[/dim]")
-        self.query_one("#mode", Static).update("open mic" if self.engine.mode == "open" else "tap to talk")
+        self._meter()  # Keep the active brain visible immediately after every event.
 
     # -- keys -----------------------------------------------------------------------------------
     def action_tap(self) -> None:

@@ -1,0 +1,14 @@
+{
+  "recorded_on": "2026-10-24",
+  "source": "Live Codex adapter test: first question through Brain.ask, second through the authenticated local phone endpoint; same saved conversation ID. No microphone or speech playback was part of this test.",
+  "turns": [
+    {
+      "you": "Remember the code word silverfern. Reply only: remembered. Do not use tools.",
+      "codex": "remembered"
+    },
+    {
+      "you": "What code word did I give you? Reply with that word only. Do not use tools.",
+      "codex": "silverfern"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ PNG because GitHub shows SVG screenshots without their fonts; the GIF is the her
 """
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from PIL import Image
@@ -16,11 +17,12 @@ LOOP = ["01_listening", "02_hearing", "03_thinking", "04_speaking"]
 LOOP_MS = [1400, 1100, 1700, 2400]
 
 
-def render() -> None:
+def render(names: list[str] | None = None) -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(device_scale_factor=2)
-        for svg in sorted(IMG.glob("*.svg")):
+        sources = [IMG / (name + ".svg") for name in names] if names else sorted(IMG.glob("*.svg"))
+        for svg in sources:
             page.goto(svg.as_uri())
             page.wait_for_timeout(400)                      # web font
             box = page.locator("svg").bounding_box()
@@ -45,7 +47,12 @@ def gif() -> None:
 
 
 if __name__ == "__main__":
-    render()
-    gif()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", nargs="+", help="Render only these SVG basenames")
+    parser.add_argument("--no-gif", action="store_true", help="Keep the existing hero animation")
+    args = parser.parse_args()
+    render(args.only)
+    if not args.no_gif:
+        gif()
     for f in sorted(IMG.iterdir()):
         print(f"{f.name:22} {f.stat().st_size // 1024:>5} KB")
