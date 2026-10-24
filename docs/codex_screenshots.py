@@ -36,6 +36,10 @@ OUT = ROOT / "docs/img"
 DEMO = json.loads((ROOT / "docs/codex_demo.json").read_text())
 
 
+def save_svg(name, source):
+    (OUT / name).write_text("\n".join(line.rstrip() for line in source.splitlines()) + "\n", encoding="utf-8")
+
+
 async def shoot():
     OUT.mkdir(parents=True, exist_ok=True)
     with patch.object(engine.Engine, "start", lambda self: None), \
@@ -49,7 +53,7 @@ async def shoot():
             window._apply("state", "speaking")
             await pilot.pause(0.3)
             assert "Codex" in str(window.query_one("#mode", Static).render())
-            (OUT / "08_codex_window.svg").write_text(window.export_screenshot(), encoding="utf-8")
+            save_svg("08_codex_window.svg", window.export_screenshot())
 
         last = DEMO["turns"][-1]
         snapshot = {"target": "codex", "name": "Codex", "state": "speaking", "level": 0,
@@ -64,7 +68,7 @@ async def shoot():
                 assert "Codex" in str(dashboard.query_one("#who", Static).render())
                 assert last["codex"] in str(dashboard.query_one("#body", Static).render())
                 assert "Codex:" in str(dashboard.query_one("#voices", Static).render())
-                (OUT / "09_codex_dashboard.svg").write_text(dashboard.export_screenshot(), encoding="utf-8")
+                save_svg("09_codex_dashboard.svg", dashboard.export_screenshot())
 
 
 if __name__ == "__main__":
