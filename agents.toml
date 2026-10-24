@@ -22,7 +22,7 @@
 greetings = ["ok", "okay", "hey", "hay", "heya", "hi", "high", "hai", "hiya", "hello", "hallo", "hullo", "helo", "yo"]
 # The words whisper is told to expect. Without it the small model hears "Javas", "Piley" and
 # "Juanaba Faye" (measured 2026-10-21); with it all four names land. Mandarin stays Mandarin.
-whisper_prompt = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini. Mute, unmute."
+whisper_prompt = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."
 # Voice Desk's own shared voice: used for Claude and Gemini turns, and for everyone when the
 # dashboard's V key turns per-agent voices off.
 voice = "en-US-JennyNeural"
@@ -73,6 +73,11 @@ mode = "hold"                        # VOICE_MODE: push-to-talk mode restored if
 target = "gemini"
 display = "Gemini"
 names = ["gemini", "jemini", "google gemini"]
+
+[agents.codex]
+target = "codex"
+display = "Codex"
+names = ["codex", "code x", "openai codex"]
 
 [agents.jarvis]
 profile = "orchestrator"

@@ -14,6 +14,12 @@ Since 2026-10-15 evening `brain.Brain` is a router: "claude" (ClaudeBrain, `clau
 "hermes:<profile>" (HermesBrain, `hermes -p <profile> -z … --resume <id>` with HERMES_HOME set; the new
 session id is read from the profile's state.db because one-shot prints none). Sticky target in
 `~/.voice_desk/brain` ("talk to Esther"); the phone passes `to` per request, one Shortcut per brain.
+Codex is optional: `codex_brain.CodexBrain` runs `codex exec --json`, then resumes the exact
+saved UUID with `codex exec resume`. Its ID is `~/.voice_desk/codex_session`, separate from
+Claude/Gemini/Hermes and any interactive Codex window. Use the local user's Codex login and
+configured model; never embed an author's credentials, paths or session UUID in the adapter.
+Keep workspace-write sandboxing, bounded cancellation/timeouts and no automatic replay of
+failed turns. `tests/test_codex.py` is offline and uses a fake executable; no model tokens.
 
 Standing rules:
 - Peter never types in the window and never presses record or play. Keep it that way.

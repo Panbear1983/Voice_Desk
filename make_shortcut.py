@@ -6,7 +6,8 @@ iCloud then syncs it to the iPhone.
 
   .venv/bin/python make_shortcut.py                      # 'Talk to Claude.shortcut' here + ~/Desktop/Misc
   .venv/bin/python make_shortcut.py --to esther          # 'Talk to Esther.shortcut', pinned to that Hermes profile
-  .venv/bin/python make_shortcut.py --all                # one file per thread (Claude + every Hermes profile)
+  .venv/bin/python make_shortcut.py --to codex           # 'Talk to Codex.shortcut', pinned to its own conversation
+  .venv/bin/python make_shortcut.py --all                # one file per installed brain and Hermes profile
   .venv/bin/python make_shortcut.py --to orchestrator --name "Talk to the Boss"
 """
 from __future__ import annotations
@@ -139,9 +140,9 @@ def make(name: str, to: str) -> Path:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build signed 'Talk to ...' Shortcuts for the iPhone.")
-    ap.add_argument("--to", default="", help="thread: 'claude' or a Hermes profile (name or hermes:<profile>)")
+    ap.add_argument("--to", default="", help="thread: 'claude', 'gemini', 'codex' or a Hermes profile")
     ap.add_argument("--name", default="", help="Shortcut name (what you say to Siri); default 'Talk to <name>'")
-    ap.add_argument("--all", action="store_true", help="one Shortcut per thread: Claude and every Hermes profile")
+    ap.add_argument("--all", action="store_true", help="one Shortcut per installed brain and Hermes profile")
     args = ap.parse_args()
     brain = Brain()
     if args.all:

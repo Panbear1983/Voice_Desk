@@ -5,7 +5,7 @@ Claude turn can take 20 s or more, so the phone never waits for a whole turn:
 
 POST /ask   {"text": "...", "to": "esther"}  -> {"reply": "...", "pending": bool}
                                 the answer if it was ready within ASK_WAIT_SEC, else ".".
-                                "to" (optional) picks the thread: "claude" or a Hermes
+                                "to" (optional) picks "claude", "gemini", "codex" or a Hermes
                                 profile by name; each phone Shortcut is pinned to one.
 GET  /reply                  -> {"reply": "..."}
                                 the next finished answer (waits up to POLL_WAIT_SEC for one);

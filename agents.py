@@ -19,7 +19,7 @@ KNOBS = ("auto_tts", "silence_duration", "silence_threshold", "barge_in", "barge
 @dataclass(frozen=True)
 class Agent:
     key: str                         # the [agents.<key>] name
-    target: str                      # brain target: "claude", "gemini" or "hermes:<profile>"
+    target: str                      # brain target: "claude", "gemini", "codex" or "hermes:<profile>"
     display: str                     # the name spoken back
     names: tuple[str, ...]           # every spelling whisper produces for it
     voice: Optional[str] = None

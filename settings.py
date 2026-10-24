@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import pwd
+import shutil
 from pathlib import Path
 
 import agents as _agents
@@ -150,6 +151,14 @@ GEMINI_BIN = os.environ.get("VOICE_DESK_GEMINI_BIN", str(HOME / ".local/bin/agy"
 GEMINI_MODEL = "gemini-3.8-flash-medium"          # `agy models` lists the choices
 GEMINI_TURN_TIMEOUT_SEC = 600
 GEMINI_SESSION_FILE = STATE_DIR / "gemini_session"
+
+# Optional Codex CLI: its own Voice Desk conversation, never a hardcoded personal session.
+CODEX_BIN = os.environ.get("VOICE_DESK_CODEX_BIN") or shutil.which("codex") or str(HOME / ".local/bin/codex")
+CODEX_CWD = Path(os.environ.get("VOICE_DESK_CODEX_CWD", str(CLAUDE_CWD))).expanduser()
+CODEX_MODEL = os.environ.get("VOICE_DESK_CODEX_MODEL", "")  # empty = Codex's configured default
+CODEX_EFFORT = os.environ.get("VOICE_DESK_CODEX_EFFORT", "")
+CODEX_TURN_TIMEOUT_SEC = 600
+CODEX_SESSION_FILE = STATE_DIR / "codex_session"
 
 # ---- the always-on listener (listener.py, run by launchd) ----------------------------------
 # Sleeps with the mic open, listening only for a name; runs one turn; speaks; sleeps again.

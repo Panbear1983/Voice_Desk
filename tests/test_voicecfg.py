@@ -29,10 +29,11 @@ def report(name: str, passed: bool, detail: str = "") -> None:
     print(f"[{'PASS' if passed else 'FAIL'}] {name}" + (f"  {detail}" if detail and not passed else ""))
 
 
-# Day one: agents.toml must hold exactly what the code held on 2026-10-22 (commit f3cbe43).
+# Original agents and settings, plus the optional Codex entry added 2026-10-24.
 DAY_ONE_NAMES = {
     "claude": ("Claude", ("claude", "claud", "clod", "claude code", "克勞德", "克劳德")),
     "gemini": ("Gemini", ("gemini", "jemini", "google gemini")),
+    "codex": ("Codex", ("codex", "code x", "openai codex")),
     "hermes:orchestrator": ("Jarvis", ("jarvis", "javis", "jaarvis", "javas", "jervis", "jarvas", "orchestrator")),
     "hermes:assistant": ("Kylie", ("kylie", "kiley", "kylee", "kyley", "kailey", "kaylee", "kayley", "kaley",
                                    "kyli", "kylie's", "assistant")),
@@ -48,7 +49,7 @@ DAY_ONE_VOICES = {   # target -> the voice written in its Hermes profile today
     "hermes:tax_angel_esther": "alloy",
     "hermes:wanna-buffet": "en-US-AndrewNeural",
 }
-DAY_ONE_WHISPER_PROMPT = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini. Mute, unmute."
+DAY_ONE_WHISPER_PROMPT = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."
 DAY_ONE_MIC = {   # settings.py lines 25-34 on 2026-10-22
     "PRE_ROLL_SEC": 0.6, "SPEECH_START_SEC": 0.25, "SILENCE_SEND_SEC": 1.5, "MAX_UTTERANCE_SEC": 90,
     "MIN_SPEECH_SEC": 0.4, "NOISE_FLOOR_START": 150.0, "SPEECH_OVER_FLOOR": 3.0, "MIN_SPEECH_RMS": 350.0,

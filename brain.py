@@ -1,8 +1,8 @@
-"""The brains: one headless Claude Code thread, one Gemini conversation, and one headless thread
+"""The brains: separate Claude Code, Gemini and Codex conversations, and one headless thread
 per Hermes profile.
 
 `Brain` is the front door the window and the phone receiver talk to. It keeps a separate
-conversation per target ("claude", or "hermes:<profile>"), remembers which one you are
+conversation per target ("claude", "gemini", "codex", or "hermes:<profile>"), remembers which one you are
 talking to (say "talk to Esther" / "talk to Claude"), and serializes turns with a file lock
 so the Mac window and the phone take turns.
 """
@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import threading
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import settings as S
+from codex_brain import CodexBrain
 
 StatusCb = Callable[[str], None]
 TextCb = Callable[[str], None]
@@ -414,6 +416,8 @@ def name_aliases() -> list[tuple[str, str]]:
     its profile name in words (e.g. 'builder')."""
     pairs: list[tuple[str, str]] = []
     have = {f"hermes:{p}" for p in hermes_profiles()} | {"claude"} | ({"gemini"} if Path(S.GEMINI_BIN).exists() else set())
+    if shutil.which(S.CODEX_BIN):
+        have.add("codex")
     for target, (display, spoken) in S.NAMES.items():
         if target in have:
             pairs += [(_plain(a), target) for a in (display, *spoken)]
@@ -481,12 +485,15 @@ class Brain:
     def __init__(self) -> None:
         self.claude = ClaudeBrain()
         self.gemini = GeminiBrain()
+        self.codex = CodexBrain()
         self._hermes: dict[str, HermesBrain] = {}
         self._current = self.claude
 
     # -- targets --------------------------------------------------------------------------
     def targets(self) -> list[str]:
-        return ["claude"] + (["gemini"] if Path(S.GEMINI_BIN).exists() else []) + [f"hermes:{p}" for p in hermes_profiles()]
+        return (["claude"] + (["gemini"] if Path(S.GEMINI_BIN).exists() else [])
+                + (["codex"] if shutil.which(S.CODEX_BIN) else [])
+                + [f"hermes:{p}" for p in hermes_profiles()])
 
     def target(self) -> str:
         """The sticky target (what the Mac window talks to), set by voice."""
@@ -505,6 +512,8 @@ class Brain:
             return self.claude
         if t == "gemini":
             return self.gemini
+        if t == "codex":
+            return self.codex
         profile = t.split(":", 1)[1]
         if profile not in self._hermes:
             self._hermes[profile] = HermesBrain(profile)

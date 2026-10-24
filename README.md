@@ -2,7 +2,7 @@
 
 # Voice Desk
 
-**Talk to Claude Code, Gemini and your Hermes agents like a phone call. One voice line, hands-free, on your Mac and your iPhone.**
+**Talk to Claude Code, Gemini, Codex and your Hermes agents like a phone call. One voice line, hands-free, on your Mac and your iPhone.**
 
 <table>
 <tr>
@@ -29,7 +29,7 @@ button and no typing.
 
 This isn't a chatbot with a voice bolted on. It is **the real Claude Code**, with your
 files, your terminal and the web, driven by your voice. And it is a desk with more than one
-person behind it: say "talk to Gemini" or "talk to Esther" (a [Hermes](https://github.com/NousResearch/hermes-agent)
+person behind it: say "talk to Gemini", "talk to Codex" or "talk to Esther" (a [Hermes](https://github.com/NousResearch/hermes-agent)
 profile) and the same line carries on with that brain's own separate conversation. Ask it to count the lines in a
 project, check why a job failed, or look something up. While it works it tells you what
 it's doing ("still running a command"), so you're never left in silence. Away from the
@@ -47,9 +47,9 @@ desk, the same conversation continues on your iPhone through Siri.
 - **Bilingual.** Speak English or Mandarin, and get the answer back in the same language.
 - **No API key.** It uses the `claude` command you're already logged into, on your normal subscription.
 - **Change things by voice.** "Use Opus", "think deep", "go to sleep", "goodbye".
-- **More than one brain.** Gemini and every [Hermes](https://github.com/NousResearch/hermes-agent) profile
+- **More than one brain.** Gemini, Codex and every [Hermes](https://github.com/NousResearch/hermes-agent) profile
   on the Mac are on the same line. Say "talk to Gemini" or "talk to Esther" and the window and the
-  phone carry on with that brain's own thread.
+  phone carry on with that brain's own thread. Codex is optional and appears when its CLI is installed.
 
 ---
 
@@ -88,6 +88,7 @@ Each step is one small Python file:
 | Listen | `audio.py` | Keeps the mic open and compares loudness with a background-noise level that adjusts itself. 0.25 s of sound starts a recording, 1.5 s of quiet ends it, and anything shorter than 0.4 s is ignored as a cough. No speech library needed. |
 | Transcribe | `stt.py` | `whisper-server` stays loaded, so each turn takes about 1.3 s instead of reloading the model every time. It filters out whisper's habit of hallucinating "Thank you." from silence. |
 | Think | `brain.py` | Runs `claude -p --resume <thread>` with a short instruction to *answer like a phone call*: one to four spoken sentences, with no code, paths or links. Long detail goes to a file instead. A file lock lets the Mac and the phone take turns on one thread. |
+| Codex | `codex_brain.py` | Runs `codex exec --json`, saves the returned thread ID, then uses `codex exec resume <id>` for later messages. The same router, turn lock and phone receiver carry its replies. |
 | Speak | `tts.py` | Strips markdown, picks an English or Mandarin voice, and plays the answer in a way that can be cut off instantly. |
 | Loop | `engine.py`, `app.py` | Runs the cycle, spoken commands and sleep/wake. A [Textual](https://textual.textualize.io) window draws the light, meter and transcript. |
 | Phone | `receiver.py` | A tiny token-protected web endpoint the iPhone Shortcut calls: `POST /ask` takes the question and answers within 8 s if it can; `GET /reply` hands out each finished answer exactly once, so the phone can check back on a fixed schedule and never keeps Siri waiting. |
@@ -126,6 +127,50 @@ uv pip install --python .venv/bin/python -r requirements.txt
 The first time it opens, macOS asks whether Terminal may use the microphone. Click
 **Allow**. Wait for "I'm listening" and start talking.
 
+## Add Codex
+
+Install the [Codex CLI](https://learn.chatgpt.com/docs/cli/reference) on the Mac, then run
+`codex login` with your own account. Voice Desk discovers the `codex` executable through
+`PATH`, or `~/.local/bin/codex`. Restart Voice Desk's receiver/listener after updating the
+code and agent names; then say **"Hey Codex"** or **"Talk to Codex"**.
+
+Codex starts its own Voice Desk conversation on the first question and resumes it on
+later questions, including when moving between the Mac and phone. Each installation keeps
+its own ID in `~/.voice_desk/codex_session` (or the `VOICE_DESK_STATE` folder). Nothing in
+the repository points to the author's account or a personal Codex conversation. The existing
+new-thread control resets only the selected brain's saved ID.
+
+For Siri, use the existing phone setup and build the provider-specific shortcut:
+
+```bash
+.venv/bin/python make_shortcut.py --to codex
+```
+
+Add the generated **Talk to Codex.shortcut** through Apple Shortcuts; iCloud can sync it to
+the iPhone. Say **"Siri, Talk to Codex"**. It uses the same authenticated Mac receiver and
+reply polling as the other providers, so Siri reads the actual response. The Mac must be
+awake, the receiver running, and the phone able to reach it through the configured network.
+Generated shortcuts embed the receiver address/token: keep them private; they are gitignored.
+
+Optional environment variables (set these wherever the receiver/listener is launched):
+
+| Variable | Default / purpose |
+|---|---|
+| `VOICE_DESK_CODEX_BIN` | Override the discovered Codex executable path. |
+| `VOICE_DESK_CODEX_CWD` | Working folder; defaults to the Mac user's home, like the other brains. Set a project folder to scope work more narrowly. |
+| `VOICE_DESK_CODEX_MODEL` | Empty: use Codex's configured model. Set a model available to your own account to override it. |
+| `VOICE_DESK_CODEX_EFFORT` | Empty: use Codex's configured reasoning effort. |
+
+Codex runs with the `workspace-write` sandbox and no interactive approval prompts;
+commands requiring more access fail rather than bypassing the sandbox. Voice Desk does
+not copy credentials, switch accounts, or automatically resend failed turns. A quota failure
+is spoken clearly and the saved conversation remains available after the allowance resets.
+This adapter does not attach to an already-open interactive Codex session.
+
+Offline adapter checks (no model usage): `.venv/bin/python tests/test_codex.py`.
+They cover new/resumed sessions, name routing, private state, stdin handling, cancellation,
+timeouts and quota failures. A real phone/Siri test also needs your device and its permissions.
+
 ## Talk to it
 
 | Say | What happens |
@@ -140,7 +185,7 @@ The first time it opens, macOS asks whether Terminal may use the microphone. Cli
 | "which model" | tells you which model it's using |
 | "think deep" / "quick mode" / "max effort" / "normal mode" | how hard Claude thinks |
 | "which effort" | tells you the current effort level |
-| "talk to Gemini" / "talk to Jarvis" / "talk to Kylie" / "talk to Esther" / "talk to Wanna Buffet" / "talk to Claude" | switches to another brain, each with its own separate conversation: Gemini, and every [Hermes](https://github.com/NousResearch/hermes-agent) profile on the Mac |
+| "talk to Codex" / "talk to Gemini" / "talk to Jarvis" / "talk to Kylie" / "talk to Esther" / "talk to Wanna Buffet" / "talk to Claude" | switches to another brain, each with its own separate conversation: Codex, Gemini, and every [Hermes](https://github.com/NousResearch/hermes-agent) profile on the Mac |
 | "who am I talking to" / "who can I talk to" | which brain is on, and the list |
 | "open mic" / "tap to talk" | switches listening mode (tap mode is for noisy rooms) |
 | "goodbye", 「再見」 | ends the session; Claude saves a short note about what you discussed |
