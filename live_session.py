@@ -257,3 +257,123 @@ class LiveBrain:
 
     def cancel(self) -> None:
         self._cancel.set()
+
+
+# ---- Hermes characters ---------------------------------------------------------------------
+class HermesLiveBrain:
+    """One Hermes character's open window ("Hermes — <profile>" in herdr), same interface.
+
+    Hermes windows are found by their title, not herdr's agent field: the Orchestrator thinks
+    through the Antigravity CLI, so herdr reports that pane as "agy". The answer is read from the
+    character's own conversation store (<profile>/state.db, table messages): the turn is over
+    when an assistant row with finish_reason "stop" follows Peter's words.
+    Hermes windows read answers aloud themselves (voice mode, TTS on); ~/.voice_desk/live_turn
+    makes them skip that for a Voice Desk turn (one guarded check in Hermes' cli_voice_mixin.py).
+    """
+
+    def __init__(self, profile: str, display: str) -> None:
+        self.profile = profile
+        self.name = display
+        self.target = f"hermes:{profile}"
+        self.session_id: Optional[str] = None
+        self.last_tool = ""
+        self._cancel = threading.Event()
+        self.db = S.HERMES_PROFILES_DIR / profile / "state.db"
+
+    def _load_session(self) -> Optional[str]:
+        return None
+
+    def new_thread(self) -> None:
+        """A live window cannot be reset by voice."""
+
+    def pane(self) -> Optional[tuple[str, str, str]]:
+        try:
+            panes = json.loads(_herdr("pane", "list"))["result"]["panes"]
+        except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+            return None
+        title = f"Hermes — {self.profile}"
+        mine = [(p["pane_id"], p.get("agent_status", ""), "") for p in panes
+                if (p.get("terminal_title_stripped") or "").strip() == title]
+        return mine[0] if len(mine) == 1 else None
+
+    def available(self) -> bool:
+        return self.db.exists() and self.pane() is not None
+
+    def _rows(self, after_id: int) -> list[tuple]:
+        import sqlite3
+        con = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=5)
+        try:
+            return con.execute("select id, session_id, role, coalesce(content,''), coalesce(tool_name,''), "
+                               "coalesce(tool_calls,''), coalesce(finish_reason,'') from messages "
+                               "where id > ? order by id", (after_id,)).fetchall()
+        finally:
+            con.close()
+
+    def _max_id(self) -> int:
+        import sqlite3
+        con = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=5)
+        try:
+            return con.execute("select coalesce(max(id), 0) from messages").fetchone()[0]
+        finally:
+            con.close()
+
+    def ask(self, text: str, on_status: StatusCb = lambda s: None, on_text: TextCb = lambda s: None) -> str:
+        found = self.pane()
+        if not found:
+            return f"Your {self.name} window is not open in herdr right now, so I could not reach it."
+        pane_id = found[0]
+        start_id = self._max_id()
+        self._cancel.clear()
+        self.last_tool = ""
+        message = PREFIX + " ".join(text.split())
+        S.LIVE_TURN_FLAG.write_text(f"{self.target} {time.time()}")
+        try:
+            _herdr("pane", "send-text", pane_id, message)
+            time.sleep(ENTER_DELAY_SEC)
+            _herdr("pane", "send-keys", pane_id, "enter")
+            return self._follow(pane_id, start_id, message, on_status, on_text)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+            return f"I could not type into your {self.name} window. The error was: {e}"
+        finally:
+            S.LIVE_TURN_FLAG.unlink(missing_ok=True)
+
+    def _follow(self, pane_id: str, last_id: int, message: str, on_status: StatusCb, on_text: TextCb) -> str:
+        start = last_status = time.monotonic()
+        session, answer, pending, retried = None, "", "", False
+        while not self._cancel.is_set():
+            for rid, sid, role, content, tool, calls, finish in self._rows(last_id):
+                last_id = rid
+                if session is None:
+                    if role == "user" and message[:60] in content:
+                        session = sid
+                    continue
+                if sid != session:
+                    continue
+                if role == "tool" or calls.strip() not in ("", "[]", "null"):
+                    self.last_tool = tool or self.last_tool
+                    if content.strip() and role == "assistant":
+                        if pending:
+                            on_text(pending)
+                        pending = ""
+                elif role == "assistant" and content.strip():
+                    if pending:
+                        on_text(pending)
+                    pending = answer = content
+                    if finish in ("stop", "end_turn", ""):
+                        return answer
+            now = time.monotonic()
+            if session is None and not retried and now - start > RETRY_ENTER_SEC:
+                retried = True
+                _herdr("pane", "send-keys", pane_id, "enter")
+            if session is None and now - start > DELIVERY_TIMEOUT_SEC:
+                return f"I typed it into your {self.name} window, but it never arrived there."
+            if now - start > S.CLAUDE_TURN_TIMEOUT_SEC:
+                return answer or f"Your {self.name} window is still working; the answer will be on the screen."
+            if now - last_status > S.STATUS_EVERY_SEC:
+                last_status = now
+                on_status("still working on it")
+            time.sleep(POLL_SEC)
+        return answer or "Stopped."
+
+    def cancel(self) -> None:
+        self._cancel.set()

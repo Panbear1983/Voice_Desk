@@ -108,5 +108,52 @@ class TranscriptReadersTest(unittest.TestCase):
         self.assertEqual(list(live_session._codex_events(done)), [("done", "ready")])
 
 
+class HermesLiveTest(unittest.TestCase):
+    """A Hermes window is found by its title and answered from the character's state.db."""
+
+    def test_answer_comes_from_the_characters_store(self):
+        import sqlite3
+        prof = TMP / "hermes" / "builder"
+        prof.mkdir(parents=True, exist_ok=True)
+        db = prof / "state.db"
+        db.unlink(missing_ok=True)
+        con = sqlite3.connect(db)
+        con.execute("create table messages (id integer primary key autoincrement, session_id text, role text, "
+                    "content text, tool_call_id text, tool_calls text, tool_name text, finish_reason text, timestamp real)")
+        con.execute("insert into messages (session_id, role, content, timestamp) values ('old', 'user', 'earlier', 0)")
+        con.commit(); con.close()
+        herdr = TMP / "herdr_hermes"
+        herdr.write_text(f"""#!{sys.executable}
+import json, sqlite3, sys
+args = sys.argv[1:]
+if args[:2] == ["pane", "list"]:
+    print(json.dumps({{"result": {{"panes": [{{"pane_id": "wH:p1", "agent": "agy", "agent_status": "idle",
+                                            "terminal_title_stripped": "Hermes — builder"}}]}}}}))
+elif args[:2] == ["pane", "send-text"]:
+    open({str(TMP / 'htyped')!r}, "w").write(args[3])
+elif args[:2] == ["pane", "send-keys"]:
+    typed = open({str(TMP / 'htyped')!r}).read()
+    con = sqlite3.connect({str(db)!r})
+    rows = [("s1", "user", "VOICE PREFIX " + typed, None, None, None),
+            ("s1", "assistant", "", "[{{}}]", "terminal", "tool_calls"),
+            ("s1", "tool", "ok", None, "terminal", None),
+            ("s1", "assistant", "Ready.", None, None, "stop")]
+    con.executemany("insert into messages (session_id, role, content, tool_calls, tool_name, finish_reason, timestamp) "
+                    "values (?, ?, ?, ?, ?, ?, 0)", rows)
+    con.commit()
+""")
+        herdr.chmod(0o755)
+        old = (S.HERDR_BIN, S.HERMES_PROFILES_DIR)
+        S.HERDR_BIN, S.HERMES_PROFILES_DIR = str(herdr), TMP / "hermes"
+        try:
+            brain = live_session.HermesLiveBrain("builder", "Builder")
+            self.assertTrue(brain.available())
+            self.assertEqual(brain.ask("are you there"), "Ready.")
+            self.assertEqual(brain.last_tool, "terminal")
+            self.assertFalse(S.LIVE_TURN_FLAG.exists())
+        finally:
+            S.HERDR_BIN, S.HERMES_PROFILES_DIR = old
+
+
 if __name__ == "__main__":
     unittest.main()

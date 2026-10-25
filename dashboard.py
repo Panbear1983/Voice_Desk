@@ -21,6 +21,7 @@ import service
 import settings as S
 import voicecfg
 import live_session
+import brain as brain_mod
 import voices
 
 LIGHT = {
@@ -98,12 +99,14 @@ class Dashboard(App):
             if agent.target in {"gemini", "codex"}:
                 rows.append(f"{agent.display}: {voices.short(voices.voice_for(agent.target))}")
         text = f"[b #9b59b6]Voices[/] ({mode}) — V toggles · change them in agents.toml\n[dim]{'   '.join(rows)}[/dim]"
-        for target in ("claude", "gemini", "codex"):  # where "talk to X" goes (2026-10-25)
-            live = live_session.LiveBrain(target)
+        lives = [live_session.LiveBrain(t) for t in ("claude", "gemini", "codex")]
+        lives += [live_session.HermesLiveBrain(p, brain_mod.hermes_display_name(p)) for p in brain_mod.hermes_profiles()]
+        for live in lives:                             # where "talk to X" goes (2026-10-25)
+            target = live.target
             pane = live.pane()
             text += (f"\n[b #2ecc71]Talk to {live.name} →[/] your open window (herdr pane {pane[0]})" if pane else
                      f"\n[#e67e22]Talk to {live.name} →[/] the background thread (no single open window"
-                     + ("" if live.session_id else f"; pin one in ~/.voice_desk/{target}_live_session") + ")")
+                     + ("" if live.session_id or target.startswith("hermes:") else f"; pin one in ~/.voice_desk/{target}_live_session") + ")")
         try:
             off = voicecfg.drift(voicecfg.collect(cfg, voicecfg.PROFILES, voicecfg.CLAUDE_CONF))
         except Exception as exc:                     # never let a bad file take the panel down

@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 import settings as S
 from codex_brain import CodexBrain
-from live_session import LiveBrain
+from live_session import HermesLiveBrain, LiveBrain
 
 StatusCb = Callable[[str], None]
 TextCb = Callable[[str], None]
@@ -517,6 +517,9 @@ class Brain:
         if t == "codex":
             return self.live["codex"] if self.live["codex"].available() else self.codex
         profile = t.split(":", 1)[1]
+        live = HermesLiveBrain(profile, hermes_display_name(profile))   # his open Hermes window, if any
+        if live.available():
+            return live
         if profile not in self._hermes:
             self._hermes[profile] = HermesBrain(profile)
         return self._hermes[profile]

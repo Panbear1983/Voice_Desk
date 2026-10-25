@@ -33,6 +33,14 @@ the last text before any Stop-hook feedback. `Brain.backend()` prefers the live 
 background brain. `~/.voice_desk/live_turn` exists during the turn; Claude's speak-response.sh and
 Gemini's ~/.gemini/config/hooks/speak-response.py stay silent on it (Gemini's also on
 VOICE_DESK_LOOP=1). `tests/test_live_session.py` is offline (fake herdr + fake transcripts).
+Hermes characters too (Peter: "yes, switch it on for all five"): `live_session.HermesLiveBrain(profile)`
+finds the window by its title "Hermes — <profile>" (herdr's agent field is unreliable: the
+Orchestrator reports as "agy"), types the same way, and reads the answer from
+`~/.hermes/profiles/<profile>/state.db` messages (assistant row with no tool calls after Peter's
+words). herdr's Hermes plugin is enabled in all five profiles (symlink in <profile>/plugins +
+`hermes plugins enable herdr-agent-state`). Hermes windows read answers aloud in voice mode; a
+LOCAL PATCH in ~/.hermes/hermes-agent/hermes_cli/cli_voice_mixin.py (`_voice_speak_response_async`)
+skips that while ~/.voice_desk/live_turn is fresh. A Hermes update can overwrite it: re-apply.
 
 Standing rules:
 - Peter never types in the window and never presses record or play. Keep it that way.
