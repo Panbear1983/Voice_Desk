@@ -37,6 +37,7 @@ POLL_WAIT_SEC = 8           # same for /reply
 STATUS_EVERY_POLLS = 3      # a spoken "still working" roughly every 24 s of waiting
 SILENT = "."                # Speak Text says nothing for this, and never errors on it
 KEEP_SEC = 600              # finished jobs are forgotten after this
+STALE_SEC = 300             # an answer nobody collected within 5 min is not read out later to a new question
 
 brain = Brain()
 _jobs: dict[str, dict] = {}                 # insertion order = oldest first
@@ -107,6 +108,9 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
     """
     deadline = time.monotonic() + timeout
     resolved_to = brain.resolve(to) if to else ""
+    # Shortcuts made before 2026-10-25 check back with no job and no target: then the asking device
+    # decides (its latest target, and only its own jobs), so iPhone and iPad never take each other's answer.
+    by_device = bool(client_ip) and not job_id and not to
     if not resolved_to and not job_id and client_ip:
         resolved_to = _client_target.get(client_ip, "")
 
@@ -120,6 +124,11 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
                     continue
                 if resolved_to and job.get("target") != resolved_to:
                     continue
+                if by_device and job.get("client_ip") and job["client_ip"] != client_ip:
+                    continue
+                if by_device and time.monotonic() - job["started"] - job.get("took", 0) > STALE_SEC:
+                    job["consumed"] = True                # walked away from long ago: drop, do not read it out now
+                    continue
                 job["consumed"] = True
                 return job["reply"], True
 
@@ -131,6 +140,8 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
                 if job_id and j["id"] != job_id:
                     continue
                 if resolved_to and j.get("target") != resolved_to:
+                    continue
+                if by_device and j.get("client_ip") and j["client_ip"] != client_ip:
                     continue
                 matching_pending.append(j)
 
