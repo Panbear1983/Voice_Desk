@@ -1,5 +1,5 @@
-"""Offline tests for the live-session Claude door (live_claude.py): a fake herdr and a fake
-session transcript; no microphone, no model, no real terminal is touched."""
+"""Offline tests for the live-window doors (live_session.py): a fake herdr and fake session
+transcripts; no microphone, no model, no real terminal is touched."""
 import json
 import os
 from pathlib import Path
@@ -16,8 +16,9 @@ os.environ["VOICE_DESK_CLAUDE_PROJECTS"] = str(TMP / "projects")
 os.environ["VOICE_DESK_HERDR_BIN"] = str(TMP / "herdr")
 
 import settings as S
-import live_claude
+import live_session
 from brain import Brain, ClaudeBrain
+from codex_brain import CodexBrain
 
 SID = "11111111-2222-3333-4444-555555555555"
 TRANSCRIPT = TMP / "projects" / "-Users-peter" / f"{SID}.jsonl"
@@ -28,7 +29,7 @@ tmp = Path({tmp!r})
 args = sys.argv[1:]
 status = (tmp / "status").read_text().strip() if (tmp / "status").exists() else "idle"
 if args[:2] == ["pane", "list"]:
-    panes = [] if (tmp / "no_pane").exists() else [{{"pane_id": "wZ:p1", "agent_status": status,
+    panes = [] if (tmp / "no_pane").exists() else [{{"pane_id": "wZ:p1", "agent": "claude", "agent_status": status,
               "agent_session": {{"value": {sid!r}}}}}]
     print(json.dumps({{"result": {{"panes": panes}}}}))
 elif args[:2] == ["pane", "send-text"]:
@@ -57,12 +58,14 @@ class LiveClaudeTest(unittest.TestCase):
         herdr = TMP / "herdr"
         herdr.write_text(FAKE_HERDR.format(python=sys.executable, tmp=str(TMP), sid=SID, transcript=str(TRANSCRIPT)))
         herdr.chmod(0o755)
-        S.CLAUDE_LIVE_SESSION_FILE.write_text(SID)
-        live_claude.QUIET_SEC = 0.6
-        live_claude.DELIVERY_TIMEOUT_SEC = 3
+        (S.STATE_DIR / "claude_live_session").write_text(SID)
+        live_session.QUIET_SEC = 0.6
+        live_session.DELIVERY_TIMEOUT_SEC = 3
+        live_session.ENTER_DELAY_SEC = 0
+        live_session.RETRY_ENTER_SEC = 1
 
     def test_turn_types_into_the_pane_and_returns_the_answer_before_the_hook_note(self):
-        brain = live_claude.LiveClaudeBrain()
+        brain = live_session.LiveBrain("claude")
         progress = []
         reply = brain.ask("how is the  study going", on_text=progress.append)
         self.assertEqual(reply, "The study is running fine.")
@@ -72,18 +75,37 @@ class LiveClaudeTest(unittest.TestCase):
         self.assertFalse(S.LIVE_TURN_FLAG.exists())
 
     def test_router_uses_the_live_session_only_when_its_pane_is_open(self):
-        self.assertIsInstance(Brain().backend("claude"), live_claude.LiveClaudeBrain)
+        self.assertIsInstance(Brain().backend("claude"), live_session.LiveBrain)
         (TMP / "no_pane").write_text("")
         self.assertIsInstance(Brain().backend("claude"), ClaudeBrain)
-        S.CLAUDE_LIVE_SESSION_FILE.unlink()
         (TMP / "no_pane").unlink()
-        self.assertIsInstance(Brain().backend("claude"), ClaudeBrain)
+        self.assertIsInstance(Brain().backend("claude"), live_session.LiveBrain)   # the only open window, pin or not
+        self.assertIsInstance(Brain().backend("codex"), CodexBrain)                 # no Codex window open
 
     def test_words_that_never_arrive_are_reported(self):
         (TMP / "lost").write_text("")
-        reply = live_claude.LiveClaudeBrain().ask("hello")
+        reply = live_session.LiveBrain("claude").ask("hello")
         self.assertIn("never arrived", reply)
         self.assertFalse(S.LIVE_TURN_FLAG.exists())
+
+
+class TranscriptReadersTest(unittest.TestCase):
+    """The Gemini and Codex windows write different transcript shapes; check each reader."""
+
+    def test_gemini_reader(self):
+        ev = list(live_session._gemini_events({"type": "USER_INPUT", "content": "<USER_REQUEST>\n[voice] hi\n</USER_REQUEST>\n<X>"}))
+        self.assertEqual(ev, [("user", "[voice] hi")])
+        self.assertEqual(list(live_session._gemini_events({"source": "MODEL", "type": "PLANNER_RESPONSE", "content": "ready"})),
+                         [("say", "ready")])
+        self.assertEqual(list(live_session._gemini_events({"source": "MODEL", "type": "PLANNER_RESPONSE", "content": ""})),
+                         [("tool", "")])
+
+    def test_codex_reader(self):
+        user = {"type": "response_item", "payload": {"type": "message", "role": "user",
+                                                     "content": [{"type": "input_text", "text": "[voice] hi"}]}}
+        done = {"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": "ready"}}
+        self.assertEqual(list(live_session._codex_events(user)), [("user", "[voice] hi")])
+        self.assertEqual(list(live_session._codex_events(done)), [("done", "ready")])
 
 
 if __name__ == "__main__":

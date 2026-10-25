@@ -20,7 +20,7 @@ import agents
 import service
 import settings as S
 import voicecfg
-import live_claude
+import live_session
 import voices
 
 LIGHT = {
@@ -98,11 +98,12 @@ class Dashboard(App):
             if agent.target in {"gemini", "codex"}:
                 rows.append(f"{agent.display}: {voices.short(voices.voice_for(agent.target))}")
         text = f"[b #9b59b6]Voices[/] ({mode}) — V toggles · change them in agents.toml\n[dim]{'   '.join(rows)}[/dim]"
-        live = live_claude.LiveClaudeBrain()        # where "talk to Claude" goes (2026-10-25)
-        pane = live.pane()
-        text += (f"\n[b #2ecc71]Talk to Claude →[/] your live terminal session (herdr pane {pane[0]})" if pane else
-                 "\n[b #e67e22]Talk to Claude →[/] the background thread (your live session is not open"
-                 + ("" if live.session_id else "; none pinned in ~/.voice_desk/claude_live_session") + ")")
+        for target in ("claude", "gemini", "codex"):  # where "talk to X" goes (2026-10-25)
+            live = live_session.LiveBrain(target)
+            pane = live.pane()
+            text += (f"\n[b #2ecc71]Talk to {live.name} →[/] your open window (herdr pane {pane[0]})" if pane else
+                     f"\n[#e67e22]Talk to {live.name} →[/] the background thread (no single open window"
+                     + ("" if live.session_id else f"; pin one in ~/.voice_desk/{target}_live_session") + ")")
         try:
             off = voicecfg.drift(voicecfg.collect(cfg, voicecfg.PROFILES, voicecfg.CLAUDE_CONF))
         except Exception as exc:                     # never let a bad file take the panel down

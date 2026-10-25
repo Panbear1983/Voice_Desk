@@ -21,13 +21,18 @@ configured model; never embed an author's credentials, paths or session UUID in 
 Keep workspace-write sandboxing, bounded cancellation/timeouts and no automatic replay of
 failed turns. `tests/test_codex.py` is offline and uses a fake executable; no model tokens.
 
-Live session (2026-10-25, Peter: "talk to Claude ... activate this particular session I'm talking
-to you right now"): `live_claude.LiveClaudeBrain` types the words, prefixed `[voice] `, into the
-herdr pane showing the session id pinned in `~/.voice_desk/claude_live_session`, follows that
-session's transcript until the pane is idle, and returns the last text before any Stop-hook
-feedback. `Brain.backend("claude")` uses it whenever that pane is open, else the background
-ClaudeBrain. `~/.voice_desk/live_turn` exists during the turn so speak-response.sh stays silent.
-`tests/test_live_claude.py` is offline (fake herdr + fake transcript).
+Live windows (2026-10-25, Peter: "talk to Claude ... activate this particular session I'm talking
+to you right now", then "do the same for Gemini and Codex"): `live_session.LiveBrain(target)` types
+the words, prefixed `[voice] `, into the herdr pane running that agent (herdr reports agent +
+session id per pane; a pin in `~/.voice_desk/<target>_live_session` picks between several, else the
+only open window is used), waits 0.6 s before Enter (Codex swallows an Enter sent with the paste)
+and presses Enter once more if nothing arrived after 5 s. It follows that agent's own transcript
+(Claude ~/.claude/projects/*/<id>.jsonl, Gemini ~/.gemini/antigravity-cli/brain/<id>/.system_generated
+/logs/transcript.jsonl, Codex ~/.codex/sessions/*/*/*/rollout-*-<id>.jsonl task_complete) and returns
+the last text before any Stop-hook feedback. `Brain.backend()` prefers the live window, else the
+background brain. `~/.voice_desk/live_turn` exists during the turn; Claude's speak-response.sh and
+Gemini's ~/.gemini/config/hooks/speak-response.py stay silent on it (Gemini's also on
+VOICE_DESK_LOOP=1). `tests/test_live_session.py` is offline (fake herdr + fake transcripts).
 
 Standing rules:
 - Peter never types in the window and never presses record or play. Keep it that way.

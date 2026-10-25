@@ -90,11 +90,13 @@ CLAUDE_BIN = os.environ.get("VOICE_DESK_CLAUDE_BIN", "claude")
 CLAUDE_CWD = HOME               # the thread runs in Peter's home, so every repo is reachable
 CLAUDE_TURN_TIMEOUT_SEC = 600
 SESSION_FILE = STATE_DIR / "session_id"          # one thread shared by the Mac window and the phone
-# Peter 2026-10-25: "talk to Claude" continues his LIVE terminal session (live_claude.py) when the
-# session id in this file is open in a herdr pane; otherwise the background thread above answers.
-CLAUDE_LIVE_SESSION_FILE = STATE_DIR / "claude_live_session"
-LIVE_TURN_FLAG = STATE_DIR / "live_turn"         # exists while a live turn runs: the session's own Stop hook stays silent
+# Peter 2026-10-25: "talk to Claude / Gemini / Codex" continues his LIVE window in herdr when one is
+# open (live_session.py; a session id pinned in ~/.voice_desk/<target>_live_session picks between
+# several); otherwise the background threads answer.
+LIVE_TURN_FLAG = STATE_DIR / "live_turn"         # exists while a live turn runs: the windows' own speak hooks stay silent
 CLAUDE_PROJECTS_DIR = Path(os.environ.get("VOICE_DESK_CLAUDE_PROJECTS", HOME / ".claude/projects"))
+GEMINI_BRAIN_DIR = Path(os.environ.get("VOICE_DESK_GEMINI_BRAIN", HOME / ".gemini/antigravity-cli/brain"))
+CODEX_SESSIONS_DIR = Path(os.environ.get("VOICE_DESK_CODEX_SESSIONS", HOME / ".codex/sessions"))
 DEFAULT_MODEL = "claude-fable-5-1"
 MODEL_FILE = STATE_DIR / "model"                 # set by voice: "use Opus", "switch to Sonnet", "which model"
 DEFAULT_EFFORT = "medium"                        # voice presets: quick (low) / normal (medium) / deep (high) / max

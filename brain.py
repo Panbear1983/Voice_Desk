@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 import settings as S
 from codex_brain import CodexBrain
-from live_claude import LiveClaudeBrain
+from live_session import LiveBrain
 
 StatusCb = Callable[[str], None]
 TextCb = Callable[[str], None]
@@ -485,7 +485,7 @@ class Brain:
 
     def __init__(self) -> None:
         self.claude = ClaudeBrain()
-        self.live = LiveClaudeBrain()     # Peter's live terminal session, when it is open in herdr
+        self.live = {t: LiveBrain(t) for t in ("claude", "gemini", "codex")}   # his open herdr windows
         self.gemini = GeminiBrain()
         self.codex = CodexBrain()
         self._hermes: dict[str, HermesBrain] = {}
@@ -511,11 +511,11 @@ class Brain:
     def backend(self, target: Optional[str] = None):
         t = self.resolve(target) if target else self.target()
         if not t or t == "claude":
-            return self.live if self.live.available() else self.claude
+            return self.live["claude"] if self.live["claude"].available() else self.claude
         if t == "gemini":
-            return self.gemini
+            return self.live["gemini"] if self.live["gemini"].available() else self.gemini
         if t == "codex":
-            return self.codex
+            return self.live["codex"] if self.live["codex"].available() else self.codex
         profile = t.split(":", 1)[1]
         if profile not in self._hermes:
             self._hermes[profile] = HermesBrain(profile)
