@@ -18,6 +18,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -56,8 +57,9 @@ POLLS = 12             # after each question: up to 12 check-backs of ~8 s = ~10
                        # once the answer is spoken the remaining check-backs return instantly
 
 
-def url_action(uid: str, method: str, body: dict | None = None) -> dict:
-    params = {"UUID": uid, "WFURL": URL_ASK if method == "POST" else URL_REPLY, "WFHTTPMethod": method,
+def url_action(uid: str, method: str, body: dict | None = None, to: str = "") -> dict:
+    url = URL_ASK if method == "POST" else (f"{URL_REPLY}?to={to}" if to else URL_REPLY)
+    params = {"UUID": uid, "WFURL": url, "WFHTTPMethod": method,
               "ShowHeaders": True, "WFHTTPHeaders": dictionary([("X-Token", text(TOKEN))])}
     if body:
         params["WFHTTPBodyType"] = "JSON"
@@ -101,7 +103,7 @@ def build(to: str = "") -> dict:
     ]
     for _ in range(POLLS):
         poll_uuid = str(uuid.uuid4())
-        actions.append(url_action(poll_uuid, "GET"))
+        actions.append(url_action(poll_uuid, "GET", to=to))
         actions.extend(speak_reply(poll_uuid))
     actions.append({"WFWorkflowActionIdentifier": "is.workflow.actions.repeat.count",
                     "WFWorkflowActionParameters": {"GroupingIdentifier": group, "WFControlFlowMode": 2}})
@@ -125,11 +127,18 @@ def make(name: str, to: str) -> Path:
     signed = here / f"{name}.shortcut"
     with open(raw, "wb") as fh:
         plistlib.dump(build(to), fh)
-    r = subprocess.run(["/usr/bin/shortcuts", "sign", "--mode", "anyone", "--input", str(raw), "--output", str(signed)],
-                       capture_output=True, text=True)
+    r = None
+    for attempt in range(4):
+        r = subprocess.run(["/usr/bin/shortcuts", "sign", "--mode", "anyone", "--input", str(raw), "--output", str(signed)],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and signed.exists():
+            break
+        if attempt < 3:
+            time.sleep(1.5)
     raw.unlink(missing_ok=True)
-    if r.returncode != 0 or not signed.exists():
-        print("signing failed:", r.stderr.strip() or r.stdout.strip())
+    if not signed.exists():
+        err = (r.stderr.strip() or r.stdout.strip()) if r else "unknown error"
+        print("signing failed:", err)
         sys.exit(1)
     misc = Path.home() / "Desktop/Misc"
     if misc.is_dir():

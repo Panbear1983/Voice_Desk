@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import settings as S
 from codex_brain import CodexBrain
@@ -490,6 +490,8 @@ class Brain:
         self.codex = CodexBrain()
         self._hermes: dict[str, HermesBrain] = {}
         self._current = self.claude
+        self._active_backends: dict[str, Any] = {}
+        self._lock = threading.Lock()
 
     # -- targets --------------------------------------------------------------------------
     def targets(self) -> list[str]:
@@ -575,6 +577,10 @@ class Brain:
         who = self.name(target)
         return f"Okay, you are talking to {who} now." if target != "claude" else "Okay, back to Claude."
 
+    def _lock_file_for(self, target_id: str) -> Path:
+        safe = re.sub(r"[^a-zA-Z0-9_]", "_", target_id or "default")
+        return S.STATE_DIR / f"turn_{safe}.lock"
+
     # -- one turn -----------------------------------------------------------------------------
     def ask(self, text: str, on_status: StatusCb = lambda s: None, on_text: TextCb = lambda s: None,
             to: Optional[str] = None) -> str:
@@ -584,20 +590,50 @@ class Brain:
         if handled:
             _log("voice", text, handled)
             return handled
+        target_id = self.resolve(to) if to else self.target()
         backend = self.backend(to)
         self._current = backend
-        with open(S.TURN_LOCK_FILE, "w") as lockf:
-            fcntl.flock(lockf, fcntl.LOCK_EX)          # phone, window and listener take turns
-            # another door may have moved this thread on (or started a new one) since we last looked
-            backend.session_id = backend._load_session()
-            return backend.ask(text, on_status, on_text)
+        with self._lock:
+            self._active_backends[target_id] = backend
+        lock_file = self._lock_file_for(target_id)
+        try:
+            with open(lock_file, "w") as lockf:
+                fcntl.flock(lockf, fcntl.LOCK_EX)      # phone, window and listener for THIS target take turns
+                # another door may have moved this thread on (or started a new one) since we last looked
+                backend.session_id = backend._load_session()
+                return backend.ask(text, on_status, on_text)
+        finally:
+            with self._lock:
+                self._active_backends.pop(target_id, None)
+
+    def last_tool_for(self, target: Optional[str] = None) -> str:
+        if target:
+            t = self.resolve(target) or target
+            with self._lock:
+                b = self._active_backends.get(t)
+            if b and hasattr(b, "last_tool") and b.last_tool:
+                return b.last_tool
+            backend = self.backend(t)
+            return getattr(backend, "last_tool", "")
+        return getattr(self._current, "last_tool", "")
 
     @property
     def last_tool(self) -> str:
-        return self._current.last_tool
+        return getattr(self._current, "last_tool", "")
 
     def new_thread(self, to: Optional[str] = None) -> None:
         self.backend(to).new_thread()
 
-    def cancel(self) -> None:
-        self._current.cancel()
+    def cancel(self, target: Optional[str] = None) -> None:
+        if target:
+            t = self.resolve(target) or target
+            with self._lock:
+                b = self._active_backends.get(t)
+            if b and hasattr(b, "cancel"):
+                b.cancel()
+                return
+            backend = self.backend(t)
+            if hasattr(backend, "cancel"):
+                backend.cancel()
+        elif self._current and hasattr(self._current, "cancel"):
+            self._current.cancel()

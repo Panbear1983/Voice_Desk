@@ -49,6 +49,26 @@ from brain import Brain, addressed
 DEBUG = os.environ.get("VOICE_DESK_LISTENER_DEBUG") == "1"
 
 
+def split_long(audio, chunk_sec: float = S.CHUNK_SEC):
+    """Cut audio longer than chunk_sec into pieces at the quietest 100 ms near each cut, so a
+    long question reaches whisper as several clips it can read instead of one it garbles."""
+    import numpy as np
+    n, step = len(audio), int(chunk_sec * S.SAMPLE_RATE)
+    if n <= step:
+        return [audio]
+    win = S.SAMPLE_RATE // 10
+    pieces, start = [], 0
+    while n - start > step:
+        lo, hi = start + int(step * 0.6), start + step
+        seg = np.asarray(audio[lo:hi], dtype=np.float32)
+        frames = seg[: len(seg) // win * win].reshape(-1, win)
+        cut = lo + int(np.argmin(np.sqrt((frames ** 2).mean(axis=1)))) * win + win // 2 if len(frames) else hi
+        pieces.append(audio[start:cut])
+        start = cut
+    pieces.append(audio[start:])
+    return pieces
+
+
 def log(msg: str) -> None:
     print(time.strftime("%Y-%m-%d %H:%M:%S"), msg, flush=True)
 
@@ -522,11 +542,19 @@ class Listener:
                 self.settle()
                 limit = S.MAX_UTTERANCE_SEC if self.awake() else S.ASLEEP_MAX_UTTERANCE_SEC
                 audio = self.mic.listen(timeout_sec=2, should_abort=self._quit.is_set, max_sec=limit,
-                                        on_state=lambda s: self.status.set_state("hearing") if s == "hearing"
-                                        else self.settle())
+                                        on_state=self._on_mic_state)
                 if audio is None:
                     continue
                 text = self.transcribe(audio)
+                secs = len(audio) / S.SAMPLE_RATE
+                if self.awake() and secs >= 3 and len(re.sub(r"[^\w]", "", text or "")) < 3:
+                    # Peter spoke for a while on an open line but whisper made nothing of it: say so and
+                    # keep the line open, instead of hanging up on him (2026-10-25, a 31 s question -> ">>")
+                    log(f"unclear ({secs:.1f}s): {text[:40]!r}")
+                    self.speak("Sorry, I did not catch that. Please say it again.", after="listening")
+                    self.follow_until = self.clock() + S.CONVERSATION_SEC
+                    self.settle()
+                    continue
                 what = self.handle(text)
                 if what == "ignored":
                     # a sentence that starts with a hail ("hey ...") was meant for us: log what whisper made
@@ -543,11 +571,24 @@ class Listener:
                 time.sleep(1)
         self._off()
 
+    def _on_mic_state(self, s: str) -> None:
+        if s == "hearing":
+            # Speech that STARTS on an open line belongs to the conversation even if it ends after the
+            # line would have closed (2026-10-25: a long question was cut off and the line hung up).
+            if self.awake():
+                self.follow_until = max(self.follow_until, self.clock() + S.MAX_UTTERANCE_SEC + 5)
+            self.status.set_state("hearing")
+        else:
+            self.settle()
+
     def transcribe(self, audio) -> str:
         from audio import write_wav
         tmp = Path(tempfile.mkdtemp(prefix="vd-listen-"))
         try:
-            return self.whisper.transcribe(write_wav(audio, tmp / "in.wav"))
+            parts = []
+            for i, piece in enumerate(split_long(audio)):
+                parts.append(self.whisper.transcribe(write_wav(piece, tmp / f"in{i}.wav")))
+            return " ".join(p.strip() for p in parts if p and p.strip())
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

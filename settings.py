@@ -195,7 +195,10 @@ SIGN_OFF = "Okay, talk later."
 # through these programs; while one runs the listener is deaf, so it can never hear itself.
 FOREIGN_PLAYERS = ("afplay", "say")
 FOLLOW_UP_SEC = 10             # after a bare name ("Jarvis?" -> "Jarvis here.") the question needs no name for this long
-ASLEEP_MAX_UTTERANCE_SEC = 20   # while asleep only short sentences matter: a name comes first
+# Peter 2026-10-25: "hey Claude" + a long question in one breath was cut at 20 s and lost; the
+# name comes first, but the question after it can be long, so asleep records as long as awake.
+ASLEEP_MAX_UTTERANCE_SEC = MAX_UTTERANCE_SEC
+CHUNK_SEC = 25                  # whisper garbles one long clip (31 s came back as ">>"); longer audio is sent in pieces
 MUTE_WORDS = {"mute", "mute yourself", "mute the mic", "mute microphone", "mute please", "go mute",
               "mewed", "mude", "muse", "靜音", "静音"}
 UNMUTE_WORDS = {"unmute", "un mute", "unmute yourself", "unmute please", "unmuted", "on mute", "on mude",

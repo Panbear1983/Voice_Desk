@@ -50,6 +50,25 @@ _TOOL_STATUS = {
 }
 
 
+# Several live turns can run at once (one lane per assistant, 2026-10-25). The windows' speak hooks
+# only look at ~/.voice_desk/live_turn, so it stays while ANY turn runs: each turn has its own marker
+# next to it, and live_turn goes only when the last marker is gone (or is a 15-minute-old leftover).
+def _marker(target: str) -> Path:
+    return S.LIVE_TURN_FLAG.with_name("live_turn." + re.sub(r"[^\w]", "_", target))
+
+
+def _turn_started(target: str) -> None:
+    _marker(target).write_text(str(time.time()))
+    S.LIVE_TURN_FLAG.write_text(f"{target} {time.time()}")
+
+
+def _turn_ended(target: str) -> None:
+    _marker(target).unlink(missing_ok=True)
+    others = [m for m in S.LIVE_TURN_FLAG.parent.glob("live_turn.*") if time.time() - m.stat().st_mtime < 900]
+    if not others:
+        S.LIVE_TURN_FLAG.unlink(missing_ok=True)
+
+
 def _herdr(*args: str, timeout: float = 10) -> str:
     p = subprocess.run([S.HERDR_BIN, *args], capture_output=True, text=True, timeout=timeout)
     if p.returncode:
@@ -181,7 +200,7 @@ class LiveBrain:
         self._cancel.clear()
         self.last_tool = ""
         message = PREFIX + " ".join(text.split())
-        S.LIVE_TURN_FLAG.write_text(f"{self.target} {time.time()}")
+        _turn_started(self.target)
         try:
             _herdr("pane", "send-text", pane_id, message)
             time.sleep(ENTER_DELAY_SEC)
@@ -190,7 +209,7 @@ class LiveBrain:
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
             return f"I could not type into your {self.name} window. The error was: {e}"
         finally:
-            S.LIVE_TURN_FLAG.unlink(missing_ok=True)
+            _turn_ended(self.target)
 
     def _follow(self, pane_id: str, sid: str, offset: int, message: str,
                 on_status: StatusCb, on_text: TextCb) -> str:
@@ -326,7 +345,7 @@ class HermesLiveBrain:
         self._cancel.clear()
         self.last_tool = ""
         message = PREFIX + " ".join(text.split())
-        S.LIVE_TURN_FLAG.write_text(f"{self.target} {time.time()}")
+        _turn_started(self.target)
         try:
             _herdr("pane", "send-text", pane_id, message)
             time.sleep(ENTER_DELAY_SEC)
@@ -335,7 +354,7 @@ class HermesLiveBrain:
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
             return f"I could not type into your {self.name} window. The error was: {e}"
         finally:
-            S.LIVE_TURN_FLAG.unlink(missing_ok=True)
+            _turn_ended(self.target)
 
     def _follow(self, pane_id: str, last_id: int, message: str, on_status: StatusCb, on_text: TextCb) -> str:
         start = last_status = time.monotonic()

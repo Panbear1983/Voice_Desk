@@ -16,6 +16,9 @@ os.environ["VOICE_DESK_CLAUDE_PROJECTS"] = str(TMP / "projects")
 os.environ["VOICE_DESK_HERDR_BIN"] = str(TMP / "herdr")
 
 import settings as S
+# settings may already be imported by another test module: point it at this module's fakes directly
+S.HERDR_BIN = str(TMP / "herdr")
+S.CLAUDE_PROJECTS_DIR = TMP / "projects"
 import live_session
 from brain import Brain, ClaudeBrain
 from codex_brain import CodexBrain
