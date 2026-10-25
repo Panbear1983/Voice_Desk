@@ -147,12 +147,14 @@ def main() -> None:
     brain = Brain()
     if args.all:
         for target in brain.targets():
-            make(f"Talk to {brain.name(target)}", "" if target == "claude" else target)
+            make(f"Talk to {brain.name(target)}", target)
         return
     target = brain.resolve(args.to) if args.to else "claude"
     if not target:
         sys.exit(f"unknown thread {args.to!r}; choose from: " + ", ".join(brain.targets()))
-    make(args.name or f"Talk to {brain.name(target)}", "" if target == "claude" else target)
+    # Peter 2026-10-25: every Shortcut names its thread, Claude included; an unpinned "Talk to Claude"
+    # followed whoever was last picked by voice (Gemini, for days).
+    make(args.name or f"Talk to {brain.name(target)}", target)
 
 
 if __name__ == "__main__":
