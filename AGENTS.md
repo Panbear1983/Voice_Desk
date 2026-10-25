@@ -21,6 +21,14 @@ configured model; never embed an author's credentials, paths or session UUID in 
 Keep workspace-write sandboxing, bounded cancellation/timeouts and no automatic replay of
 failed turns. `tests/test_codex.py` is offline and uses a fake executable; no model tokens.
 
+Live session (2026-10-25, Peter: "talk to Claude ... activate this particular session I'm talking
+to you right now"): `live_claude.LiveClaudeBrain` types the words, prefixed `[voice] `, into the
+herdr pane showing the session id pinned in `~/.voice_desk/claude_live_session`, follows that
+session's transcript until the pane is idle, and returns the last text before any Stop-hook
+feedback. `Brain.backend("claude")` uses it whenever that pane is open, else the background
+ClaudeBrain. `~/.voice_desk/live_turn` exists during the turn so speak-response.sh stays silent.
+`tests/test_live_claude.py` is offline (fake herdr + fake transcript).
+
 Standing rules:
 - Peter never types in the window and never presses record or play. Keep it that way.
 - Settings are a handful of presets in `settings.py`, not a config page.

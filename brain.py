@@ -22,6 +22,7 @@ from typing import Callable, Optional
 
 import settings as S
 from codex_brain import CodexBrain
+from live_claude import LiveClaudeBrain
 
 StatusCb = Callable[[str], None]
 TextCb = Callable[[str], None]
@@ -484,6 +485,7 @@ class Brain:
 
     def __init__(self) -> None:
         self.claude = ClaudeBrain()
+        self.live = LiveClaudeBrain()     # Peter's live terminal session, when it is open in herdr
         self.gemini = GeminiBrain()
         self.codex = CodexBrain()
         self._hermes: dict[str, HermesBrain] = {}
@@ -509,7 +511,7 @@ class Brain:
     def backend(self, target: Optional[str] = None):
         t = self.resolve(target) if target else self.target()
         if not t or t == "claude":
-            return self.claude
+            return self.live if self.live.available() else self.claude
         if t == "gemini":
             return self.gemini
         if t == "codex":

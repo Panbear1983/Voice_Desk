@@ -90,6 +90,11 @@ CLAUDE_BIN = os.environ.get("VOICE_DESK_CLAUDE_BIN", "claude")
 CLAUDE_CWD = HOME               # the thread runs in Peter's home, so every repo is reachable
 CLAUDE_TURN_TIMEOUT_SEC = 600
 SESSION_FILE = STATE_DIR / "session_id"          # one thread shared by the Mac window and the phone
+# Peter 2026-10-25: "talk to Claude" continues his LIVE terminal session (live_claude.py) when the
+# session id in this file is open in a herdr pane; otherwise the background thread above answers.
+CLAUDE_LIVE_SESSION_FILE = STATE_DIR / "claude_live_session"
+LIVE_TURN_FLAG = STATE_DIR / "live_turn"         # exists while a live turn runs: the session's own Stop hook stays silent
+CLAUDE_PROJECTS_DIR = Path(os.environ.get("VOICE_DESK_CLAUDE_PROJECTS", HOME / ".claude/projects"))
 DEFAULT_MODEL = "claude-fable-5-1"
 MODEL_FILE = STATE_DIR / "model"                 # set by voice: "use Opus", "switch to Sonnet", "which model"
 DEFAULT_EFFORT = "medium"                        # voice presets: quick (low) / normal (medium) / deep (high) / max
