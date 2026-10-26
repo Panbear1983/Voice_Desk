@@ -83,7 +83,7 @@ def speak_reply(url_uuid: str) -> list[dict]:
     ]
 
 
-def build(to: str = "") -> dict:
+def build(to: str = "", stop: str = "After Pause") -> dict:
     """One round = dictate -> POST /ask -> speak -> (GET /reply -> speak) x POLLS.
     `to` pins every request to one thread ("claude" or "hermes:<profile>").
 
@@ -97,7 +97,7 @@ def build(to: str = "") -> dict:
         {"WFWorkflowActionIdentifier": "is.workflow.actions.repeat.count",
          "WFWorkflowActionParameters": {"GroupingIdentifier": group, "WFControlFlowMode": 0, "WFRepeatCount": REPEATS}},
         {"WFWorkflowActionIdentifier": "is.workflow.actions.dictatetext",
-         "WFWorkflowActionParameters": {"UUID": dictate_uuid, "WFDictateTextStopListening": "After Pause"}},
+         "WFWorkflowActionParameters": {"UUID": dictate_uuid, "WFDictateTextStopListening": stop}},
         url_action(ask_uuid, "POST", {"text": ref(dictate_uuid, "Dictated Text"), **({"to": text(to)} if to else {})}),
         *speak_reply(ask_uuid),
     ]
@@ -121,12 +121,12 @@ def build(to: str = "") -> dict:
     }
 
 
-def make(name: str, to: str) -> Path:
+def make(name: str, to: str, stop: str = "After Pause") -> Path:
     here = Path(__file__).resolve().parent
     raw = here / f"{name}.unsigned.shortcut"
     signed = here / f"{name}.shortcut"
     with open(raw, "wb") as fh:
-        plistlib.dump(build(to), fh)
+        plistlib.dump(build(to, stop), fh)
     r = None
     for attempt in range(4):
         r = subprocess.run(["/usr/bin/shortcuts", "sign", "--mode", "anyone", "--input", str(raw), "--output", str(signed)],
@@ -152,6 +152,9 @@ def main() -> None:
     ap.add_argument("--to", default="", help="thread: 'claude', 'gemini', 'codex' or a Hermes profile")
     ap.add_argument("--name", default="", help="Shortcut name (what you say to Siri); default 'Talk to <name>'")
     ap.add_argument("--all", action="store_true", help="one Shortcut per installed brain and Hermes profile")
+    # Peter 2026-10-26: long spoken requests hung in iOS dictation waiting for a pause; "tap" keeps
+    # listening through pauses until he taps Done (e.g. a "Long message to Claude" Shortcut).
+    ap.add_argument("--stop", choices=["pause", "tap"], default="pause", help="dictation ends after a pause (default) or on tap")
     args = ap.parse_args()
     brain = Brain()
     if args.all:
@@ -163,7 +166,7 @@ def main() -> None:
         sys.exit(f"unknown thread {args.to!r}; choose from: " + ", ".join(brain.targets()))
     # Peter 2026-10-25: every Shortcut names its thread, Claude included; an unpinned "Talk to Claude"
     # followed whoever was last picked by voice (Gemini, for days).
-    make(args.name or f"Talk to {brain.name(target)}", target)
+    make(args.name or f"Talk to {brain.name(target)}", target, "On Tap" if args.stop == "tap" else "After Pause")
 
 
 if __name__ == "__main__":
