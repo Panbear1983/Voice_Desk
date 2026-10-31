@@ -333,7 +333,7 @@ class MicrophoneFollows(Saved, unittest.TestCase):
         mic, sd, logs = make_mic(world)
         mic.start()
         try:
-            blip = int(S.SPEECH_START_SEC * 1000 / S.BLOCK_MS) + 2      # enough to start, far too short for words
+            blip = int(S.SPEECH_START_SEC * 1000 / S.BLOCK_MS) + 1      # enough to start, too short for words
             self.assertLess(blip * S.BLOCK_MS / 1000, S.MIN_SPEECH_SEC)
             world.say(40, at=(blip, lambda: world.dead.add(HEADSET)))
             self.assertIsNone(mic.listen(timeout_sec=1), "a blip is not sent to whisper")

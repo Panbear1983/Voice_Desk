@@ -31,13 +31,14 @@ voice_zh = "zh-TW-HsiaoChenNeural"
 [shared.mic]
 # Microphone / silence detection for the listener and the window.
 pre_roll_sec = 0.6              # audio kept from before speech was detected
-speech_start_sec = 0.25         # how long sound must stay loud before it counts as speech
+speech_start_sec = 0.15         # how long sound must stay loud before it counts as speech (0.25 until 2026-10-31)
 silence_send_sec = 1.5          # Peter's pause that acts as "send"
 max_utterance_sec = 90          # hard stop so a stuck mic cannot record forever
-min_speech_sec = 0.4            # anything shorter is a cough or a click
+min_speech_sec = 0.2            # anything shorter is a cough or a click (0.4 until 2026-10-31: a Bluetooth
+                                # headset clips "Hi Claude" to ~0.3 s of loud sound, so it never woke)
 noise_floor_start = 150.0       # int16 RMS guess before calibration
 speech_over_floor = 3.0         # speech = louder than floor * this (and above min_speech_rms)
-min_speech_rms = 350.0
+min_speech_rms = 250.0          # 350 until 2026-10-31; headsets send pure silence between words
 barge_in_over_floor = 4.0       # while a reply plays the mic hears the speakers too, so be stricter
 barge_in_sec = 0.5
 
