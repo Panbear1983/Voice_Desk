@@ -241,6 +241,13 @@ read-aloud hook and Hermes voice mode talk). It holds `~/.voice_desk/window.lock
 read-aloud hook stays silent while it runs, and the window and the listener never share the
 mic: open the window and the listener waits (light: *standby*) until you close it.
 
+**Headsets.** The microphone and the sound both follow the Mac's default devices. Plug in a
+headset or put in AirPods (or pick another input under System Settings > Sound) and within a
+couple of seconds the listener moves to that microphone, between two sentences, never in the
+middle of one. Spoken answers already play wherever the Mac's sound goes. If the new microphone
+will not open yet (AirPods still connecting), it stays on the Mac's own microphone and tries again
+a few times; every move is written to the listener's log ("now listening on ...").
+
 The dashboard never touches the mic. It reads `~/.voice_desk/listener.json` and shows the
 light (asleep · listening · hearing · thinking · speaking · muted), who is on the line, the
 last thing heard and the last reply, plus every agent's voice (from `agents.toml`) and a
@@ -407,6 +414,7 @@ Nothing personal lives in the repo. The app's memory is `~/.voice_desk/`:
 .venv/bin/python tests/selftest.py              # every stage, including two real Claude turns
 .venv/bin/python tests/selftest.py --no-brain   # everything except Claude (no tokens)
 .venv/bin/python tests/test_listener.py         # the always-on listener: names, mute, echo, status file
+.venv/bin/python -m unittest tests.test_mic_follow   # headsets: the listener moves to the new default mic between sentences
 ```
 
 The self-test needs no mic and no screen. It checks the silence detector on synthetic
@@ -428,7 +436,8 @@ python3 docs/render_images.py          # PNGs + loop.gif (needs playwright + Pil
 | `start.sh` | double-click launcher |
 | `app.py` | the window: light, transcript, mic meter, keys |
 | `engine.py` | listen → think → speak loop, spoken commands, sleep / wake |
-| `audio.py` | microphone, pause detection, talk-over detection |
+| `audio.py` | microphone, pause detection, talk-over detection, following the default mic |
+| `coreaudio.py` | asks macOS which microphone is the default (for headsets) |
 | `stt.py` | whisper-server control and transcript cleanup |
 | `brain.py` | the Claude thread, model / effort switching, spoken status |
 | `tts.py` | read-aloud cleanup, voice choice, playback |

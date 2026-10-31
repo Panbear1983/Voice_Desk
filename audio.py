@@ -24,6 +24,10 @@ def _rms(block: np.ndarray) -> float:
     return float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
 
 
+def _log(msg: str) -> None:
+    print(time.strftime("%Y-%m-%d %H:%M:%S"), msg, flush=True)
+
+
 class Microphone:
     """Keeps one input stream open and hands out 30 ms int16 blocks through a queue.
 
@@ -31,7 +35,11 @@ class Microphone:
     anyone sees it (the always-on listener uses it so its own voice, and any other program
     speaking on this Mac, never reaches whisper)."""
 
-    def __init__(self, deaf: Optional[Callable[[], bool]] = None) -> None:
+    def __init__(self, deaf: Optional[Callable[[], bool]] = None,
+                 default_input: Optional[Callable[[], Optional[str]]] = None,
+                 built_in: Optional[Callable[[], list]] = None,
+                 sd_module=None, clock: Callable[[], float] = time.monotonic,
+                 log: Optional[Callable[[str], None]] = None) -> None:
         self._blocks: collections.deque[np.ndarray] = collections.deque(maxlen=400)   # ~12 s
         self._cv = threading.Condition()
         self._stream: Optional[sd.InputStream] = None
@@ -40,23 +48,159 @@ class Microphone:
         self.deaf = deaf
         self.dropped = 0            # blocks thrown away while deaf (the echo test reads this)
         self.gaps = 0               # bumps on every deaf block; listen() restarts an utterance cut by one
+        # following the Mac's default mic (headsets); the fakes in tests/test_mic_follow.py replace all four
+        if default_input is None or built_in is None:
+            import coreaudio
+            default_input = default_input or coreaudio.default_input_name
+            built_in = built_in or coreaudio.built_in_input_names
+        self._default_input = default_input
+        self._built_in = built_in
+        self._sd = sd_module or sd
+        self.clock = clock
+        self.log = log or _log
+        self.device_name: Optional[str] = None   # the mic the stream is open on now
+        self.last_block_at = 0.0                 # clock() of the newest block (stall watchdog)
+        self._next_check = 0.0
+        self._due = False
+        self._failed: Optional[str] = None       # the default that would not open...
+        self._failed_tries = 0                   # ...how often it has been tried...
+        self._retry_at = 0.0                     # ...and when to try it again
+        self._hold = S.MIC_STALL_SEC             # silence this long = the mic is gone (doubles per dead reopen)
+        self._hold_until = 0.0                   # no reopen for a dead mic before this
 
     def start(self) -> None:
         if self._stream:
             return
-        self._stream = sd.InputStream(
-            samplerate=S.SAMPLE_RATE, channels=1, dtype="int16",
-            blocksize=S.BLOCK, callback=self._on_audio,
-        )
-        self._stream.start()
+        if not self._open_best(self._default_name()):
+            raise RuntimeError("no microphone would open")
 
     def stop(self) -> None:
         if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+            stream, self._stream = self._stream, None
+            try:
+                stream.stop()
+            finally:
+                stream.close()
+
+    # -- following the Mac's default microphone ---------------------------------------------------
+    def _default_name(self) -> Optional[str]:
+        try:
+            return self._default_input()
+        except Exception:                       # CoreAudio could not say: keep what we have
+            return None
+
+    def _index_of(self, name: Optional[str]) -> Optional[int]:
+        """PortAudio's number for the input called `name` (its list is only current after a re-init)."""
+        if not name:
+            return None
+        for i, dev in enumerate(self._sd.query_devices()):
+            if dev["name"] == name and dev["max_input_channels"] > 0:
+                return i
+        return None
+
+    def _open(self, name: Optional[str]) -> bool:
+        """Open the stream on the input called `name` (None = PortAudio's default). False if it would not."""
+        try:
+            device = self._index_of(name)
+            if name and device is None:
+                raise RuntimeError("not in PortAudio's device list")
+            stream = self._sd.InputStream(
+                samplerate=S.SAMPLE_RATE, channels=1, dtype="int16", device=device,
+                blocksize=S.BLOCK, callback=self._on_audio,
+            )
+            try:
+                stream.start()
+            except Exception:
+                stream.close()
+                raise
+        except Exception as exc:
+            self.log(f"microphone: could not open {name or 'the default input'}: {exc}")
+            return False
+        self._stream = stream
+        try:
+            self.device_name = self._sd.query_devices(stream.device)["name"]
+        except Exception:
+            self.device_name = name
+        self.last_block_at = self.clock()
+        return True
+
+    def _open_best(self, want: Optional[str]) -> bool:
+        """The wanted mic, else the Mac's own microphone, else whatever PortAudio calls the default."""
+        if want and self._open(want):
+            if want == self._failed:
+                self._failed, self._failed_tries = None, 0
+            return True
+        if want:
+            self._failed_tries = self._failed_tries + 1 if want == self._failed else 1
+            self._failed, self._retry_at = want, self.clock() + S.MIC_RETRY_SEC
+        try:
+            fallbacks = [n for n in self._built_in() if n != want]
+        except Exception:
+            fallbacks = []
+        for name in fallbacks:
+            if self._open(name):
+                self.log(f"microphone: fell back to {name}")
+                return True
+        return self._open(None)
+
+    def switch_due(self) -> bool:
+        """Cheap enough to ask often (one CoreAudio read every MIC_CHECK_SEC): True when the stream
+        should move: the Mac's default mic is another one, the stream is gone, or it went silent."""
+        now = self.clock()
+        if now < self._next_check:
+            return self._due
+        self._next_check = now + S.MIC_CHECK_SEC
+        if self._stream is not None and now - self.last_block_at < S.MIC_STALL_SEC:
+            self._hold = S.MIC_STALL_SEC            # audio is flowing: the back-off starts over
+        if self._stream is None or now - self.last_block_at > self._hold:
+            # deaf (nothing would open) or silent (unplugged mid-stream): reopen, backing off to a
+            # minute between tries so a dead device does not fill the log
+            self._due = now >= self._hold_until
+            return self._due
+        want = self._default_name()
+        if want and want != self._failed:       # the default moved on: a mic that failed earlier gets fresh tries
+            self._failed, self._failed_tries = None, 0
+        if not want or want == self.device_name:
+            self._due = False
+        elif want == self._failed:              # would not open: try again a few times, then wait for a change
+            self._due = self._failed_tries < S.MIC_RETRY_TRIES and now >= self._retry_at
+        else:
+            self._due = True
+        return self._due
+
+    def switch(self) -> Optional[str]:
+        """Move to the Mac's default mic. Call ONLY between sentences: the stream is closed for a
+        moment. PortAudio reads its device list once, so it is restarted to see a new headset.
+        Returns the name of the mic now open (None if none would open; switch_due() stays True)."""
+        old = self.device_name
+        want = self._default_name() or old
+        stalled = self._stream is None or self.clock() - self.last_block_at > self._hold
+        self.stop()
+        try:
+            self._sd._terminate()
+            self._sd._initialize()
+        except Exception as exc:
+            self.log(f"microphone: could not restart PortAudio: {exc}")
+        self.gaps += 1                          # nothing from before the switch is part of the next sentence
+        self.noise_floor = S.NOISE_FLOOR_START  # a new mic has its own room noise
+        self.drain()
+        self._next_check, self._due = 0.0, False
+        if stalled:                             # the next reopen for the same reason waits longer
+            self._hold_until = self.clock() + self._hold
+            self._hold = min(self._hold * 2, 60.0)
+        if not self._open_best(want):
+            self.device_name = None
+            self.log("microphone: NO microphone would open; trying again shortly")
+            return None
+        if self.device_name != old:
+            self.log(f"microphone: now listening on {self.device_name} (was {old or 'none'})")
+        else:
+            self.log(f"microphone: reopened {self.device_name} (no audio was arriving)" if stalled
+                     else f"microphone: reopened {self.device_name}")
+        return self.device_name
 
     def _on_audio(self, indata, frames, time_info, status) -> None:  # sounddevice callback thread
+        self.last_block_at = self.clock()
         block = indata[:, 0].copy()
         self.level = _rms(block)
         if self.deaf is not None and self.deaf():
@@ -113,6 +257,11 @@ class Microphone:
             if block is None:
                 if not speaking and time.monotonic() - start > timeout_sec:
                     return None
+                if speaking and self.clock() - self.last_block_at > S.MIC_STALL_SEC:
+                    # the mic vanished mid-sentence (headset unplugged): keep what was heard, and give the
+                    # loop its turn to move to the next microphone instead of waiting here forever
+                    self.log("microphone: audio stopped mid-sentence; sending what was heard")
+                    return np.concatenate(voiced)
                 continue
             level = _rms(block)
             threshold = max(self.noise_floor * S.SPEECH_OVER_FLOOR, S.MIN_SPEECH_RMS)

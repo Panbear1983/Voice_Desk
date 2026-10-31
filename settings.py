@@ -42,6 +42,14 @@ SPEECH_OVER_FLOOR = _MIC["SPEECH_OVER_FLOOR"]
 MIN_SPEECH_RMS = _MIC["MIN_SPEECH_RMS"]
 BARGE_IN_OVER_FLOOR = _MIC["BARGE_IN_OVER_FLOOR"]
 BARGE_IN_SEC = _MIC["BARGE_IN_SEC"]
+# Headsets (Peter 2026-10-31): the always-on listener follows the Mac's default microphone. Every
+# MIC_CHECK_SEC it asks CoreAudio which mic is the default (~26 µs of CPU), and moves to it between
+# sentences. A mic that will not open is tried again MIC_RETRY_TRIES times, MIC_RETRY_SEC apart
+# (AirPods can take a few seconds); no audio for MIC_STALL_SEC means the mic is gone: reopen.
+MIC_CHECK_SEC = 2.0
+MIC_RETRY_SEC = 5.0
+MIC_RETRY_TRIES = 3
+MIC_STALL_SEC = 3.0
 
 # ---- sleep / wake --------------------------------------------------------------------
 SLEEP_AFTER_SEC = 60            # no speech for this long -> grey light, wake word needed

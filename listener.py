@@ -496,6 +496,18 @@ class Listener:
                       else "echo tail" if self.clock() < self.quiet_until else "")
             self.status.update(level=int(getattr(self.mic, "level", 0)), muted=service.is_muted(), deaf=reason)
 
+    # -- headsets: follow the Mac's default microphone ----------------------------------------------
+    def _follow_mic(self) -> Optional[str]:
+        """Between sentences only (the main loop calls this after listen() returned): if the Mac's
+        default mic changed, or ours stopped delivering audio, move to it. Not while anything speaks,
+        not during a turn. Returns the mic now open when it moved, else None."""
+        due = getattr(self.mic, "switch_due", None)
+        if due is None or self.speaking or self._thinking or self.foreign.playing() or not due():
+            return None
+        name = self.mic.switch()
+        self.status.update(mic=name or "", note="" if name else "no microphone would open")
+        return name
+
     # -- lifecycle ------------------------------------------------------------------------------------
     def _take_window_lock(self) -> bool:
         fh = open(S.STATE_DIR / "window.lock", "w")
@@ -535,11 +547,14 @@ class Listener:
             time.sleep(10)                             # launchd restarts us; do not spin
             return self._off()
         self._on_the_line(self.brain.target())
-        log(f"listening for a name (on the line: {self.status.data['name']})")
+        self.status.update(mic=getattr(self.mic, "device_name", None) or "")
+        log(f"listening for a name (on the line: {self.status.data['name']}; "
+            f"microphone: {getattr(self.mic, 'device_name', None) or 'default'})")
         self.settle()
         while not self._quit.is_set():
             try:
                 self.settle()
+                self._follow_mic()
                 limit = S.MAX_UTTERANCE_SEC if self.awake() else S.ASLEEP_MAX_UTTERANCE_SEC
                 audio = self.mic.listen(timeout_sec=2, should_abort=self._quit.is_set, max_sec=limit,
                                         on_state=self._on_mic_state)
