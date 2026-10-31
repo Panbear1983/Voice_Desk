@@ -45,6 +45,7 @@ os.environ["HERMES_PROFILES_DIR"] = str(_profiles)
 _agy = Path(tempfile.mkdtemp(prefix="vd-agy-")) / "agy"
 _agy.write_text("#!/bin/sh\n")
 os.environ["VOICE_DESK_GEMINI_BIN"] = str(_agy)
+import tests  # noqa: E402,F401  (the fake no-window herdr, also when this file is run directly)
 
 import settings as S  # noqa: E402
 import service  # noqa: E402

@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 _state = tempfile.TemporaryDirectory(prefix="vd-codex-import-")
 os.environ["VOICE_DESK_STATE"] = _state.name
+import tests  # noqa: E402,F401  (the fake no-window herdr, also when this file is run directly)
 
 import settings as S
 from codex_brain import CodexBrain

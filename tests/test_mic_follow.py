@@ -22,6 +22,10 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("VOICE_DESK_STATE", tempfile.mkdtemp(prefix="vd-mic-"))
+# Never Peter's real windows, however this file is started (also `python tests/test_mic_follow.py`,
+# which skips tests/__init__.py): load its no-window fake herdr and turn the window switchboard off.
+os.environ["VOICE_DESK_PANES"] = "0"
+import tests  # noqa: E402,F401
 
 import settings as S  # noqa: E402
 import audio  # noqa: E402
@@ -318,6 +322,22 @@ class MicrophoneFollows(Saved, unittest.TestCase):
             got = mic.listen(timeout_sec=3)
             self.assertIsNotNone(got, "listen() must not hang on a vanished mic")
             self.assertEqual(loud_marks(got).get(MARK[HEADSET], 0), 20)
+        finally:
+            mic.stop()
+
+    def test_a_blip_cut_off_by_an_unplug_is_dropped(self):
+        S.MIC_STALL_SEC = 0.3
+        world = World()
+        world.plugged.append(HEADSET)
+        world.default = HEADSET
+        mic, sd, logs = make_mic(world)
+        mic.start()
+        try:
+            blip = int(S.SPEECH_START_SEC * 1000 / S.BLOCK_MS) + 2      # enough to start, far too short for words
+            self.assertLess(blip * S.BLOCK_MS / 1000, S.MIN_SPEECH_SEC)
+            world.say(40, at=(blip, lambda: world.dead.add(HEADSET)))
+            self.assertIsNone(mic.listen(timeout_sec=1), "a blip is not sent to whisper")
+            self.assertTrue(any("too short" in line for line in logs), logs)
         finally:
             mic.stop()
 

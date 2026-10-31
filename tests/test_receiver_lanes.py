@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import tests  # noqa: E402,F401  (the fake no-window herdr, also when this file is run directly)
 import receiver
 
 

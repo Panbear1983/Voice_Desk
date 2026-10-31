@@ -260,6 +260,10 @@ class Microphone:
                 if speaking and self.clock() - self.last_block_at > S.MIC_STALL_SEC:
                     # the mic vanished mid-sentence (headset unplugged): keep what was heard, and give the
                     # loop its turn to move to the next microphone instead of waiting here forever
+                    heard = (span - quiet_run) * S.BLOCK_MS / 1000
+                    if heard < S.MIN_SPEECH_SEC:        # only a blip before it vanished: drop it like any other
+                        self.log(f"microphone: audio stopped mid-sentence; dropped before whisper: too short ({heard:.2f}s of sound)")
+                        return None
                     self.log("microphone: audio stopped mid-sentence; sending what was heard")
                     return np.concatenate(voiced)
                 continue

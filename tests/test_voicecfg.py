@@ -19,6 +19,7 @@ for _p in ("assistant", "orchestrator", "tax_angel_esther", "wanna-buffet"):
     (_profiles / _p).mkdir()
     (_profiles / _p / "config.yaml").write_text("model: x\n")
 os.environ["HERMES_PROFILES_DIR"] = str(_profiles)
+import tests  # noqa: E402,F401  (the fake no-window herdr, also when this file is run directly)
 
 ok = True
 

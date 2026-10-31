@@ -25,6 +25,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("VOICE_DESK_STATE", tempfile.mkdtemp(prefix="cv-state-"))
+# Never Peter's real windows when started as a script (tests/__init__.py is skipped then): its fake
+# herdr reports no open windows, so the router and the live turns use the background threads.
+import tests  # noqa: E402,F401
 
 import settings as S  # noqa: E402
 import stt  # noqa: E402
