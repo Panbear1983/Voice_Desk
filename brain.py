@@ -554,10 +554,11 @@ class Brain:
         return hits[0] if len(hits) == 1 else None
 
     # -- the "talk to X" command ------------------------------------------------------------
-    def command(self, text: str) -> Optional[str]:
+    def command(self, text: str, to: Optional[str] = None) -> Optional[str]:
+        target_id = self.resolve(to) if to else self.target()
         norm = re.sub(r"[^\w\s]", "", text.lower()).strip()
         if re.search(r"\b(who am i talking to|who is this|which (brain|profile|agent)( is this)?)\b", norm):
-            return f"You are talking to {self.name()}."
+            return f"You are talking to {self.name(target_id)}."
         if re.search(r"\b(who|what|which)\b.*\b(can i talk to|is available|profiles)\b", norm):
             names = [self.name(t) for t in self.targets()]
             return "You can talk to " + ", ".join(names[:-1]) + (f" or {names[-1]}." if len(names) > 1 else ".")
@@ -586,7 +587,7 @@ class Brain:
             to: Optional[str] = None) -> str:
         """`to` (a target id or a spoken name) overrides the sticky target for this turn only;
         the phone Shortcuts use it so each one talks to its own thread."""
-        handled = self.command(text)
+        handled = self.command(text, to=to)
         if handled:
             _log("voice", text, handled)
             return handled

@@ -148,6 +148,10 @@ class Microphone:
                 # 0.6 s pre-roll and the 1.5 s silence, which also subtracted the 0.25 s of speech that triggered
                 # detection, so a short greeting needed ~0.65 s of sound and was dropped before whisper saw it.)
                 if (span - quiet_run) * S.BLOCK_MS / 1000 < S.MIN_SPEECH_SEC:
+                    # Peter 2026-10-22: log every drop, so a missed "Hey Jarvis" is never invisible.
+                    print(time.strftime("%Y-%m-%d %H:%M:%S"),
+                          f"dropped before whisper: too short ({(span - quiet_run) * S.BLOCK_MS / 1000:.2f}s of sound)",
+                          flush=True)
                     speaking, voiced, loud_run, quiet_run, span = False, [], 0, 0, 0
                     start = time.monotonic()
                     on_state("listening")
