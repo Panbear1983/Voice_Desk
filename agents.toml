@@ -17,9 +17,9 @@
 # Optional keys left out of an agent's block are simply not managed for that agent.
 
 [shared]
-# Words that may come before a name to wake an agent ("hey Jarvis", "hi Kylie"). The extra
-# spellings are how whisper writes a short greeting ("Hi" -> "High"/"Hai", "Hey" -> "Hay").
-greetings = ["ok", "okay", "hey", "hay", "heya", "hi", "high", "hai", "hiya", "hello", "hallo", "hullo", "helo", "yo"]
+# Peter 2026-11-02: ONLY "hello" wakes an agent ("hello Jarvis", "hello Kylie", ...). Short one-syllable
+# greetings (hey, hi, ok, yo) were dropped on purpose. The extra spellings are how whisper writes "hello".
+greetings = ["hello", "hallo", "hullo", "helo"]
 # The words whisper is told to expect. Without it the small model hears "Javas", "Piley" and
 # "Juanaba Faye" (measured 2026-10-21); with it all four names land. Mandarin stays Mandarin.
 whisper_prompt = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."

@@ -429,17 +429,17 @@ def name_aliases() -> list[tuple[str, str]]:
     return sorted(set(pairs), key=lambda x: len(x[0]), reverse=True)
 
 
-# Greetings that may come before a name (agents.toml [shared] greetings). Peter 2026-10-22: "hi", "hey"
-# and "hello" must all wake an agent; the extra spellings are how whisper writes a short greeting.
+# Greetings that may come before a name (agents.toml [shared] greetings). Peter 2026-11-02: ONLY "hello"
+# wakes an agent (was hi/hey/ok/yo too, 2026-10-22); the extra spellings are how whisper writes a short greeting.
 _GREET = "(?:" + "|".join(re.escape(g) for g in S.GREETINGS) + ")"
-_LEAD = rf"(?:(?:{_GREET}|oh|um|so)\s+|(?:嘿|嗨|哈囉)\s*)*"
+_LEAD = rf"(?:(?:{_GREET}|oh|um|so)\s+|(?:哈囉)\s*)*"
 _SWITCH_CORE = (r"(?:please\s+)?(?:let me\s+|can i\s+|could i\s+|i want to\s+|i'd like to\s+)?"
                 r"(?:talk|speak|switch|switch over|hand me over|put me through|go back)\s+(?:to|with)\s+(?:the\s+)?")
 _SWITCH = rf"(?:{_SWITCH_CORE})?"
 _TAIL = r"(?:\s+(?:please|now|instead)(?=$))?"     # only when nothing follows: "Esther, now that..." keeps "now"
 # A hail is what wakes a SLEEPING listener (Peter, 2026-10-21: a bare "Jarvis" fires too easily in
-# conversation): "hey Jarvis", "ok Kylie", "talk to Esther", "嘿 克勞德". Fillers alone ("um Jarvis") do not count.
-_HAIL = rf"(?:(?:oh|um|so|uh)\s+)*(?:{_GREET}\s+|(?:嘿|嗨|哈囉)\s*)+"
+# conversation): "hello Jarvis", "hello Kylie", "talk to Esther", "哈囉 克勞德". Fillers alone ("um Jarvis") do not count.
+_HAIL = rf"(?:(?:oh|um|so|uh)\s+)*(?:{_GREET}\s+|(?:哈囉)\s*)+"
 _HAILED = rf"(?:{_HAIL}{_SWITCH}|{_LEAD}{_SWITCH_CORE})"
 
 

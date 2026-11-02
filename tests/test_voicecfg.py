@@ -42,8 +42,7 @@ DAY_ONE_NAMES = {
     "hermes:wanna-buffet": ("Wanna Buffet", ("wanna buffet", "wanna buffett", "wannabuffet", "wana buffet",
                                              "wanna buff it", "warren buffett", "warren buffet")),
 }
-DAY_ONE_GREETINGS = ["ok", "okay", "hey", "hay", "heya", "hi", "high", "hai", "hiya", "hello", "hallo", "hullo",
-                     "helo", "yo"]
+DAY_ONE_GREETINGS = ["hello", "hallo", "hullo", "helo"]   # Peter 2026-11-02: only hello wakes an agent
 DAY_ONE_VOICES = {   # target -> the voice written in its Hermes profile today
     "hermes:orchestrator": "en-US-JennyNeural",
     "hermes:assistant": "en-US-AvaNeural",
@@ -95,14 +94,14 @@ def test_settings_read_agents_toml() -> None:
     report("settings: mic constants come out exactly as before",
            all(getattr(S, k) == v for k, v in DAY_ONE_MIC.items()), str({k: getattr(S, k) for k in DAY_ONE_MIC}))
     report("brain: the greeting pattern is today's",
-           B._GREET == r"(?:ok|okay|hey|hay|heya|hi|high|hai|hiya|hello|hallo|hullo|helo|yo)", B._GREET)
-    toml = _edited_copy(lambda t: t.replace('"helo", "yo"]', '"helo", "yo", "howdy"]')
+           B._GREET == r"(?:hello|hallo|hullo|helo)", B._GREET)
+    toml = _edited_copy(lambda t: t.replace('"helo"]', '"helo", "howdy"]')
                         .replace('names = ["jarvis",', 'names = ["jarvie", "jarvis",')
                         .replace("silence_send_sec = 1.5", "silence_send_sec = 2.0")
                         .replace('whisper_prompt = "Jarvis,', 'whisper_prompt = "Jarvie, Jarvis,'))
     out = _run_with(toml, "import settings as S, brain as B; "
                           "print(B.addressed('howdy Jarvis, what time is it', hailed=True)); "
-                          "print(B.addressed('hey jarvie', hailed=True)); print(S.SILENCE_SEND_SEC); print(S.WHISPER_PROMPT[:7])")
+                          "print(B.addressed('hello jarvie', hailed=True)); print(S.SILENCE_SEND_SEC); print(S.WHISPER_PROMPT[:7])")
     report("settings: an edited agents.toml changes greetings, names, mic and hint words (no code edit)",
            out.splitlines() == ["('hermes:orchestrator', 'what time is it')", "('hermes:orchestrator', '')", "2.0", "Jarvie,"],
            out)

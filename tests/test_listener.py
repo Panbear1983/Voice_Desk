@@ -73,8 +73,8 @@ def test_routing() -> None:
     for name, target in want.items():
         report(f"routing: '{name}' resolves to {target}", b.resolve(name) == target, str(b.resolve(name)))
         report(f"routing: spoken name of {target} is {name}", b.name(target) == name, b.name(target))
-        for said in (f"{name}, what time is it?", f"Hey {name}.", f"Talk to {name}.", f"hey, {name}! what time is it",
-                     f"OK {name}. What time is it", f"switch to {name}", f"let me talk to {name} please"):
+        for said in (f"{name}, what time is it?", f"Hello {name}.", f"Talk to {name}.", f"hello, {name}! what time is it",
+                     f"Hello {name}. What time is it", f"switch to {name}", f"let me talk to {name} please"):
             hit = addressed(said)
             report(f"routing: {said!r} -> {target}", hit is not None and hit[0] == target, str(hit))
         said = b.command(f"talk to {name}")
@@ -82,10 +82,10 @@ def test_routing() -> None:
                b.target() == target and said is not None and name in said, f"{b.target()} {said!r}")
     # what whisper (small, with and without the vocabulary hint) really wrote, 2026-10-21
     heard = {"Javis, what time is it?": "hermes:orchestrator", "Jaarvis, what time is it?": "hermes:orchestrator",
-             "Talk to Javas": "hermes:orchestrator", "Hey Claud, what's new?": "claude",
-             "Hey wanna buffet?": "hermes:wanna-buffet", "Wanna buff it? How is the market today?": "hermes:wanna-buffet",
-             "Ester, how much tax do I owe?": "hermes:tax_angel_esther", "Hey Jarvis,現在幾點?": "hermes:orchestrator",
-             "嘿 克勞德，現在幾點": "claude", "talk to the orchestrator": "hermes:orchestrator",
+             "Talk to Javas": "hermes:orchestrator", "Hello Claud, what's new?": "claude",
+             "Hello wanna buffet?": "hermes:wanna-buffet", "Wanna buff it? How is the market today?": "hermes:wanna-buffet",
+             "Ester, how much tax do I owe?": "hermes:tax_angel_esther", "Hello Jarvis,現在幾點?": "hermes:orchestrator",
+             "哈囉 克勞德，現在幾點": "claude", "talk to the orchestrator": "hermes:orchestrator",
              "builder, are you there": "hermes:builder", "Talk to tax angel Esther": "hermes:tax_angel_esther"}
     for said, target in heard.items():
         hit = addressed(said)
@@ -94,17 +94,18 @@ def test_routing() -> None:
                  "Tell Kylie I said hi", "Claudette called", ""):
         report(f"routing: no name at the start -> no wake: {said!r}", addressed(said) is None, str(addressed(said)))
     # asleep, the listener wants a hail (Peter 2026-10-21: a bare "Jarvis" fires too easily)
-    for said, target in {"Hey Jarvis, what time is it?": "hermes:orchestrator", "OK Kylie, remind me at five.": "hermes:assistant",
-                         "Talk to Esther.": "hermes:tax_angel_esther", "hey, wanna buffet! how is the market": "hermes:wanna-buffet",
-                         "um, hey Jarvis": "hermes:orchestrator", "Hi Jarvis.": "hermes:orchestrator", "High, Kylie.": "hermes:assistant", "Hello, Esther.": "hermes:tax_angel_esther", "Hay Wanna Buffet": "hermes:wanna-buffet", "Hai Jarvis, what time is it?": "hermes:orchestrator", "嘿 克勞德，現在幾點": "claude",
+    for said, target in {"Hello Jarvis, what time is it?": "hermes:orchestrator", "Hello Kylie, remind me at five.": "hermes:assistant",
+                         "Talk to Esther.": "hermes:tax_angel_esther", "hello, wanna buffet! how is the market": "hermes:wanna-buffet",
+                         "um, hello Jarvis": "hermes:orchestrator", "Hello, Esther.": "hermes:tax_angel_esther", "Hello Gemini": "gemini", "Hello, Claude.": "claude", "Hello Wanna Buffet": "hermes:wanna-buffet", "哈囉 克勞德，現在幾點": "claude",
                          "let me talk to Jarvis please": "hermes:orchestrator"}.items():
         hit = addressed(said, hailed=True)
         report(f"hail: {said!r} wakes {target}", hit is not None and hit[0] == target, str(hit))
     for said in ("Jarvis, what time is it?", "Jarvis.", "Kylie said no", "um Jarvis", "so Esther, what do I file",
-                 "Wanna Buffet, how is the market today?", "Javis, what time is it?"):
-        report(f"hail: bare name does not wake: {said!r}", addressed(said, hailed=True) is None, str(addressed(said, hailed=True)))
-    report("hail: 'Hey Jarvis, what time is it?' strips to the question",
-           (addressed("Hey Jarvis, what time is it?", hailed=True) or ("", ""))[1] == "what time is it?")
+                 "Wanna Buffet, how is the market today?", "Javis, what time is it?",
+                 "Hey Jarvis, what time is it?", "Hi Jarvis.", "High, Kylie.", "OK Kylie, remind me at five.", "Hay Wanna Buffet", "Yo Claude", "Okay Esther"):
+        report(f"hail: bare name or any greeting but hello does not wake: {said!r}", addressed(said, hailed=True) is None, str(addressed(said, hailed=True)))
+    report("hail: 'Hello Jarvis, what time is it?' strips to the question",
+           (addressed("Hello Jarvis, what time is it?", hailed=True) or ("", ""))[1] == "what time is it?")
     # the old commands still work
     report("routing: 'switch to Opus' is still a model change", b.command("switch to Opus") is None)
     report("routing: 'talk to me about the budget' is a sentence", b.command("talk to me about the budget") is None)
@@ -121,16 +122,16 @@ def test_stripping() -> None:
     cases = {
         "Jarvis, what time is it?": "what time is it?",
         "Jarvis. What time is it?": "What time is it?",
-        "Hey, Jarvis, what's on today?": "what's on today?",
-        "OK Kylie, remind me at five.": "remind me at five.",
+        "Hello, Jarvis, what's on today?": "what's on today?",
+        "Hello Kylie, remind me at five.": "remind me at five.",
         "Wanna Buffet, how is the market today?": "how is the market today?",
-        "Hey Wanna Buffet!": "",
+        "Hello Wanna Buffet!": "",
         "Talk to Esther.": "",
         "let me talk to Esther please": "",
         "Esther, now that the year is over, what do I file?": "now that the year is over, what do I file?",
-        "Hey Jarvis,現在幾點?": "現在幾點?",
-        "嘿 克勞德，現在幾點": "現在幾點",
-        "Hey Claude, what's new?": "what's new?",
+        "Hello Jarvis,現在幾點?": "現在幾點?",
+        "哈囉 克勞德，現在幾點": "現在幾點",
+        "Hello Claude, what's new?": "what's new?",
         "Jarvis mute": "mute",
     }
     for said, rest in cases.items():
@@ -237,7 +238,7 @@ def test_listener_decisions() -> None:
     report("listener: asleep, no name -> ignored, nothing sent", lst.handle("what time is it") == "ignored" and not lst.brain.asked)
     report("listener: asleep, a bare 'Jarvis, ...' is NOT enough (needs a hail)",
            lst.handle("Jarvis, what time is it?") == "ignored" and not lst.brain.asked)
-    what = lst.handle("Hey Jarvis, what time is it?")
+    what = lst.handle("Hello Jarvis, what time is it?")
     report("listener: 'Hey Jarvis, what time is it' runs one turn", what == "turn", what)
     report("listener: ... with the orchestrator", lst.brain.asked[-1] == ("what time is it?", "hermes:orchestrator"),
            str(lst.brain.asked))
@@ -262,7 +263,7 @@ def test_listener_decisions() -> None:
     report("listener: ... the falling tone plays only once", CHIMES == [S.SOUND_ASLEEP], str(CHIMES))
     report("listener: after the line lapses, the next turn needs a name again",
            lst.handle("and the day after?") == "ignored", str(lst.brain.asked[-1]))
-    lst.handle("Hey Jarvis, one more thing")
+    lst.handle("Hello Jarvis, one more thing")
     CHIMES.clear()
     report("listener: 'goodbye' ends the open line at once",
            lst.handle("goodbye") == "stopped" and lst.status.state == "asleep")
@@ -271,7 +272,7 @@ def test_listener_decisions() -> None:
     report("listener: ... and then no falling tone (Okay. already said it)", CHIMES == [], str(CHIMES))
 
     # -- the safe phrase (Peter 2026-10-21: "I have no further questions, something like that") ------
-    lst.handle("Hey Jarvis, what time is it?")
+    lst.handle("Hello Jarvis, what time is it?")
     CHIMES.clear()
     n_asked = len(lst.brain.asked)
     what = lst.handle("Thanks Jarvis, I have no further questions.")
@@ -281,7 +282,7 @@ def test_listener_decisions() -> None:
            lst.player.played[-1] == S.SIGN_OFF and CHIMES[-1:] == [S.SOUND_ASLEEP] and len(lst.brain.asked) == n_asked,
            f"{lst.player.played[-1]} {CHIMES}")
     report("safe phrase: afterwards a follow-up needs a name again", lst.handle("and tomorrow?") == "ignored")
-    lst.handle("Hey Jarvis, what time is it?")
+    lst.handle("Hello Jarvis, what time is it?")
     CHIMES.clear()
     what = lst.handle("What's the weather in Taipei tomorrow, no further questions.")
     report("safe phrase: a question that comes with it is answered first, then the line closes",
@@ -289,14 +290,14 @@ def test_listener_decisions() -> None:
            and CHIMES == [S.SOUND_ASLEEP] and not lst.awake(), f"{lst.brain.asked[-1]} {CHIMES}")
     report("safe phrase: ignored while asleep (nothing to end, no hail)",
            lst.handle("I have no further questions") == "ignored")
-    report("safe phrase: Mandarin works too", (lst.handle("Hey Jarvis") and lst.handle("沒有問題了")) == "ended")
+    report("safe phrase: Mandarin works too", (lst.handle("Hello Jarvis") and lst.handle("沒有問題了")) == "ended")
     import tts as _T
     wav = Path(_T._beep_file("beep:880x1"))
     report("beeps: generated with Hermes' recipe (880 Hz, 120 ms, mono 16 kHz)",
            wav.exists() and 3_000 < wav.stat().st_size < 5_000, f"{wav} {wav.stat().st_size if wav.exists() else 0}")
     report("beeps: a plain file path plays as-is", _T._beep_file("/System/Library/Sounds/Tink.aiff") == "/System/Library/Sounds/Tink.aiff")
-    what = lst.handle("Hey Kylie.")
-    report("listener: bare 'hey Kylie' -> 'Kylie here.' and listening",
+    what = lst.handle("Hello Kylie.")
+    report("listener: bare 'hello Kylie' -> 'Kylie here.' and listening",
            what == "awake" and lst.player.played[-1] == "Kylie here." and lst.status.state == "listening", str(lst.player.played[-1]))
     lst.handle("what's on my calendar")
     report("listener: the next sentence goes to Kylie without her name",
@@ -309,8 +310,8 @@ def test_listener_decisions() -> None:
            lst.brain.target() == "hermes:wanna-buffet" and lst.player.played[-1] == "Wanna Buffet here.", lst.player.played[-1])
     lst.handle("Gemini, hello")
     report("listener: Gemini by name", lst.brain.asked[-1] == ("hello", "gemini"), str(lst.brain.asked[-1]))
-    lst.handle("Hey Claude, what's new?")
-    report("listener: 'hey Claude' still works", lst.brain.asked[-1] == ("what's new?", "claude"), str(lst.brain.asked[-1]))
+    lst.handle("Hello Claude, what's new?")
+    report("listener: 'hello Claude' still works", lst.brain.asked[-1] == ("what's new?", "claude"), str(lst.brain.asked[-1]))
     n = len(lst.brain.asked)
     report("listener: 'Jarvis, stop' does not run a turn", lst.handle("Jarvis, stop") == "stopped" and len(lst.brain.asked) == n)
     # mute / unmute by voice
@@ -579,7 +580,7 @@ def test_status_file() -> None:
     report("dashboard: never opened the microphone", not opened)
 
 
-# -- 6 the switchboard: "hey Kylie" presses Ctrl+B in Kylie's open herdr window ------------------
+# -- 6 the switchboard: "hello Kylie" presses Ctrl+B in Kylie's open herdr window ------------------
 class FakePanes:
     """herdr stand-in: one window per profile, a status bar we set, a log of what was pressed."""
     ACTIVE = ("recording", "transcribing", "conversation")
@@ -617,8 +618,8 @@ def test_switchboard() -> None:
     CHIMES.clear()
     n_asked = len(lst.brain.asked)
 
-    what = lst.handle("Hey Kylie")
-    report("switchboard: 'hey Kylie' presses Ctrl+B in Kylie's window", what == "handed" and fp.pressed == ["wH:pR"],
+    what = lst.handle("Hello Kylie")
+    report("switchboard: 'hello Kylie' presses Ctrl+B in Kylie's window", what == "handed" and fp.pressed == ["wH:pR"],
            f"{what} {fp.pressed}")
     report("switchboard: ... and runs no turn of its own (the window answers)", len(lst.brain.asked) == n_asked)
     report("switchboard: ... and the room mic goes deaf (her voice mode has it)", lst.deaf() and lst.status.state == "handed")
@@ -636,7 +637,7 @@ def test_switchboard() -> None:
            (clock.advance(S.ECHO_TAIL_SEC + 0.1) or True) and not lst.deaf())
 
     fp.bar["wH:pR"] = "recording"
-    lst.handle("Hey Kylie")
+    lst.handle("Hello Kylie")
     fp.bar["wH:pR"] = "conversation"
     lst._watch_hand()
     fp.bar["wH:pR"] = "voice-idle"          # three silent turns: Hermes left continuous mode by itself
@@ -644,7 +645,7 @@ def test_switchboard() -> None:
         lst._watch_hand()
     report("switchboard: three silent turns in her window also hand back", lst.handed is None)
     fp.bar["wH:pR"] = "voice-idle"
-    lst.handle("Hey Kylie")
+    lst.handle("Hello Kylie")
     fp.bar["wH:pR"] = "recording"
     lst._watch_hand()
     fp.bar["wH:pR"] = "voice-idle"
@@ -655,13 +656,13 @@ def test_switchboard() -> None:
     lst._take_back("test")
 
     fp.pressed.clear()
-    what = lst.handle("Hey Esther")
+    what = lst.handle("Hello Esther")
     report("switchboard: no open window -> says so, presses nothing",
            what == "no-window" and fp.pressed == [] and "not open" in lst.player.played[-1], lst.player.played[-1])
 
     fp.start_result = "busy"                # Jarvis is mid-answer to something typed
     fp.bar["wH:pN"] = "voice-idle"
-    what = lst.handle("Hey Jarvis")
+    what = lst.handle("Hello Jarvis")
     report("switchboard: a busy window -> waits, mic stays deaf", what == "handed" and lst._hand_pending and lst.deaf())
     lst._watch_hand()
     report("switchboard: ... does not hammer Ctrl+B (waits PANE_RETRY_SEC)", fp.pressed == ["wH:pN"], str(fp.pressed))
@@ -672,7 +673,7 @@ def test_switchboard() -> None:
            not lst._hand_pending and fp.pressed == ["wH:pN", "wH:pN"], str(fp.pressed))
     lst._take_back("test")
     fp.start_result = "busy"
-    lst.handle("Hey Jarvis")
+    lst.handle("Hello Jarvis")
     clock.advance(S.PANE_GIVE_UP_SEC + 1)
     lst._watch_hand()
     report("switchboard: busy for too long -> gives up and listens for a name", lst.handed is None)
@@ -680,17 +681,17 @@ def test_switchboard() -> None:
     fp.start_result = "started"
     fp.bar["wH:pR"] = "voice-idle"
     lst.player.played.clear()
-    lst.handle("Hey Kylie, find me a flight to Phoenix")
+    lst.handle("Hello Kylie, find me a flight to Phoenix")
     report("switchboard: a question glued to the name is not lost silently (asks to repeat after the beep)",
            any("say that again" in p for p in lst.player.played) and lst.handed == "wH:pR", str(lst.player.played))
     lst._take_back("test")
     fp.start_result = "draft"
     fp.bar["wH:pR"] = "off"
     report("switchboard: never types into a window with unsent typing",
-           lst.handle("Hey Kylie") == "no-window" and "unsent typing" in lst.player.played[-1])
+           lst.handle("Hello Kylie") == "no-window" and "unsent typing" in lst.player.played[-1])
     fp.start_result = "started"
     report("switchboard: Claude still runs here (no window to hand to)",
-           lst.handle("Hey Claude, what time is it") == "turn")
+           lst.handle("Hello Claude, what time is it") == "turn")
     lst.follow_until = 0.0
 
     # the status bar parser, on the strings Hermes really draws
@@ -703,7 +704,7 @@ def test_switchboard() -> None:
     report("panes: voice off (no voice bar)", P.state_of(f"{rule}\n ☤ claude-fable-5-1 │ 143K/1M │ 14% \n") == "off")
     report("panes: unreadable -> gone", P.state_of(None) == "gone" and P.state_of("") == "gone")
     fp.bar["wH:pR"] = "voice-idle"
-    lst.handle("Hey Kylie")
+    lst.handle("Hello Kylie")
     fp.bar["wH:pR"] = "gone"                # one empty herdr read
     lst._watch_hand()
     fp.bar["wH:pR"] = "conversation"

@@ -124,12 +124,12 @@ class CodexTests(unittest.TestCase):
         with patch.object(S,'CODEX_BIN','/missing/codex'):
             self.assertIn('could not start',CodexBrain().ask('question'))
             self.assertNotIn('codex',Brain().targets())
-            self.assertIsNone(addressed('Hey Codex, hello',hailed=True))
+            self.assertIsNone(addressed('Hello Codex, hello',hailed=True))
 
     def test_routing_persistence_and_new_thread(self):
         brain=Brain()
         self.assertIn('codex',brain.targets())
-        self.assertEqual(addressed('Hey Codex, hello',hailed=True),('codex','hello'))
+        self.assertEqual(addressed('Hello Codex, hello',hailed=True),('codex','hello'))
         self.assertEqual(brain.resolve('openai codex'),'codex')
         self.assertIn('Codex',brain.command('talk to Codex'))
         self.assertEqual(brain.target(),'codex')

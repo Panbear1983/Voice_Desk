@@ -137,7 +137,7 @@ class Engine:
             self._goodbye()
             return
         if norm in {stt.normalize(w) for w in S.SLEEP_WORDS}:
-            self._speak("Okay, sleeping. Say a name, like hey Claude or Jarvis, to wake me.")
+            self._speak("Okay, sleeping. Say hello and a name, like hello Claude or hello Jarvis, to wake me.")
             self.sleep()
             return
         if norm in {stt.normalize(w) for w in S.OPEN_MIC_WORDS}:
