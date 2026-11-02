@@ -215,6 +215,7 @@ class LiveBrain:
                 on_status: StatusCb, on_text: TextCb) -> str:
         start = last_change = last_status = time.monotonic()
         delivered, frozen, answer, pending, buf, retried = False, False, "", "", "", False
+        said_status = False
         fh = None
         try:
             while not self._cancel.is_set():
@@ -265,9 +266,10 @@ class LiveBrain:
                         return answer
                 if now - start > S.CLAUDE_TURN_TIMEOUT_SEC:
                     return answer or f"Your {self.name} window is still working; the answer will be on the screen."
-                if now - last_status > S.STATUS_EVERY_SEC:
-                    last_status = now
-                    on_status(_TOOL_STATUS.get(self.last_tool, "still working on it"))
+                if now - last_status > S.STATUS_EVERY_SEC and (S.STATUS_REPEAT or not said_status):
+                    last_status, said_status = now, True
+                    on_status(_TOOL_STATUS.get(self.last_tool, "still working on it") if S.STATUS_REPEAT
+                              else S.STATUS_ONCE_LINE)
                 time.sleep(POLL_SEC)
             return answer or "Stopped."
         finally:
@@ -358,7 +360,7 @@ class HermesLiveBrain:
 
     def _follow(self, pane_id: str, last_id: int, message: str, on_status: StatusCb, on_text: TextCb) -> str:
         start = last_status = time.monotonic()
-        session, answer, pending, retried = None, "", "", False
+        session, answer, pending, retried, said_status = None, "", "", False, False
         while not self._cancel.is_set():
             for rid, sid, role, content, tool, calls, finish in self._rows(last_id):
                 last_id = rid
@@ -388,9 +390,9 @@ class HermesLiveBrain:
                 return f"I typed it into your {self.name} window, but it never arrived there."
             if now - start > S.CLAUDE_TURN_TIMEOUT_SEC:
                 return answer or f"Your {self.name} window is still working; the answer will be on the screen."
-            if now - last_status > S.STATUS_EVERY_SEC:
-                last_status = now
-                on_status("still working on it")
+            if now - last_status > S.STATUS_EVERY_SEC and (S.STATUS_REPEAT or not said_status):
+                last_status, said_status = now, True
+                on_status("still working on it" if S.STATUS_REPEAT else S.STATUS_ONCE_LINE)
             time.sleep(POLL_SEC)
         return answer or "Stopped."
 

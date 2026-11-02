@@ -47,6 +47,10 @@ def _log(who: str, prompt: str, reply: str) -> None:
 
 
 def _status_ticker(stop: threading.Event, on_status: StatusCb, last_tool: Callable[[], str]) -> None:
+    if not S.STATUS_REPEAT:                   # one line per turn, then quiet until the answer
+        if not stop.wait(S.STATUS_EVERY_SEC):
+            on_status(S.STATUS_ONCE_LINE)
+        return
     n = 0
     while not stop.wait(S.STATUS_EVERY_SEC):
         n += 1

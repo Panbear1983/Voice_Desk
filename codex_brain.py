@@ -77,6 +77,9 @@ class CodexBrain:
 
         def status() -> None:
             while not stopped.wait(S.STATUS_EVERY_SEC):
+                if not S.STATUS_REPEAT:             # one line per turn, then quiet until the answer
+                    on_status(S.STATUS_ONCE_LINE)
+                    return
                 on_status("Codex is still working on it")
 
         ticker = threading.Thread(target=status, daemon=True)

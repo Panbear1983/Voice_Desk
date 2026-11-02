@@ -9,8 +9,9 @@ POST /ask   {"text": "...", "to": "esther"}  -> {"reply": "...", "pending": bool
                                 profile by name; each phone Shortcut is pinned to one.
 GET  /reply                  -> {"reply": "..."}
                                 the next finished answer (waits up to POLL_WAIT_SEC for one);
-                                "." when there is nothing to say, a short "still working"
-                                line every few polls while Claude is busy
+                                "." when there is nothing to say; one short "still working"
+                                line per question while it is busy (settings.STATUS_REPEAT
+                                = True brings back one every few polls)
 GET  /health                 -> {"ok": true, "targets": [...]}   who you can talk to
 
 Every request must carry the shared token (header X-Token or JSON field "token").
@@ -152,7 +153,10 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
             if remaining <= 0:
                 job = matching_pending[0]
                 job["polls"] += 1
-                if job["polls"] % STATUS_EVERY_POLLS == 0:
+                if job["polls"] % STATUS_EVERY_POLLS == 0 and (S.STATUS_REPEAT or not job.get("status_said")):
+                    job["status_said"] = True             # STATUS_REPEAT off: once per question, then "." until the answer
+                    if not S.STATUS_REPEAT:
+                        return S.STATUS_ONCE_LINE + ".", False
                     status_text = _TOOL_STATUS.get(brain.last_tool_for(job.get("target")), "still working on it")
                     return status_text + ".", False
                 return SILENT, False

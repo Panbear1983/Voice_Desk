@@ -92,6 +92,11 @@ TTS_VOICE_ZH_MAC = "Meijia"      # Taiwan Mandarin, the Mac fallback when Edge i
 AFPLAY = "/usr/bin/afplay"
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 STATUS_EVERY_SEC = 10           # spoken "still working" while Claude thinks
+# Peter 2026-11-02: "Why couldn't you just say it once and then just let it finish?" One status
+# line per question (Mac and phone, every agent), then quiet until the answer. True = the old
+# repeating lines ("still running a command" every 10 s on the Mac, every 3rd check-back on the phone).
+STATUS_REPEAT = False
+STATUS_ONCE_LINE = "Still working on it, I'll tell you when it's done"
 
 # ---- the brain -----------------------------------------------------------------------
 CLAUDE_BIN = os.environ.get("VOICE_DESK_CLAUDE_BIN", "claude")
