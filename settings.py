@@ -56,8 +56,11 @@ SLEEP_AFTER_SEC = 60            # no speech for this long -> grey light, wake wo
 WAKE_WORDS = ("hey claude", "hey, claude", "claude", "hey hermes", "hey, hermes", "克勞德", "克劳德")
 
 # ---- spoken commands (matched after lowercasing and stripping punctuation) ------------
+# The ONE list for the Mac window and the phone door alike (commands.classify matches them).
 STOP_WORDS = {"stop", "wait", "hold on", "stop talking", "shut up", "quiet", "等一下", "停"}
-GOODBYE_WORDS = {"goodbye", "good bye", "bye", "bye claude", "bye bye", "that's all", "that is all", "再見", "拜拜"}
+GOODBYE_WORDS = {"goodbye", "good bye", "bye", "bye claude", "bye bye", "that's all", "that is all", "再見", "拜拜",
+                 # Peter 2026-11-02, his own words for "I'm done"
+                 "no further question", "no further questions", "that's it", "that is it", "i'm done", "we're done"}
 SLEEP_WORDS = {"go to sleep", "sleep now", "stop listening", "休息"}
 OPEN_MIC_WORDS = {"open mic", "open microphone", "hands free"}
 TAP_MODE_WORDS = {"push to talk", "tap to talk", "tap mode"}

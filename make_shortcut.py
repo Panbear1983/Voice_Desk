@@ -55,6 +55,7 @@ def dictionary(items: list[tuple[str, dict]]) -> dict:
 
 POLLS = 12             # after each question: up to 12 check-backs of ~8 s = ~100 s for a long answer;
                        # once the answer is spoken the remaining check-backs return instantly
+IF_HAS_ANY_VALUE = 100 # Shortcuts' If condition code for "has any value"
 
 
 def url_action(uid: str, method: str, body: dict | None = None, to: str = "") -> dict:
@@ -68,18 +69,34 @@ def url_action(uid: str, method: str, body: dict | None = None, to: str = "") ->
 
 
 def speak_reply(url_uuid: str) -> list[dict]:
-    """Get Dictionary Value 'reply' from the last URL result, then Speak Text."""
+    """Get Dictionary Value 'reply' from the last URL result, then Speak Text, then: if the
+    receiver marked it the goodbye ("end" has any value), Stop This Shortcut."""
     value_uuid = str(uuid.uuid4())
+    end_uuid = str(uuid.uuid4())
+    group = str(uuid.uuid4())
+    url_output = {"Value": {"OutputUUID": url_uuid, "OutputName": "Contents of URL", "Type": "ActionOutput"},
+                  "WFSerializationType": "WFTextTokenAttachment"}
     return [
         {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
          "WFWorkflowActionParameters": {"UUID": value_uuid, "WFGetDictionaryValueType": "Value",
-                                        "WFDictionaryKey": "reply",
-                                        "WFInput": {"Value": {"OutputUUID": url_uuid, "OutputName": "Contents of URL",
-                                                              "Type": "ActionOutput"},
-                                                    "WFSerializationType": "WFTextTokenAttachment"}}},
+                                        "WFDictionaryKey": "reply", "WFInput": url_output}},
         {"WFWorkflowActionIdentifier": "is.workflow.actions.speaktext",
          "WFWorkflowActionParameters": {"WFSpeakTextWait": True,
                                         "WFText": ref(value_uuid, "Dictionary Value")}},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
+         "WFWorkflowActionParameters": {"UUID": end_uuid, "WFGetDictionaryValueType": "Value",
+                                        "WFDictionaryKey": "end", "WFInput": url_output}},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+         "WFWorkflowActionParameters": {
+             "GroupingIdentifier": group, "WFControlFlowMode": 0, "WFCondition": IF_HAS_ANY_VALUE,
+             "WFInput": {"Type": "Variable", "Variable": {
+                 "Value": {"OutputUUID": end_uuid, "OutputName": "Dictionary Value", "Type": "ActionOutput"},
+                 "WFSerializationType": "WFTextTokenAttachment"}}}},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.exit", "WFWorkflowActionParameters": {}},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+         "WFWorkflowActionParameters": {"GroupingIdentifier": group, "WFControlFlowMode": 1}},     # Otherwise
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+         "WFWorkflowActionParameters": {"GroupingIdentifier": group, "WFControlFlowMode": 2}},     # End If
     ]
 
 
@@ -89,7 +106,8 @@ def build(to: str = "", stop: str = "After Pause") -> dict:
 
     Siri drops any single request that takes much longer than ten seconds, so the Mac
     answers /ask at once and the phone checks back; every check-back speaks whatever came
-    back ("." is silent), so no conditional logic is needed in the Shortcut."""
+    back ("." is silent). The only condition: after each Speak, if the receiver added
+    "end" (Peter said a goodbye phrase, settings.GOODBYE_WORDS), the Shortcut stops."""
     group = str(uuid.uuid4())
     dictate_uuid = str(uuid.uuid4())
     ask_uuid = str(uuid.uuid4())

@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
+import commands
 import settings as S
 import stt
 import tts
@@ -133,10 +134,11 @@ class Engine:
                 return
             text, norm = rest, stt.normalize(rest)
 
-        if norm in {stt.normalize(w) for w in S.GOODBYE_WORDS}:
+        command = commands.classify(text)
+        if command == "goodbye":
             self._goodbye()
             return
-        if norm in {stt.normalize(w) for w in S.SLEEP_WORDS}:
+        if command == "sleep":
             self._speak("Okay, sleeping. Say hello and a name, like hello Claude or hello Jarvis, to wake me.")
             self.sleep()
             return
@@ -144,7 +146,7 @@ class Engine:
             self.mode = "open"; self.on_event("note", "open mic"); self._speak("Open mic."); self._set("listening"); return
         if norm in {stt.normalize(w) for w in S.TAP_MODE_WORDS}:
             self.mode = "tap"; self.on_event("note", "tap to talk"); self._speak("Tap to talk."); self._set("listening"); return
-        if norm in {stt.normalize(w) for w in S.STOP_WORDS}:
+        if command == "stop":
             self._set("listening")
             return
         for w in S.TRAILING_SEND_WORDS:
@@ -208,14 +210,10 @@ class Engine:
         self._set("thinking")
         self.on_event("you", "goodbye")
         try:
-            self.brain.ask(
-                "We are ending this voice session. File ONE short memory note of what we discussed and decided "
-                "(use mempalace_add_drawer under the right wing per ~/.mempalace/MEMORY_PROTOCOL.md; "
-                "wing 'peter' if it was general). Then reply with one short goodbye sentence.",
-                on_status=self._status)
+            self.brain.ask(commands.GOODBYE_PROMPT, on_status=self._status)
         except Exception:
             pass
-        self._speak("Goodbye.")
+        self._speak(commands.GOODBYE_REPLY)
         self._quit.set()
         self._set("off")
 

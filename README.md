@@ -214,7 +214,7 @@ python3 docs/render_images.py --only 08_codex_window 09_codex_dashboard --no-gif
 | "talk to Codex" / "talk to Gemini" / "talk to Jarvis" / "talk to Kylie" / "talk to Esther" / "talk to Wanna Buffet" / "talk to Claude" | switches to another brain, each with its own separate conversation: Codex, Gemini, and every [Hermes](https://github.com/NousResearch/hermes-agent) profile on the Mac |
 | "who am I talking to" / "who can I talk to" | which brain is on, and the list |
 | "open mic" / "tap to talk" | switches listening mode (tap mode is for noisy rooms) |
-| "goodbye", 「再見」 | ends the session; Claude saves a short note about what you discussed |
+| "goodbye", "that's it", "no further questions", "I'm done", 「再見」 | ends the session; Claude saves a short note about what you discussed. The phone Shortcuts end on the same words after saying "Goodbye." ("go to sleep" / "stop" end them too, with "Okay.") |
 
 Ending a sentence with "over" or "send" also works, and the word is dropped.
 

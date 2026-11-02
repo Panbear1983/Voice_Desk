@@ -7,7 +7,11 @@ POST /ask   {"text": "...", "to": "esther"}  -> {"reply": "...", "pending": bool
                                 the answer if it was ready within ASK_WAIT_SEC, else ".".
                                 "to" (optional) picks "claude", "gemini", "codex" or a Hermes
                                 profile by name; each phone Shortcut is pinned to one.
-GET  /reply                  -> {"reply": "..."}
+                                A goodbye phrase (settings.GOODBYE_WORDS, the Mac window's own
+                                list, matched by commands.classify) files the memory note and
+                                answers "Goodbye." with "end": true; a sleep or stop phrase
+                                answers "Okay." with "end": true. The Shortcut stops on "end".
+GET  /reply                  -> {"reply": "..."}       ("end": true when it is the goodbye)
                                 the next finished answer (waits up to POLL_WAIT_SEC for one);
                                 "." when there is nothing to say; one short "still working"
                                 line per question while it is busy (settings.STATUS_REPEAT
@@ -29,6 +33,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import commands
 import settings as S
 import tts
 from brain import _TOOL_STATUS, Brain
@@ -67,10 +72,11 @@ TOKEN = token()
 
 
 # -- jobs ---------------------------------------------------------------------------------
-def start_job(text: str, to: str = "", client_ip: str = "") -> dict:
+def start_job(text: str, to: str = "", client_ip: str = "", end: bool = False) -> dict:
+    """end=True: a goodbye. The brain files its memory note, the phone hears "Goodbye." and stops."""
     resolved_target = brain.resolve(to) if to else brain.target()
     job = {"id": uuid.uuid4().hex[:8], "text": text, "to": to, "target": resolved_target,
-           "client_ip": client_ip, "reply": "", "done": False,
+           "client_ip": client_ip, "reply": "", "done": False, "end": end,
            "consumed": False, "started": time.monotonic(), "polls": 0}
     with _cv:
         _prune()
@@ -82,10 +88,17 @@ def start_job(text: str, to: str = "", client_ip: str = "") -> dict:
 
 
 def _run(job: dict) -> None:
-    try:
-        reply = brain.ask(job["text"], to=job["to"] or None)
-    except Exception as exc:                       # the phone should hear it, not silence
-        reply = f"I hit an error: {exc}"
+    if job.get("end"):                             # same as the Mac window's goodbye: note first, then "Goodbye."
+        try:
+            brain.ask(commands.GOODBYE_PROMPT, to=job["to"] or None)
+        except Exception as exc:
+            log(f"job {job['id']} goodbye note failed: {exc}")
+        reply = commands.GOODBYE_REPLY
+    else:
+        try:
+            reply = brain.ask(job["text"], to=job["to"] or None)
+        except Exception as exc:                       # the phone should hear it, not silence
+            reply = f"I hit an error: {exc}"
     with _cv:
         job["reply"] = tts.speakable(reply) or "I did not get an answer back."
         job["done"] = True
@@ -107,6 +120,13 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
     If to is given, matches jobs targeted to that agent/profile.
     If neither is given, uses client_ip's most recent active target if known.
     """
+    text, is_answer, _ = take_reply_job(timeout, job_id, to, client_ip)
+    return text, is_answer
+
+
+def take_reply_job(timeout: float, job_id: str | None = None, to: str | None = None,
+                   client_ip: str | None = None) -> tuple[str, bool, dict | None]:
+    """take_reply, plus the job whose answer was handed out (None for a status line or silence)."""
     deadline = time.monotonic() + timeout
     resolved_to = brain.resolve(to) if to else ""
     # Shortcuts made before 2026-10-25 check back with no job and no target: then the asking device
@@ -131,7 +151,7 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
                     job["consumed"] = True                # walked away from long ago: drop, do not read it out now
                     continue
                 job["consumed"] = True
-                return job["reply"], True
+                return job["reply"], True, job
 
             # 2. Look for matching pending jobs
             matching_pending = []
@@ -147,7 +167,7 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
                 matching_pending.append(j)
 
             if not matching_pending:
-                return SILENT, False                 # nothing in flight for this filter: answer at once
+                return SILENT, False, None           # nothing in flight for this filter: answer at once
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -156,14 +176,22 @@ def take_reply(timeout: float, job_id: str | None = None, to: str | None = None,
                 if job["polls"] % STATUS_EVERY_POLLS == 0 and (S.STATUS_REPEAT or not job.get("status_said")):
                     job["status_said"] = True             # STATUS_REPEAT off: once per question, then "." until the answer
                     if not S.STATUS_REPEAT:
-                        return S.STATUS_ONCE_LINE + ".", False
+                        return S.STATUS_ONCE_LINE + ".", False, None
                     status_text = _TOOL_STATUS.get(brain.last_tool_for(job.get("target")), "still working on it")
-                    return status_text + ".", False
-                return SILENT, False
+                    return status_text + ".", False, None
+                return SILENT, False, None
             _cv.wait(remaining)
 
 
 # -- http ---------------------------------------------------------------------------------
+def _payload(body: dict, job: dict | None) -> dict:
+    """Adds "end": true when the answer handed out is the goodbye. The key is left out otherwise,
+    so the Shortcut's If can simply ask whether "end" has any value."""
+    if job and job.get("end"):
+        body["end"] = True
+    return body
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, payload: dict) -> bool:
         body = json.dumps(payload, ensure_ascii=False).encode()
@@ -198,9 +226,9 @@ class Handler(BaseHTTPRequestHandler):
         req_to = query.get("to", [""])[0]
         req_job = query.get("job", [""])[0]
         client_ip = self.client_address[0]
-        text, is_answer = take_reply(POLL_WAIT_SEC, job_id=req_job or None, to=req_to or None,
-                                     client_ip=client_ip)
-        sent = self._send(200, {"reply": text})
+        text, is_answer, job = take_reply_job(POLL_WAIT_SEC, job_id=req_job or None, to=req_to or None,
+                                              client_ip=client_ip)
+        sent = self._send(200, _payload({"reply": text}, job))
         if is_answer or text != SILENT:
             log(f"{client_ip} GET /reply {time.monotonic()-t0:.1f}s "
                 f"{'answer' if is_answer else 'status'}{'' if sent else ' (phone hung up)'}: {text[:60]!r}")
@@ -230,10 +258,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         t0 = time.monotonic()
         client_ip = self.client_address[0]
-        job = start_job(text, to, client_ip=client_ip)
-        log(f"{client_ip} POST /ask job {job['id']} -> {brain.name(to or None)}: {text[:80]!r}")
-        reply, is_answer = take_reply(ASK_WAIT_SEC, job_id=job["id"], client_ip=client_ip)
-        sent = self._send(200, {"reply": reply, "pending": not is_answer, "job": job["id"]})
+        command = commands.classify(text)          # the Mac window's own phrase list (settings.py)
+        if command in ("sleep", "stop"):           # the Shortcut has no idle state: these end it too
+            self._send(200, {"reply": "Okay.", "pending": False, "end": True})
+            log(f"{client_ip} POST /ask {command} -> end: {text[:80]!r}")
+            return
+        job = start_job(text, to, client_ip=client_ip, end=command == "goodbye")
+        log(f"{client_ip} POST /ask job {job['id']} -> {brain.name(to or None)}"
+            f"{' (goodbye)' if job['end'] else ''}: {text[:80]!r}")
+        reply, is_answer, done = take_reply_job(ASK_WAIT_SEC, job_id=job["id"], client_ip=client_ip)
+        sent = self._send(200, _payload({"reply": reply, "pending": not is_answer, "job": job["id"]}, done))
         log(f"{client_ip} POST /ask job {job['id']} {time.monotonic()-t0:.1f}s "
             f"{'answered' if is_answer else 'pending'}{'' if sent else ' (phone hung up)'}")
 
