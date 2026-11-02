@@ -50,9 +50,9 @@ DAY_ONE_VOICES = {   # target -> the voice written in its Hermes profile today
     "hermes:wanna-buffet": "en-US-AndrewNeural",
 }
 DAY_ONE_WHISPER_PROMPT = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."
-DAY_ONE_MIC = {   # settings.py lines 25-34 on 2026-10-22
-    "PRE_ROLL_SEC": 0.6, "SPEECH_START_SEC": 0.25, "SILENCE_SEND_SEC": 1.5, "MAX_UTTERANCE_SEC": 90,
-    "MIN_SPEECH_SEC": 0.4, "NOISE_FLOOR_START": 150.0, "SPEECH_OVER_FLOOR": 3.0, "MIN_SPEECH_RMS": 350.0,
+DAY_ONE_MIC = {   # settings.py lines 25-34 on 2026-10-22; headset values (start, min length, min loudness) 2026-10-31
+    "PRE_ROLL_SEC": 0.6, "SPEECH_START_SEC": 0.15, "SILENCE_SEND_SEC": 1.5, "MAX_UTTERANCE_SEC": 90,
+    "MIN_SPEECH_SEC": 0.2, "NOISE_FLOOR_START": 150.0, "SPEECH_OVER_FLOOR": 3.0, "MIN_SPEECH_RMS": 250.0,
     "BARGE_IN_OVER_FLOOR": 4.0, "BARGE_IN_SEC": 0.5,
 }
 
