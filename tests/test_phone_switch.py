@@ -121,6 +121,28 @@ class PhoneSwitchTest(unittest.TestCase):
         self.post("and tomorrow?")
         self.assertEqual(self.brain.asked[-1], ("hermes:orchestrator", "and tomorrow?"))
 
+    def test_a_name_then_talk_to_another_switches_the_phone_not_the_mac(self):
+        """Review round 1: "Kylie, talk to Jarvis" reached Brain.command, which moved the Mac's sticky
+        agent and told the phone Jarvis was listening while its next question still went to Kylie."""
+        for said, target, who in (("Kylie, talk to Jarvis", "hermes:orchestrator", "Jarvis"),
+                                  ("Hello Kylie, talk to Jarvis.", "hermes:orchestrator", "Jarvis"),
+                                  ("Jarvis, switch to Esther", "hermes:tax_angel_esther", "Esther")):
+            receiver._client_switch.clear()
+            self.brain.asked.clear()
+            out = self.post(said)                                 # from the Kylie Shortcut
+            self.assertEqual(out["reply"], f"Okay, you are talking to {who} now.", said)
+            self.assertEqual(self.brain.asked, [], said)          # nobody was asked the switch as a question
+            self.post("what time is it")
+            self.assertEqual(self.brain.asked, [(target, "what time is it")], said)
+            self.assertFalse(S.BRAIN_FILE.exists(), said)        # the Mac window's agent did not move
+            self.assertEqual(self.brain.target(), "claude", said)
+
+    def test_a_name_then_talk_to_someone_unknown_stays_put(self):
+        out = self.post("Jarvis, talk to Bob")
+        self.assertTrue(out["reply"].startswith("I do not know anyone called bob."), out["reply"])
+        self.assertEqual((self.brain.asked, receiver._client_switch), ([], {}))
+        self.assertFalse(S.BRAIN_FILE.exists())
+
     def test_own_name_is_just_the_question(self):
         out = self.post("Kylie, remind me at five")
         self.assertEqual(self.brain.asked, [("hermes:assistant", "remind me at five")])

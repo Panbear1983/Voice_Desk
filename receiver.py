@@ -126,6 +126,9 @@ def phone_switch(text: str, client_ip: str, to: str) -> tuple[str, str, str] | N
             return "", "", f"I do not know anyone called {wanted}. " + (brain.command("who can I talk to") or "")
         hit = (target, "")
     target, rest = hit
+    if rest and switch_request(rest):        # "Kylie, talk to Jarvis" / "Jarvis, switch to Esther": the last
+        return phone_switch(rest, client_ip, to)   # name wins, on THIS lane; never asked, so Brain.command's
+                                                   # set_target never moves the Mac's sticky agent
     pinned = _pinned(to) or brain.target()
     with _cv:
         was = _client_switch.get(client_ip)
