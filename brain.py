@@ -484,6 +484,21 @@ def addressed(text: str, hailed: bool = False) -> Optional[tuple[str, str]]:
     return None
 
 
+def switch_request(text: str) -> Optional[str]:
+    """The name asked for in a whole-sentence 'talk to X' / 'okay, switch to X please', else None.
+    No side effects: Brain.command switches the Mac's thread with it, the phone door its own lane.
+    'switch to Opus' (a model) and 'talk to me about X' (a sentence) are not switches."""
+    norm = re.sub(r"[^\w\s]", "", (text or "").lower()).strip()
+    m = re.search(r"^(?:ok(?:ay)?\s+)?(?:please\s+)?(?:let me\s+)?(?:talk|speak|switch|switch over|hand me over|put me through)"
+                  r"\s+(?:to|with)\s+(.+?)(?:\s+(?:please|now|instead))?$", norm)
+    if not m:
+        return None
+    wanted = m.group(1).strip()
+    if wanted in ClaudeBrain.MODELS or len(wanted.split()) > 4 or wanted.startswith("me ") or " about " in f" {wanted} ":
+        return None
+    return wanted
+
+
 class Brain:
     """Front door: picks the thread ("claude" or "hermes:<profile>"), handles "talk to X"."""
 
@@ -566,12 +581,8 @@ class Brain:
         if re.search(r"\b(who|what|which)\b.*\b(can i talk to|is available|profiles)\b", norm):
             names = [self.name(t) for t in self.targets()]
             return "You can talk to " + ", ".join(names[:-1]) + (f" or {names[-1]}." if len(names) > 1 else ".")
-        m = re.search(r"^(?:ok(?:ay)?\s+)?(?:please\s+)?(?:let me\s+)?(?:talk|speak|switch|switch over|hand me over|put me through)"
-                      r"\s+(?:to|with)\s+(.+?)(?:\s+(?:please|now|instead))?$", norm)
-        if not m:
-            return None
-        wanted = m.group(1).strip()
-        if wanted in ClaudeBrain.MODELS or len(wanted.split()) > 4 or wanted.startswith("me ") or " about " in f" {wanted} ":
+        wanted = switch_request(text)
+        if not wanted:
             return None                             # "switch to Opus" is a model change; "talk to me about X" is a sentence
         target = self.resolve(wanted)
         if not target:

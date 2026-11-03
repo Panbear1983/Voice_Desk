@@ -211,7 +211,7 @@ python3 docs/render_images.py --only 08_codex_window 09_codex_dashboard --no-gif
 | "which model" | tells you which model it's using |
 | "think deep" / "quick mode" / "max effort" / "normal mode" | how hard Claude thinks |
 | "which effort" | tells you the current effort level |
-| "talk to Codex" / "talk to Gemini" / "talk to Jarvis" / "talk to Kylie" / "talk to Esther" / "talk to Wanna Buffet" / "talk to Claude" | switches to another brain, each with its own separate conversation: Codex, Gemini, and every [Hermes](https://github.com/NousResearch/hermes-agent) profile on the Mac |
+| "talk to Codex" / "talk to Gemini" / "talk to Jarvis" / "talk to Kylie" / "talk to Esther" / "talk to Wanna Buffet" / "talk to Claude" | switches to another brain, each with its own separate conversation: Codex, Gemini, and every [Hermes](https://github.com/NousResearch/hermes-agent) profile on the Mac. On the phone it works in any Shortcut too ("switch to Jarvis", "hello Jarvis", a bare "Jarvis", or "Jarvis, …" with the question): that phone talks to the new brain until it switches back, ends, or is quiet for five minutes; the Mac's own choice is left alone |
 | "who am I talking to" / "who can I talk to" | which brain is on, and the list |
 | "open mic" / "tap to talk" | switches listening mode (tap mode is for noisy rooms) |
 | "goodbye", "that's it", "no further questions", "I'm done", 「再見」 | ends the session; Claude saves a short note about what you discussed. The phone Shortcuts end on the same words after saying "Goodbye." ("go to sleep" / "stop" end them too, with "Okay.") |
