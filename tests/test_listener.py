@@ -608,6 +608,75 @@ class FakePanes:
         return False
 
 
+# -- 7 the speech line (speechq.py): one voice at a time (Peter 2026-10-22, on by default 2026-11-07) ---
+def test_pause_gate() -> None:
+    """The listener tells the speech line when a waiting agent reply may play: never while Peter
+    talks or a handed window records, and it says who Peter is talking with ("Kylie here")."""
+    import speechq as Q
+    S.PANE_MODE = True
+    service.set_muted(False)
+    clock = FakeClock()
+    lst = make_listener(clock=clock)
+    fp = FakePanes()
+    lst.panes = fp
+    st = Q.Station()
+    lst._publish_gate()
+    report("gate: asleep, nobody talking -> open", st.gate()["open"] is True and st.gate()["current"] is None, str(st.gate()))
+    lst._on_mic_state("hearing")
+    report("gate: closed the moment Peter starts talking", st.gate()["open"] is False and st.gate()["why"] == "Peter is talking",
+           str(st.gate()))
+    report("gate: ... and the status light still says hearing (unchanged listener behaviour)", lst.status.state == "hearing")
+    lst._on_mic_state("asleep")
+    report("gate: open again when he stops", st.gate()["open"] is True, str(st.gate()))
+    lst.handle("Hello Jarvis")
+    lst._watch_hand()
+    lst._publish_gate()
+    g = st.gate()
+    report("gate: closed while Jarvis's window records, and says Peter is talking with Jarvis",
+           g["open"] is False and g["current"] == "orchestrator", str(g))
+    report("gate: ... the handed room mic stays deaf exactly as before", lst.handed == "wH:pN" and lst.deaf())
+    fp.bar["wH:pN"] = "conversation"
+    lst._watch_hand()
+    lst._publish_gate()
+    report("gate: open while Jarvis's window is between turns (a pause)", st.gate()["open"] is True, str(st.gate()))
+    report("gate: ... so Kylie's reply then opens with 'Kylie here'",
+           Q.wants_name("assistant", st.gate(), None, time.time(), {"orchestrator", "assistant"}))
+    report("gate: ... and Jarvis's own reply does not",
+           not Q.wants_name("orchestrator", st.gate(), None, time.time(), {"orchestrator", "assistant"}))
+    lst._take_back("test")
+    lst._publish_gate()
+    report("gate: taken back -> open, nobody on the line", st.gate()["open"] is True and lst._hand_state == "", str(st.gate()))
+    S.PANE_MODE = False
+
+
+def test_listener_takes_the_line() -> None:
+    """Voice Desk's own lines wait for an agent's sentence that is playing (one voice at a time)."""
+    import speechq as Q
+    st = Q.Station()
+    lst = make_listener()
+    played_at: list = []
+    real_play = lst.player.play
+    lst.player.play = lambda p: (played_at.append(time.time()), real_play(p))
+    on_air = threading.Event()
+
+    def agent_reply() -> None:
+        with st.turn("assistant", gated=False, known={"assistant"}):
+            on_air.set()
+            time.sleep(0.4)                       # Kylie's sentence is playing
+
+    th = threading.Thread(target=agent_reply)
+    th.start()
+    on_air.wait(5)
+    t0 = time.time()
+    lst.speak("Okay.")
+    th.join()
+    report("station: the listener's own line waits for an agent's sentence to finish",
+           bool(played_at) and played_at[-1] - t0 >= 0.25, f"{[round(x - t0, 2) for x in played_at]}")
+    report("station: ... and leaves no ticket behind", st.line() == [])
+    report("station: ... and holds no floor (a window's record beep never waits on Voice Desk)",
+           (st.floor() or {}).get("owner") == "assistant")
+
+
 def test_switchboard() -> None:
     import panes as P
     S.PANE_MODE = True
@@ -744,5 +813,7 @@ if __name__ == "__main__":
     test_mute_during_speech()
     test_status_file()
     test_switchboard()
+    test_pause_gate()
+    test_listener_takes_the_line()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)

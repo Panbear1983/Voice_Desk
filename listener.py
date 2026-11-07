@@ -14,6 +14,10 @@ the microphone open and only reacts to a sentence that starts with a name:
 VOICE_DESK_PANES=0 brings back the old one-shot Hermes turns. Everything is transcribed locally
 by whisper-server; only a sentence that starts with a name ever leaves the Mac.
 
+Every agent voice on the Mac goes through one line (speechq.py, Peter 2026-10-22 / 2026-11-07:
+one voice at a time). This listener tells that line when there is a pause (gate.json, every
+0.5 s and whenever Peter starts or stops talking), and its own lines take their turn in it.
+
 Echo: the mic is DEAF while it speaks and for a second after, and also while any other
 program on this Mac is speaking (afplay / say: the Claude Stop hook, Hermes voice mode).
 It holds ~/.voice_desk/window.lock like the window does, so the Claude Stop hook stays
@@ -23,6 +27,7 @@ State for the dashboard goes to ~/.voice_desk/listener.json (service.py).
 """
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import os
 import re
@@ -39,6 +44,7 @@ from typing import Callable, Optional
 import settings as S
 import panes
 import service
+import speechq
 import stt
 import tts
 import voices
@@ -138,6 +144,9 @@ class Listener:
         self._lock_fh = None
         self._speak_lock = threading.Lock()   # the reply and a "still working" line never overlap
         self._thinking = False                # a "still working" line is only spoken while a turn runs
+        self._hand_state = ""                 # the handed window's last status-bar state (for the pause gate)
+        self._hearing = False                 # the mic hears Peter right now (the pause gate closes)
+        self._station_obj = None              # speechq.Station, made on first use
 
     # -- the echo guard -------------------------------------------------------------------------
     def deaf(self) -> bool:
@@ -152,6 +161,54 @@ class Listener:
             self.quiet_until = max(self.quiet_until, now + S.ECHO_TAIL_SEC)
             return True
         return now < self.quiet_until
+
+    # -- the speech line (speechq.py): the pause signal and our own place in the line ------------
+    _LISTENING = ("recording", "transcribing")   # a handed window's own mic is open: no reply on top of it
+
+    def _station(self):
+        if self._station_obj is None:
+            try:
+                self._station_obj = speechq.Station()
+            except Exception as exc:
+                log(f"speech line unavailable: {exc}")
+        return self._station_obj
+
+    def _gate_now(self) -> tuple[bool, str, Optional[str]]:
+        """(open, why, current): may a waiting agent reply play now, and who Peter is talking with."""
+        target = self.brain.target() if (self.handed or self.awake() or self._thinking) else ""
+        current = target.split(":", 1)[-1] if target else None
+        if self._hearing:
+            return False, "Peter is talking", current
+        if self.handed and self._hand_state in self._LISTENING:
+            return False, f"{self.brain.name(target)} is listening", current
+        if not self.handed and self.awake() and not self._thinking:
+            return False, "waiting for Peter", current
+        return True, "", current
+
+    def _publish_gate(self) -> None:
+        st = self._station()
+        if st is None:
+            return
+        try:
+            st.set_gate(*self._gate_now())
+        except Exception as exc:                       # a full disk never stops the mic
+            log(f"gate not written: {exc}")
+
+    @contextlib.contextmanager
+    def _on_air(self):
+        """Take our place in the shared line for one line of our own: it waits for an agent's
+        sentence that is playing (and briefly for a reply that is mid-way), and no agent's sentence
+        starts on top of it. Any trouble with the line -> just speak."""
+        st = self._station()
+        with contextlib.ExitStack() as stack:
+            if st is not None:
+                try:
+                    stack.enter_context(st.turn(speechq.LISTENER, gated=False, known=(), abort=self._quit.is_set))
+                except speechq.Cut:
+                    raise
+                except Exception as exc:
+                    log(f"speech line skipped: {exc}")
+            yield
 
     # -- state ------------------------------------------------------------------------------------
     def awake(self) -> bool:
@@ -190,7 +247,7 @@ class Listener:
             self.status.update(note="no voice available")
             return
         try:
-            with self._speak_lock:
+            with self._speak_lock, self._on_air():
                 if not only_if():
                     return
                 self.speaking = True
@@ -208,6 +265,8 @@ class Listener:
                     self.mic.drain()
                     if after:
                         self.status.set_state(after)
+        except speechq.Cut:                            # quitting while in line: say nothing
+            pass
         finally:
             shutil.rmtree(Path(path).parent, ignore_errors=True)
 
@@ -379,6 +438,7 @@ class Listener:
             log(f"switchboard: {name}: question with the name not passed on ({rest[:60]!r})")
             self.speak(f"{name} is listening, say that again after the beep.")
         result = self.panes.start(pane)
+        self._hand_state = ""
         if result == "started":
             self.handed, self._hand_pending = pane, False
             log(f"switchboard: {name} ({pane}) is listening")
@@ -420,6 +480,7 @@ class Listener:
                 self._take_back(f"window {result}")
             return                                 # busy: try again in PANE_RETRY_SEC
         st = self.panes.state(pane)
+        self._hand_state = st
         if st in self.panes.ACTIVE:
             self._hand_quiet = 0
             return
@@ -444,7 +505,7 @@ class Listener:
 
     def _take_back(self, why: str) -> None:
         log(f"switchboard: back to listening for a name ({why})")
-        self.handed, self._hand_pending, self._hand_quiet = None, False, 0
+        self.handed, self._hand_pending, self._hand_quiet, self._hand_state = None, False, 0, ""
         self.quiet_until = max(self.quiet_until, self.clock() + S.ECHO_TAIL_SEC)
         self.status.update(note="", pane="")
         self.mic.drain()
@@ -495,6 +556,7 @@ class Listener:
             reason = ("speaking" if self.speaking else "other speech" if self.foreign.playing()
                       else "echo tail" if self.clock() < self.quiet_until else "")
             self.status.update(level=int(getattr(self.mic, "level", 0)), muted=service.is_muted(), deaf=reason)
+            self._publish_gate()                  # every 0.5 s: older than speechq.GATE_STALE_SEC = no listener
 
     # -- headsets: follow the Mac's default microphone ----------------------------------------------
     def _follow_mic(self) -> Optional[str]:
@@ -558,6 +620,7 @@ class Listener:
                 limit = S.MAX_UTTERANCE_SEC if self.awake() else S.ASLEEP_MAX_UTTERANCE_SEC
                 audio = self.mic.listen(timeout_sec=2, should_abort=self._quit.is_set, max_sec=limit,
                                         on_state=self._on_mic_state)
+                self._hearing = False
                 if audio is None:
                     continue
                 text = self.transcribe(audio)
@@ -587,6 +650,13 @@ class Listener:
         self._off()
 
     def _on_mic_state(self, s: str) -> None:
+        self._hearing = s == "hearing"
+        try:
+            self._mic_state(s)
+        finally:
+            self._publish_gate()                  # a waiting agent reply holds while Peter talks
+
+    def _mic_state(self, s: str) -> None:
         if s == "hearing":
             # Speech that STARTS on an open line belongs to the conversation even if it ends after the
             # line would have closed (2026-10-25: a long question was cut off and the line hung up).

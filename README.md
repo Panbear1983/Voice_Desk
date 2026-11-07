@@ -259,6 +259,32 @@ warning if a profile drifted from it. Keys: <kbd>M</kbd> mute/unmute · <kbd>H</
 **Keys** (you never *need* them): <kbd>Space</kbd> talk in tap mode or interrupt ·
 <kbd>M</kbd> mode · <kbd>S</kbd> sleep/wake · <kbd>N</kbd> new conversation · <kbd>Q</kbd> quit.
 
+### Several agents at once: one voice at a time
+
+Every agent's spoken reply on the Mac goes through one shared line, the speech line in
+`speechq.py`. Replies play one after another, in the order they arrived, and each reply plays
+whole before the next agent starts. Nothing is dropped. When the speaker changes, the new reply
+opens with the agent's name ("Kylie here.") in her own voice. Voice Desk's own short lines take
+their turn in it too. It is on by default once installed.
+
+```bash
+./install_speechq.sh            # put the speech line in front of every Hermes window's voice
+./install_speechq.sh --remove   # take it away again
+touch ~/.voice_desk/speech/off  # or just switch it off for now (delete the file to switch it back on)
+.venv/bin/python speechq.py status   # who is waiting, who holds the floor, the listener's pause signal
+```
+
+It works by putting a small `afplay` stand-in in `~/bin`, which Hermes finds first on its PATH.
+If anything about Voice Desk is missing or broken, the stand-in plays the sentence straight
+through. It never goes silent. Open Hermes windows pick it up from their next sentence. The
+listener tells the line when there is a pause, about twice a second (a reply waits while you
+are talking or a window is recording). If the listener is not running, replies play straight
+away, still one at a time. A reply never waits more than a minute for a pause, because Hermes
+gives up on speech it has not played after two minutes.
+
+Claude Code's own spoken replies (its Stop hook) play with `/usr/bin/afplay` directly, so they
+do not go through this line and can still overlap the others (Peter's choice, 2026-11-07).
+
 ## Take it to your iPhone
 
 Same conversation, from anywhere, through [Tailscale](https://tailscale.com) (free for
@@ -448,11 +474,12 @@ python3 docs/render_images.py          # PNGs + loop.gif (needs playwright + Pil
 | `settings.py` | every other adjustable value |
 | `receiver.py`, `start_receiver.sh`, `install_receiver.sh` | iPhone receiver and its login job |
 | `listener.py`, `start_listener.sh`, `install_listener.sh` | the always-on listener and its login job |
+| `speechq.py`, `install_speechq.sh` | the shared speech line (one voice at a time) and its `afplay` stand-in |
 | `service.py` | the listener's status file, mute flag and launchd controls |
 | `dashboard.py`, `dashboard.sh` | the control panel for the listener |
 | `make_shortcut.py` | builds the signed iPhone Shortcut |
 | `install_remote_control.sh` | Remote Control login job for the Claude app |
-| `tests/selftest.py`, `tests/test_listener.py`, `tests/test_voicecfg.py` | headless end-to-end checks |
+| `tests/selftest.py`, `tests/test_listener.py`, `tests/test_speechq.py`, `tests/test_voicecfg.py` | headless end-to-end checks |
 | `docs/` | screenshots, diagram and the scripts that make them |
 
 </details>

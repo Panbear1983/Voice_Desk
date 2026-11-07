@@ -243,6 +243,29 @@ def stage_window() -> None:
     report("M switches mode", tapped)
 
 
+def stage_speechq() -> None:
+    """The speech line with the REAL /usr/bin/afplay (a silent clip at volume 0), throwaway state:
+    the stand-in plays, exits 0 like afplay, and leaves no ticket behind."""
+    import wave
+    state = Path(tempfile.mkdtemp(prefix="vd-self-sq-"))
+    clip = state / "silent.wav"
+    with wave.open(str(clip), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(b"\0\0" * 11025)
+    env = dict(os.environ, VOICE_DESK_STATE=str(state), HERMES_HOME="/x/profiles/assistant",
+               VOICE_DESK_SPEECHQ_NAMES_ONLY_CACHED="1")
+    env.pop("VOICE_DESK_REAL_AFPLAY", None)
+    t0 = time.time()
+    r = subprocess.run([sys.executable, str(ROOT / "speechq.py"), "afplay", "-v", "0", str(clip)],
+                       env=env, capture_output=True, text=True, timeout=30)
+    took = time.time() - t0
+    left = list((state / "speech" / "queue").glob("*.json"))
+    report("speech line plays through the real afplay", r.returncode == 0 and 0.4 < took < 10 and not left,
+           f"rc={r.returncode} {took:.1f}s tickets={len(left)} {r.stderr[-200:]}")
+
+
 if __name__ == "__main__":
     stage_vad()
     w = stt.Whisper()
@@ -257,6 +280,7 @@ if __name__ == "__main__":
     stage_receiver()
     stage_window()
     stage_router()
+    stage_speechq()
     if "--hermes" in sys.argv:
         stage_hermes()
     if "--gemini" in sys.argv:
