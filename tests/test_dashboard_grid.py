@@ -126,7 +126,8 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(service.take_orders(), [])
             with mock.patch.object(voicecfg, "PROFILES", self.w.paths.profiles), \
-                    mock.patch.object(voicecfg, "CLAUDE_CONF", self.w.edit.claude_conf):
+                    mock.patch.object(voicecfg, "CLAUDE_CONF", self.w.edit.claude_conf), \
+                    mock.patch.object(voicecfg, "GEMINI_CONF", self.w.edit.gemini_conf):
                 await pilot.press("s")
                 await pilot.pause()
                 self.assertIsInstance(app.screen, D.ListenerScreen)
@@ -204,14 +205,38 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Mandarin voice looks like", text_of(app, "#msg"))
             self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
 
-    async def test_gemini_cannot_be_edited_yet_and_says_why(self):
+    async def test_gemini_and_codex_voices_are_edited_on_the_grid_too_and_undone_with_u(self):
+        # step 5: E on Gemini's row opens the box with the voice it speaks with today (the shared Jenny)
         app = make_app(self.w)
+        conf = self.w.edit.gemini_conf
+        before = conf.read_text()
         async with app.run_test(size=(180, 50)) as pilot:
             await load(app, pilot)
             await pilot.press("down", "down", "down", "down", "down", "e")     # Gemini is the 6th row
             await pilot.pause()
-            self.assertIsInstance(app.screen, D.GridScreen, "no edit box opens")
-            self.assertIn("Gemini", text_of(app, "#msg"))
+            self.assertIsInstance(app.screen, D.AskScreen)
+            field = app.screen.query_one(Input)
+            self.assertEqual(field.value, "en-US-JennyNeural")
+            field.value = "en-US-AriaNeural"
+            await pilot.press("enter")
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            await pilot.pause()
+            self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', conf.read_text())
+            self.assertIn("Gemini English voice: not set → Aria", text_of(app, "#history"))
+            await pilot.press("down", "e")                                      # Codex, the 7th row
+            await pilot.pause()
+            app.screen.query_one(Input).value = "en-GB-RyanNeural"
+            await pilot.press("enter")
+            self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 2))
+            await pilot.pause()
+            self.assertEqual(next(a for a in agents.agents(agents.load(self.w.toml)) if a.key == "codex").voice, "en-GB-RyanNeural")
+            await pilot.press("u")
+            self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 3))
+            await pilot.press("u")
+            self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 4))
+            await pilot.pause()
+            self.assertEqual(conf.read_text(), before)
+            self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
 
     async def test_the_grid_never_reads_more_than_once_per_refresh_and_not_at_all_when_nothing_changed(self):
         app = make_app(self.w)

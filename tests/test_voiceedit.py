@@ -85,6 +85,13 @@ class TheValidation(unittest.TestCase):
         with self.assertRaises(VE.EditError):
             VE.check_voice("voice_zh", "en-US-AvaNeural", self.kylie)
 
+    def test_mandarin_voice_must_be_taiwan_mandarin(self):
+        # Peter 2026-11-09: Taiwan Mandarin accent for Chinese, no Mainland accent
+        for bad in ("zh-CN-XiaoxiaoNeural", "zh-HK-HiuGaaiNeural"):
+            with self.assertRaises(VE.EditError, msg=bad) as cm:
+                VE.check_voice("voice_zh", bad, self.kylie)
+            self.assertIn("Taiwan Mandarin", str(cm.exception))
+
     def test_extra_language_code_and_voice_must_agree(self):
         self.assertEqual(VE.check_voice("voices_extra", VE.parse_extra("ja=ja-JP-NanamiNeural"), self.kylie), {"ja": "ja-JP-NanamiNeural"})
         for bad in ("ja=fr-FR-DeniseNeural", "en=en-US-AvaNeural", "japanese=ja-JP-NanamiNeural", "ja"):
@@ -170,12 +177,65 @@ class TheChange(unittest.TestCase):
         self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
         self.assertEqual(VE.read_history(self.w.edit), [])
 
-    def test_gemini_and_codex_have_nothing_the_panel_can_change_yet(self):
+    def test_gemini_and_codex_can_be_changed_now(self):
+        # step 5: both get their own voice; before, the panel refused and they spoke with the shared Jenny
         for key in ("gemini", "codex"):
-            res = VE.change(key, "voice", "en-US-AriaNeural", self.w.edit)
-            self.assertFalse(res.ok)
-            self.assertIn("shared Voice Desk voice", res.message)
+            self.assertTrue(VE.editable(agent_of(self.w, key)), key)
+
+    def test_a_gemini_voice_goes_into_agents_toml_and_gemini_hooks_file_with_backup_and_history(self):
+        conf = self.w.edit.gemini_conf
+        before = conf.read_text()
+        res = VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertEqual(agent_of(self.w, "gemini").voice, "en-US-AriaNeural")
+        self.assertIn('[agents.gemini]\ntarget = "gemini"\ndisplay = "Gemini"\nnames = ["gemini"]\nvoice = "en-US-AriaNeural"\n',
+                      self.w.toml.read_text(), "one line added at the end of Gemini's block")
+        text = conf.read_text()
+        self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', text)
+        self.assertIn('NEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"', text, "no Mandarin voice set: it follows Aria, as Voice Desk does")
+        self.assertEqual(res.changed_files, [str(conf)])
+        self.assertEqual(Path(res.entry["files"][0]["backup"]).read_text(), before)
+        self.assertEqual(VE.recent(self.w.edit, 1)[0].split("  ", 1)[1], "Gemini English voice: not set → Aria")
+        res = VE.change("gemini", "voice_zh", "zh-TW-HsiaoChenNeural", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertIn('NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"', conf.read_text())
+        self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', conf.read_text())
+
+    def test_gemini_hooks_file_is_read_back_with_bash_and_put_back_if_it_does_not_read_right(self):
+        before_conf, before_toml = self.w.edit.gemini_conf.read_text(), self.w.toml.read_text()
+        with mock.patch.object(voicecfg, "_verify", return_value=["bash reads NEURAL_VOICE_EN as 'x'"]):
+            res = VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit)
+        self.assertFalse(res.ok)
+        self.assertEqual(self.w.edit.gemini_conf.read_text(), before_conf)
+        self.assertEqual(self.w.toml.read_text(), before_toml)
+
+    def test_a_missing_gemini_file_is_made_on_the_first_change(self):
+        self.w.edit.gemini_conf.unlink()
+        res = VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        text = self.w.edit.gemini_conf.read_text()
+        self.assertTrue(text.startswith("# Gemini's spoken-reply voices."), text)
+        self.assertLess(text.index("NEURAL_VOICE_EN"), text.index("NEURAL_VOICE_ZH"))
+        self.assertEqual(res.entry["files"][0]["backup"], voicecfg.NEW_FILE)
+
+    def test_a_codex_voice_lives_in_agents_toml_only_and_voice_desk_speaks_with_it(self):
+        import voices
+        res = VE.change("codex", "voice", "en-GB-RyanNeural", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertEqual(res.changed_files, [])
+        self.assertIn("Voice Desk reads it", res.message)
+        self.assertTrue(VE.change("codex", "voice_zh", "zh-TW-YunJheNeural", self.w.edit).ok)
+        with mock.patch.object(agents, "PATH", self.w.toml), mock.patch.object(voices, "per_profile_enabled", return_value=True):
+            v = voices.voice_for("codex")
+        self.assertEqual((v.en, v.zh, v.source), ("en-GB-RyanNeural", "zh-TW-YunJheNeural", "agents"))
+
+    def test_gemini_and_codex_refuse_what_is_not_an_edge_voice_of_the_right_language(self):
+        for key, field, bad in (("gemini", "voice", "alloy"), ("codex", "voice", "zh-TW-YunJheNeural"),
+                                ("codex", "voice_zh", "en-GB-RyanNeural")):
+            res = VE.change(key, field, bad, self.w.edit)
+            self.assertFalse(res.ok, (key, field, bad))
         self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
+        self.assertEqual(VE.read_history(self.w.edit), [])
 
     def test_if_the_apply_fails_agents_toml_is_put_back_and_the_failure_is_logged(self):
         with mock.patch.object(voicecfg, "apply", return_value=([], ["profile: restored from backup, did not read back"])):
@@ -252,6 +312,20 @@ class TheUndo(unittest.TestCase):
         self.assertIn("voice_override", self.w.toml.read_text())
         self.assertTrue(VE.undo(self.w.edit).ok)
         self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
+
+    def test_undo_of_gemini_and_codex_voices_puts_everything_back_exactly(self):
+        import datetime as dt
+        t = dt.datetime(2026, 11, 9, 12, 0, 0)
+        conf_before = self.w.edit.gemini_conf.read_text()
+        VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit, now=t)
+        VE.change("gemini", "voice_zh", "zh-TW-HsiaoYuNeural", self.w.edit, now=t + dt.timedelta(seconds=1))
+        VE.change("codex", "voice", "en-GB-RyanNeural", self.w.edit, now=t + dt.timedelta(seconds=2))
+        for _ in range(3):
+            res = VE.undo(self.w.edit)
+            self.assertTrue(res.ok, res.message)
+        self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML, "the added voice lines are gone again")
+        self.assertEqual(self.w.edit.gemini_conf.read_text(), conf_before, "Gemini's hook speaks with the shared voice again")
+        self.assertIn("undo: Gemini English voice: Aria → not set", VE.recent(self.w.edit, 1)[0])
 
     def test_history_survives_a_garbage_line(self):
         VE.change("kylie", "voice", "en-US-AriaNeural", self.w.edit)

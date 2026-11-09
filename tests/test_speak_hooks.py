@@ -25,7 +25,7 @@ import speechq as Q  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_HOOKS = Path.home() / ".claude/hooks"
-GEMINI_HOOK = Path.home() / ".gemini/config/hooks/speak-response.py"
+GEMINI_HOOK = Path(os.environ.get("VOICE_DESK_TEST_GEMINI_HOOK") or Path.home() / ".gemini/config/hooks/speak-response.py")   # env: mutation checks against an older copy
 GEMINI_PY = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 
 
@@ -150,6 +150,7 @@ class GeminiJoinsTheQueue(Fakes):
     def set_edge(self, works: bool):
         (self.fake_mods / "edge_tts.py").write_text(
             "class Communicate:\n    def __init__(self, text, voice):\n        self.t = text\n"
+            f"        open({str(self.log)!r}, 'a').write('edge:' + voice + '\\n')\n"
             "    async def save(self, path):\n"
             + ("        open(path, 'wb').write(b'mp3')\n" if works else "        raise RuntimeError('no network')\n"))
 
@@ -193,6 +194,43 @@ class GeminiJoinsTheQueue(Fakes):
         self.assertTrue(wait_for(lambda: any(c.startswith("queue:gemini:") for c in self.calls())), self.calls())
         self.assertIn("say", self.calls())
         self.assertTrue([c for c in self.calls() if c.endswith(".aiff")], self.calls())       # a file, played by the stand-in
+
+    # -- step 5: Gemini's own voice, from the file Voice Desk writes beside the hook ------------------------------
+    def conf(self, text: str) -> None:
+        (self.home / ".gemini/config/hooks/voice-defaults.conf").write_text(text)
+
+    def edge_voices(self):
+        assert wait_for(lambda: any(c.startswith("queue:gemini:") for c in self.calls())), self.calls()
+        return [c.split(":", 1)[1] for c in self.calls() if c.startswith("edge:")]
+
+    def say_in_mandarin(self):
+        self.transcript.write_text(json.dumps({"source": "MODEL", "type": "PLANNER_RESPONSE",
+                                               "content": "你好，我是 Gemini。今天一切都很好。"}) + "\n")
+
+    def test_without_voice_desks_file_it_speaks_as_before_jenny(self):
+        self.fire()
+        self.assertEqual(self.edge_voices(), ["en-US-JennyNeural"])
+
+    def test_it_speaks_english_with_the_voice_set_in_voice_desk(self):
+        self.conf('# by Voice Desk\nNEURAL_VOICE_EN="en-US-AriaNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"\n')
+        self.fire()
+        self.assertEqual(self.edge_voices(), ["en-US-AriaNeural"])
+        self.assertIn("[en-US-AriaNeural]", self.hook_log())
+
+    def test_it_speaks_mandarin_with_the_taiwan_voice_set_in_voice_desk(self):
+        self.conf('NEURAL_VOICE_EN="en-US-AriaNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"\n')
+        self.say_in_mandarin()
+        self.fire()
+        self.assertEqual(self.edge_voices(), ["zh-TW-HsiaoYuNeural"])
+
+    def test_a_value_that_is_not_an_edge_voice_of_that_language_keeps_the_default(self):
+        self.conf('NEURAL_VOICE_EN="zh-TW-HsiaoYuNeural"\nNEURAL_VOICE_ZH="rm -rf"\n')
+        self.fire()
+        self.assertEqual(self.edge_voices(), ["en-US-JennyNeural"])
+        self.say_in_mandarin()
+        self.log.write_text("")
+        self.fire()
+        self.assertEqual(self.edge_voices(), ["zh-TW-HsiaoChenNeural"])
 
 
 class TheQueueKnowsClaudeAndGemini(unittest.TestCase):

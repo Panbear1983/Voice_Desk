@@ -8,8 +8,10 @@
 #     .venv/bin/python -m voicecfg sync --apply     # back up, then write them
 #
 # sync writes each Hermes agent's values into ~/.hermes/profiles/<profile>/config.yaml (so the
-# agent's own window AND its Telegram voice bubbles follow), and Claude's into
-# ~/.claude/voice-defaults.conf (read by ~/.claude/hooks/speak-response.sh).
+# agent's own window AND its Telegram voice bubbles follow), Claude's into
+# ~/.claude/voice-defaults.conf (read by ~/.claude/hooks/speak-response.sh), and Gemini's into
+# ~/.gemini/config/hooks/voice-defaults.conf (read by Gemini's speak-response.py hook). Codex has no
+# hook of its own: only Voice Desk speaks for it, straight from this file.
 # The listener reads names, greetings, hint words and mic settings from here at start (restart it
 # after changing those); voices are read fresh before every spoken line.
 #
@@ -23,8 +25,8 @@ greetings = ["hello", "hallo", "hullo", "helo"]
 # The words whisper is told to expect. Without it the small model hears "Javas", "Piley" and
 # "Juanaba Faye" (measured 2026-10-21); with it all four names land. Mandarin stays Mandarin.
 whisper_prompt = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."
-# Voice Desk's own shared voice: used for Claude and Gemini turns, and for everyone when the
-# dashboard's V key turns per-agent voices off.
+# Voice Desk's own shared voice: used for any agent with no voice of its own below, and for
+# everyone when the dashboard's V key turns per-agent voices off.
 voice = "en-US-JennyNeural"
 voice_zh = "zh-TW-HsiaoChenNeural"
 
@@ -55,8 +57,11 @@ spellings = { "that's" = ["that's", "that is", "that’s"] }   # the last one ha
 # ---- the agents --------------------------------------------------------------------------------
 # names:     every spelling whisper has been heard to produce for the agent's name
 # voice:     the reply voice. Hermes agents: written into the profile's active tts provider (and
-#            tts.edge.voice when the profile has one). Claude: NEURAL_VOICE_EN.
-# voice_zh:  the Mandarin voice Voice Desk (and Claude's hook) speaks with
+#            tts.edge.voice when the profile has one). Claude and Gemini: NEURAL_VOICE_EN in their
+#            voice-defaults.conf. Codex: read here by Voice Desk. Voice Desk speaks every agent's
+#            turns with it too.
+# voice_zh:  the Mandarin voice Voice Desk (and Claude's and Gemini's hooks) speak with; Taiwan
+#            Mandarin (zh-TW-...) only, Peter 2026-11-09
 # speed:     tts.edge.speed in the profile
 # auto_tts, silence_duration, silence_threshold, barge_in, barge_in_grace_seconds:
 #            the profile's voice-mode knobs (its top-level `voice:` block)

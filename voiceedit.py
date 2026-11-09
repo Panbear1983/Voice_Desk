@@ -50,6 +50,8 @@ def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
         if field_name == "voice_zh":
             if not (m and m.group(1) == "zh"):
                 raise EditError(f"A Mandarin voice looks like zh-TW-HsiaoChenNeural (zh-… Neural); got {v!r}.")
+            if not v.startswith("zh-TW-"):                # Peter 2026-11-09: Taiwan Mandarin only, no Mainland accent
+                raise EditError(f"Mandarin voices are Taiwan Mandarin only (zh-TW-…, e.g. zh-TW-HsiaoYuNeural); got {v!r}.")
         elif m:
             if m.group(1) != "en":
                 raise EditError(f"The English voice must start with en- (for example en-US-AvaNeural); got {v!r}.")
@@ -93,8 +95,9 @@ def parse_extra(text: str) -> dict:
 
 def editable(agent: agents.Agent) -> bool:
     """Only voices something already reads live can be changed from the panel: Hermes agents (their
-    config.yaml and Voice Desk) and Claude (voice-defaults.conf)."""
-    return bool(agent.profile) or agent.target == "claude"
+    config.yaml and Voice Desk), Claude (voice-defaults.conf), Gemini (its hook's voice-defaults.conf, and
+    Voice Desk) and Codex (only Voice Desk speaks for it; it reads agents.toml before every line)."""
+    return bool(agent.profile) or agent.target in ("claude", "gemini", "codex")
 
 
 # ---- editing agents.toml line by line -------------------------------------------------------------
@@ -204,12 +207,13 @@ class EditPaths:
     hermes_backups: Path              # parent of the per-change voicecfg backup folders
     profiles: Path
     claude_conf: Path
+    gemini_conf: Optional[Path] = None   # Gemini's hook file; None = not managed (tests that do not ask for it)
 
     @classmethod
     def default(cls) -> "EditPaths":
         return cls(toml=agents.PATH, history=S.STATE_DIR / "voice_history.jsonl",
                    toml_backups=S.STATE_DIR / "voice_history_backups", hermes_backups=voicecfg.BACKUPS,
-                   profiles=voicecfg.PROFILES, claude_conf=voicecfg.CLAUDE_CONF)
+                   profiles=voicecfg.PROFILES, claude_conf=voicecfg.CLAUDE_CONF, gemini_conf=voicecfg.GEMINI_CONF)
 
 
 def read_history(paths: EditPaths) -> list[dict]:
@@ -318,8 +322,8 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
         cfg = tomllib.loads(old_text)
         agent = _find_agent(cfg, agent_key)
         if not editable(agent):
-            raise EditError(f"{agent.display} has no voice setting the panel can change yet: it speaks with the shared "
-                            "Voice Desk voice and its own hook (Gemini: Jenny / HsiaoChen, hard-coded). That comes later.")
+            raise EditError(f"{agent.display} has no voice setting the panel can change: it speaks with the shared "
+                            "Voice Desk voice.")
         removing = new is None or (new == {} and field_name == "voices_extra")
         if removing and (kind == "undo" or field_name in ("voices_extra", "voice_override")):
             new = None                                  # taking a setting away again (undo, or clearing the extras)
@@ -347,8 +351,12 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
         _atomic_write(paths.toml, new_text)
         new_cfg = agents.load(paths.toml)
         keep = _WANTED_KEYS.get(field_name)
-        items = [i for i in voicecfg.collect(new_cfg, paths.profiles, paths.claude_conf)
-                 if keep and i.where == agent_key and keep(i)]
+        new_agent = _find_agent(new_cfg, agent_key)
+        # Gemini's file holds a Mandarin voice even when agents.toml names none: it then follows the English voice
+        # (voices.zh_for), so a change of the English voice carries that line along.
+        follows = (field_name == "voice" and not new_agent.voice_zh)
+        items = [i for i in voicecfg.collect(new_cfg, paths.profiles, paths.claude_conf, paths.gemini_conf)
+                 if keep and i.where == agent_key and (keep(i) or (follows and i.key == "NEURAL_VOICE_ZH"))]
         done, errors = voicecfg.apply(items, Path(paths.hermes_backups) / f"{stamp}-voice-panel")
     except Exception as exc:                                    # put agents.toml back, whatever happened
         _atomic_write(paths.toml, old_text)
@@ -367,8 +375,9 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
             files.append({"path": m.group(1).strip(), "backup": m.group(2)})
     entry.update(ok=True, files=files)
     _append_history(paths, entry)
-    where = (f"{len(files)} Hermes/Claude file(s) updated and read back" if files
-             else "saved in agents.toml (no Hermes or Claude file holds this setting)")
+    where = (f"{len(files)} Hermes/Claude/Gemini file(s) updated and read back" if files
+             else "saved in agents.toml, where Voice Desk reads it (Codex speaks only through Voice Desk)"
+             if agent.target == "codex" else "saved in agents.toml (no Hermes or Claude file holds this setting)")
     tail = (" Voice Desk speaks it from the next line; Hermes agents use it from their next session."
             if field_name in ("voice", "voice_zh") else " Stored for later: nothing enforces it yet.")
     return Result(True, f"{agent.display} {field_name}: {_short(old)} → {_short(new)}; {where}.{tail}", entry,

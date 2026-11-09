@@ -120,8 +120,12 @@ def test_voices_from_agents_toml() -> None:
            str(tbl))
     report("voices: the profile config.yaml no longer decides (fake profiles here carry no voice)",
            voices.voice_for("hermes:assistant").en == "en-US-AvaNeural")
-    report("voices: Claude and Gemini keep the shared voice", voices.voice_for("claude") == voices.shared_voice()
+    own = {a.target: a for a in agents.agents(agents.load())}
+    report("voices: Claude speaks with its own voice from agents.toml (step 5; it shared Jenny before)",
+           voices.voice_for("claude").en == own["claude"].voice and voices.voice_for("claude").source == "agents"
            and voices.shared_voice().en == "en-US-JennyNeural" and voices.shared_voice().zh == "zh-TW-HsiaoChenNeural")
+    report("voices: Gemini and Codex speak with their own voice once agents.toml names one, else the shared one",
+           all(voices.voice_for(t).en == (own[t].voice or voices.shared_voice().en) for t in ("gemini", "codex")))
     real = agents.PATH
     agents.PATH = _edited_copy(lambda t: t.replace('voice = "en-US-AvaNeural"', 'voice = "en-US-EmmaNeural"'))
     try:
@@ -560,8 +564,13 @@ def test_dashboard_panel() -> None:
     import dashboard as D
     from textual.widgets import Static
     profiles, conf = make_fixtures()
-    real_p, real_c = V.PROFILES, V.CLAUDE_CONF
-    V.PROFILES, V.CLAUDE_CONF = profiles, conf
+    import agents
+    cfg = agents.load()
+    en, zh = V.gemini_wants(next(a for a in agents.agents(cfg) if a.key == "gemini"), cfg)
+    gconf = conf.parent / "gemini-voice-defaults.conf"             # Gemini's file as the panel would have written it
+    gconf.write_text(f'NEURAL_VOICE_EN="{en}"\nNEURAL_VOICE_ZH="{zh}"\n')
+    real_p, real_c, real_g = V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF
+    V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF = profiles, conf, gconf
 
     async def render() -> str:
         app = D.Dashboard(autostart=False)          # the voices panel moved to the listener screen (S) with the grid
@@ -578,7 +587,7 @@ def test_dashboard_panel() -> None:
         a.write_text(a.read_text().replace("voice: en-US-AvaNeural", "voice: en-US-EmmaNeural", 1))
         drifted = asyncio.run(render())
     finally:
-        V.PROFILES, V.CLAUDE_CONF = real_p, real_c
+        V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF = real_p, real_c, real_g
     report("dashboard: a read-only panel lists each agent's voice",
            all(s in clean for s in ("Jarvis", "Kylie", "Esther", "Wanna Buffet", "Claude", "Ava", "Andrew", "Kokoro alloy")),
            clean)
@@ -626,6 +635,71 @@ def test_unmanaged_block_list() -> None:
     report("block list: a second --apply has nothing to do", rc == 0 and out.startswith("No changes"), out)
 
 
+def test_sync_gemini() -> None:
+    """Step 5: Gemini's own voice goes into the file its Stop hook reads, made on the first sync."""
+    import agents
+    import voicecfg as V
+    import voiceedit as VE
+    profiles, conf = make_fixtures()
+    gconf = conf.parent / "gemini-hooks" / "voice-defaults.conf"
+    gconf.parent.mkdir()
+    real_before = (V.GEMINI_CONF.stat().st_mtime_ns if V.GEMINI_CONF.exists() else None)
+    toml = _edited_copy(lambda t: VE.set_field(VE.set_field(VE.set_field(t, "gemini", "voice", None), "gemini", "voice_zh", None),
+                                               "gemini", "voice", "en-US-AriaNeural"))
+    cfg = agents.load(toml)
+    report("gemini: not managed unless the caller names its file (a test against copies never reaches Peter's)",
+           not [i for i in V.collect(cfg, profiles, conf) if i.where == "gemini"])
+    items = [i for i in V.collect(cfg, profiles, conf, gconf) if i.where == "gemini"]
+    report("gemini: a missing file means both voices are missing",
+           [(i.key, i.have, i.want) for i in items] == [("NEURAL_VOICE_EN", None, "en-US-AriaNeural"),
+                                                       ("NEURAL_VOICE_ZH", None, "zh-TW-HsiaoYuNeural")], str(items))
+    bdir = Path(tempfile.mkdtemp(prefix="vd-bak-"))
+    rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
+                    "--gemini-conf", str(gconf), "--backup-dir", str(bdir)])
+    text = gconf.read_text() if gconf.exists() else ""
+    report("gemini: --apply makes the file with a header, English then Mandarin, nothing else touched",
+           rc == 0 and text == V.GEMINI_CONF_HEADER + 'NEURAL_VOICE_EN="en-US-AriaNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"\n'
+           and "(none: the file did not exist)" in out and conf.read_text() == CLAUDE_CONF, out[-300:] + text)
+    report("gemini: afterwards zero drift", V.drift(V.collect(cfg, profiles, conf, gconf)) == [])
+    gconf.write_text(text.replace('NEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"',
+                                  'NEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"    # Peter\'s note') + "# end\n")
+    before = gconf.read_text()
+    toml2 = _edited_copy(lambda t: VE.set_field(VE.set_field(VE.set_field(t, "gemini", "voice", None), "gemini", "voice_zh", None),
+                                                "gemini", "voice_zh", "zh-TW-HsiaoChenNeural"))
+    cfg2 = agents.load(toml2)
+    d = {i.key: (i.have, i.want) for i in V.drift(V.collect(cfg2, profiles, conf, gconf))}
+    report("gemini: no English voice in agents.toml -> the shared Voice Desk voice, as Voice Desk speaks for it",
+           d == {"NEURAL_VOICE_EN": ("en-US-AriaNeural", "en-US-JennyNeural"),
+                 "NEURAL_VOICE_ZH": ("zh-TW-HsiaoYuNeural", "zh-TW-HsiaoChenNeural")}, str(d))
+    done, errors = V.apply(V.collect(cfg2, profiles, conf, gconf), bdir)
+    report("gemini: an existing file is backed up first, comments and other lines kept",
+           not errors and (bdir / "gemini-voice-defaults.conf").read_text() == before
+           and _changed_lines(before, gconf.read_text()) == [
+               ('NEURAL_VOICE_EN="en-US-AriaNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"    # Peter\'s note',
+                'NEURAL_VOICE_EN="en-US-JennyNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"    # Peter\'s note')],
+           str(errors) + str(_changed_lines(before, gconf.read_text())))
+    rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
+                    "--backup-dir", str(bdir)])
+    real_after = (V.GEMINI_CONF.stat().st_mtime_ns if V.GEMINI_CONF.exists() else None)
+    report("gemini: a run against copies without --gemini-conf leaves Peter's real Gemini file alone",
+           rc == 0 and ".gemini" not in out and real_before == real_after, out[-300:])
+    gone = conf.parent / "new" / "voice-defaults.conf"
+    gone.parent.mkdir()
+    with mock_verify(["bash reads NEURAL_VOICE_EN as ''"]):
+        done, errors = V.apply(V.collect(cfg, profiles, conf, gone), bdir)
+    report("gemini: a new file that does not read back is removed again (the state before)",
+           bool(errors) and not gone.exists(), str(errors))
+    if V.GEMINI_CONF.exists():
+        live = [i for i in V.drift(V.collect(agents.load(), LIVE_PROFILES, LIVE_CLAUDE_CONF, V.GEMINI_CONF)) if i.where == "gemini"]
+        report("gemini: today's LIVE Gemini file matches agents.toml (read-only)", live == [], str(live))
+
+
+def mock_verify(result):
+    from unittest import mock
+    import voicecfg as V
+    return mock.patch.object(V, "_verify", return_value=result)
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
     test_settings_read_agents_toml()
@@ -636,6 +710,7 @@ if __name__ == "__main__":
     test_unmanaged_block_list()
     test_sync()
     test_sync_claude()
+    test_sync_gemini()
     test_dashboard_panel()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)

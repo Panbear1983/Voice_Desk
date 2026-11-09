@@ -305,7 +305,7 @@ def voice_info(a: agents.Agent, cfg: dict) -> VoiceInfo:
     zh = a.voice_zh or shared.get("voice_zh") or voices.zh_for(en)
     backup = a.fallback or shared.get("voice", S.TTS_VOICE_EN)
     return VoiceInfo(en, zh, dict(a.voices_extra), a.voice_override, backup,
-                     kind_of(a) == HERMES and not voices.per_profile_enabled())
+                     bool(a.voice) and not voices.per_profile_enabled())
 
 
 QUIET_PLACES = set(PLACE_KEYS)

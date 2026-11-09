@@ -31,6 +31,18 @@ def rows_by_key(world, now=NOW):
 
 
 class TheRows(unittest.TestCase):
+    def test_with_v_off_every_agent_that_has_its_own_voice_says_the_mic_window_uses_the_shared_one(self):
+        # step 5: Claude, Gemini and Codex speak with their own voice in Voice Desk too, so the V-off note covers them
+        import voices
+        from unittest import mock
+        with mock.patch.object(voices, "per_profile_enabled", return_value=False):
+            cfg = agents.load(F.make_world().toml)
+            info = {a.key: G.voice_info(a, cfg) for a in agents.agents(cfg)}
+        self.assertTrue(info["claude"].using_shared and info["kylie"].using_shared)
+        self.assertFalse(info["gemini"].using_shared, "no own voice yet: it speaks with the shared one anyway")
+        with mock.patch.object(voices, "per_profile_enabled", return_value=True):
+            self.assertFalse(G.voice_info(next(a for a in agents.agents(cfg) if a.key == "claude"), cfg).using_shared)
+
     def test_rows_are_the_agents_in_peters_order_and_not_builder(self):
         w = F.make_world()
         order = [a.key for a in G.grid_agents(agents.load(w.toml))]

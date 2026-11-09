@@ -131,6 +131,9 @@ def make_world(*, group_on: bool = True, dm_modes: dict | None = None) -> Simple
     gemini = root / "gemini"
     (gemini / "config/hooks/audio_cache").mkdir(parents=True)
     (gemini / "config/hooks/speak-response.py").write_text("# hook\n")
+    gemini_conf = gemini / "config/hooks/voice-defaults.conf"          # as Voice Desk writes it (step 5)
+    gemini_conf.write_text('# Gemini\'s spoken-reply voices.\nNEURAL_VOICE_EN="en-US-JennyNeural"\n'
+                           'NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"\n')
     state = root / "state"
     (state / "speech").mkdir(parents=True)
     repo = root / "repo"
@@ -142,7 +145,8 @@ def make_world(*, group_on: bool = True, dm_modes: dict | None = None) -> Simple
     paths = G.Paths(hermes_home=root / "hermes", profiles=profiles, claude_dir=claude, gemini_dir=gemini, state=state,
                     mirror_config=mirror, repo=repo, receiver_port=1)           # port 1: nothing listens
     edit = voiceedit.EditPaths(toml=toml, history=state / "voice_history.jsonl", toml_backups=state / "voice_history_backups",
-                               hermes_backups=root / "profile-backups", profiles=profiles, claude_conf=claude / "voice-defaults.conf")
+                               hermes_backups=root / "profile-backups", profiles=profiles, claude_conf=claude / "voice-defaults.conf",
+                               gemini_conf=gemini_conf)
     return SimpleNamespace(root=root, paths=paths, edit=edit, toml=toml)
 
 

@@ -8,7 +8,7 @@ itself uses, so every repair has a backup, a read-back, and (for switches) a lin
     on/off switches      the newest successful switch per cell in ~/.voice_desk/voice_history.jsonl is what
                          the panel wants (an undo counts: it is the newest change). A cell that no longer
                          matches is switched again with onoff.set_cell (the grid's own code).
-    voices and knobs     agents.toml against every Hermes config.yaml and Claude's voice-defaults.conf,
+    voices and knobs     agents.toml against every Hermes config.yaml, Claude's and Gemini's voice-defaults.conf,
                          fixed with voicecfg.apply (backup, write, read back with Hermes' own parser).
     Hermes local fixes   hermes_patches.apply_missing (backup, git apply, check the markers, never forced).
 
@@ -246,7 +246,7 @@ def _switch_drifts(cfg: dict, p: G.Paths, e: voiceedit.EditPaths, history: list[
 
 def _voicecfg_drifts(cfg: dict, p: G.Paths, e: voiceedit.EditPaths, now: float, drifts: list[Drift],
                      problems: list[Problem]) -> int:
-    items = voicecfg.collect(cfg, e.profiles, e.claude_conf)
+    items = voicecfg.collect(cfg, e.profiles, e.claude_conf, e.gemini_conf)
     off = voicecfg.drift(items)
     fixable = [i for i in off if not i.problem]
     for i in off:
@@ -259,9 +259,9 @@ def _voicecfg_drifts(cfg: dict, p: G.Paths, e: voiceedit.EditPaths, now: float, 
 
         def repair() -> tuple[bool, str]:
             stamp = _dt.datetime.fromtimestamp(now).strftime("%Y%m%d-%H%M%S")
-            done, errors = voicecfg.apply(voicecfg.collect(cfg, e.profiles, e.claude_conf),
+            done, errors = voicecfg.apply(voicecfg.collect(cfg, e.profiles, e.claude_conf, e.gemini_conf),
                                           Path(e.hermes_backups) / f"{stamp}-watcher")
-            left = voicecfg.drift(voicecfg.collect(cfg, e.profiles, e.claude_conf))
+            left = voicecfg.drift(voicecfg.collect(cfg, e.profiles, e.claude_conf, e.gemini_conf))
             if errors or [i for i in left if not i.problem]:
                 return False, "; ".join(errors) or "voice settings still differ from agents.toml after the repair"
             return True, f"{len(done)} file(s) rewritten from agents.toml and read back"

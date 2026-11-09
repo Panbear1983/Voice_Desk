@@ -12,6 +12,13 @@ Hermes agents: agents.toml values go into ~/.hermes/profiles/<profile>/config.ya
   knobs      -> voice.auto_tts / silence_duration / silence_threshold / barge_in / barge_in_grace_seconds
 Claude: [agents.claude] goes into ~/.claude/voice-defaults.conf (NEURAL_VOICE_EN, NEURAL_VOICE_ZH,
 VOICE_ALWAYS_ON, VOICE_MODE), which ~/.claude/hooks/speak-response.sh already reads.
+Gemini (2026-11-09, step 5): [agents.gemini] voice / voice_zh go into ~/.gemini/config/hooks/voice-defaults.conf
+(NEURAL_VOICE_EN, NEURAL_VOICE_ZH), which Gemini's own Stop hook (speak-response.py) reads before every reply.
+With no voice in agents.toml it holds the shared Voice Desk voice, the same one Voice Desk uses for Gemini then.
+The file is created on the first sync if it is missing. Only callers that pass gemini_conf manage it (the
+command, the panel and the watcher do; a test that passes only a Claude file never touches Peter's Gemini file).
+Codex has no hook of its own: Voice Desk is the only thing that speaks for it and reads its voice straight
+from agents.toml, so there is nothing to sync.
 
 Edits are single-line replacements (or one inserted line when a key is missing), never a YAML
 re-dump, so comments, anchors and every other setting stay byte-for-byte as they were. No key,
@@ -39,6 +46,7 @@ import agents
 HOME = Path.home()
 PROFILES = Path(os.environ.get("HERMES_PROFILES_DIR", HOME / ".hermes/profiles"))
 CLAUDE_CONF = Path(os.environ.get("VOICE_DEFAULTS_CONF", HOME / ".claude/voice-defaults.conf"))
+GEMINI_CONF = Path(os.environ.get("VOICE_DESK_GEMINI_CONF", HOME / ".gemini/config/hooks/voice-defaults.conf"))
 BACKUPS = HOME / ".hermes/profile-backups"
 HERMES_AGENT = HOME / ".hermes/hermes-agent"            # Hermes' own YAML loader, for the parse check
 HERMES_PY = HERMES_AGENT / "venv/bin/python"
@@ -46,6 +54,9 @@ HERMES_PY = HERMES_AGENT / "venv/bin/python"
 _EDGE = re.compile(r"^[a-z]{2}-[A-Z]{2}-[A-Za-z]+Neural$")
 _CLAUDE_KEYS = (("voice", "NEURAL_VOICE_EN"), ("voice_zh", "NEURAL_VOICE_ZH"),
                 ("always_on", "VOICE_ALWAYS_ON"), ("mode", "VOICE_MODE"))
+NEW_FILE = "(none: the file did not exist)"            # the backup note for a file a sync created ("(" = not a path)
+GEMINI_CONF_HEADER = ("# Gemini's spoken-reply voices. Written by Voice Desk (~/GitHub/Voice_Desk, agents.toml [agents.gemini],\n"
+                      "# changed from the panel's voice cell); read by speak-response.py beside this file before every reply.\n")
 
 
 # ---- reading YAML by lines --------------------------------------------------------------------
@@ -299,14 +310,48 @@ def _claude_items(a: agents.Agent, path: Path) -> list[Item]:
     return items
 
 
-def collect(cfg: dict, profiles: Path = PROFILES, claude_conf: Path = CLAUDE_CONF) -> list[Item]:
-    """Every managed setting: where it lives, what it is now, what agents.toml says."""
+def gemini_wants(a: agents.Agent, cfg: dict) -> tuple[str, str]:
+    """(English, Mandarin) Gemini should speak with: its own voices from agents.toml, else the shared Voice Desk
+    voice, by the same rule voices.voice_for uses (a missing Mandarin voice follows the English one)."""
+    sh = agents.shared(cfg)
+    en = a.voice or sh.get("voice") or "en-US-JennyNeural"
+    if a.voice_zh:
+        return en, a.voice_zh
+    if a.voice:
+        from voices import zh_for                      # voices imports settings; only needed here
+        return en, zh_for(a.voice)
+    return en, sh.get("voice_zh") or "zh-TW-HsiaoChenNeural"
+
+
+def _gemini_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
+    label = f"{a.display} (~/.gemini/config/hooks/voice-defaults.conf)"
+    try:
+        found = _conf_scan(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        found = {}                                     # made on the first sync (apply writes a new file)
+    except OSError as exc:
+        return [Item(a.key, label, path, "conf", "(file)", None, None, problem=f"cannot read: {exc.strerror}")]
+    items = []
+    for var, want in zip(("NEURAL_VOICE_EN", "NEURAL_VOICE_ZH"), gemini_wants(a, cfg)):
+        if var in found:
+            items.append(Item(a.key, label, path, "conf", var, found[var][1], want, line=found[var][0]))
+        else:
+            items.append(Item(a.key, label, path, "conf", var, None, want))
+    return items
+
+
+def collect(cfg: dict, profiles: Path = PROFILES, claude_conf: Path = CLAUDE_CONF,
+            gemini_conf: Optional[Path] = None) -> list[Item]:
+    """Every managed setting: where it lives, what it is now, what agents.toml says. Gemini's file only when
+    gemini_conf is given (GEMINI_CONF for the real one)."""
     items: list[Item] = []
     for a in agents.agents(cfg):
         if a.profile:
             items += _yaml_items(a, cfg, Path(profiles) / a.profile / "config.yaml")
         elif a.target == "claude" and any(src in a.raw for src, _ in _CLAUDE_KEYS):
             items += _claude_items(a, Path(claude_conf))
+        elif a.target == "gemini" and gemini_conf is not None:
+            items += _gemini_items(a, cfg, Path(gemini_conf))
     return items
 
 
@@ -321,9 +366,17 @@ def unmanaged(items: list[Item]) -> list[Item]:
 
 # ---- writing ------------------------------------------------------------------------------------
 def _new_text(path: Path, items: list[Item]) -> tuple[str, str]:
-    """(old text, new text) for one file with every drifted item fixed."""
-    old = path.read_text(encoding="utf-8")
+    """(old text, new text) for one file with every drifted item fixed. A conf file that does not exist yet
+    (Gemini's, before the first sync) is old text "" and comes out as the header plus its lines."""
+    try:
+        old = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if not items or items[0].kind != "conf":
+            raise
+        old = ""
     lines = old.splitlines(keepends=True)
+    if not lines and items and items[0].where == "gemini":
+        lines = [GEMINI_CONF_HEADER]
     inserts: list[tuple[int, str]] = []
     if items and items[0].kind == "yaml":
         e = scan(old)
@@ -335,15 +388,18 @@ def _new_text(path: Path, items: list[Item]) -> tuple[str, str]:
                 inserts.append((i.insert_after, " " * i.insert_indent + f"{i.key.rsplit('.', 1)[1]}: {format_value(i.want)}\n"))
     else:
         found = _conf_scan(old)
+        appended = []
         for i in items:
             if i.key in found:
                 n, _, quote, tail = found[i.key]
                 lines[n] = f"{i.key}={quote}{i.want}{quote}{tail}"
             else:
                 quote = "" if i.key == "VOICE_ALWAYS_ON" else '"'
-                if lines and not lines[-1].endswith("\n"):
-                    lines[-1] += "\n"
-                inserts.append((len(lines) - 1, f"{i.key}={quote}{i.want}{quote}\n"))
+                appended.append(f"{i.key}={quote}{i.want}{quote}\n")
+        if appended:                                   # missing keys go at the end, in the order they are listed
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines += appended
     for after, text in sorted(inserts, key=lambda t: t[0], reverse=True):
         lines.insert(after + 1, text)
     return old, "".join(lines)
@@ -357,13 +413,15 @@ def plan(items: list[Item]) -> dict[Path, tuple[str, str]]:
     return {p: _new_text(p, its) for p, its in by_file.items()}
 
 
-def _backup_name(path: Path, kind: str) -> str:
-    return "claude-voice-defaults.conf" if kind == "conf" else f"{path.parent.name}-config.yaml"
+def _backup_name(path: Path, kind: str, where: str = "claude") -> str:
+    if kind == "conf":
+        return f"{'gemini' if where == 'gemini' else 'claude'}-voice-defaults.conf"
+    return f"{path.parent.name}-config.yaml"
 
 
 def _atomic_write(path: Path, text: str) -> None:
     real = path.resolve()
-    mode = real.stat().st_mode & 0o777
+    mode = real.stat().st_mode & 0o777 if real.exists() else 0o644        # a new file (Gemini's first sync)
     fd, tmp = tempfile.mkstemp(prefix=f".{real.name}.", suffix=".voicecfg", dir=real.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -416,21 +474,31 @@ def apply(items: list[Item], backup_dir: Optional[Path] = None) -> tuple[list[st
             wanted.setdefault(i.path, []).append(i)
     for path, (old, new) in plan(items).items():
         its = wanted[path]
-        if path.read_text(encoding="utf-8") != old:
+        existed = path.exists()
+        if (path.read_text(encoding="utf-8") if existed else "") != old:
             errors.append(f"{path}: changed while syncing, left alone (run sync again)")
             continue
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        bak = backup_dir / _backup_name(path, its[0].kind)
-        if bak.exists():
-            bak = bak.with_name(f"{bak.stem}.{stamp:%H%M%S}{bak.suffix}")
-        shutil.copy2(path.resolve(), bak)
-        _atomic_write(path, new)
+        bak = None
+        if existed:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            bak = backup_dir / _backup_name(path, its[0].kind, its[0].where)
+            if bak.exists():
+                bak = bak.with_name(f"{bak.stem}.{stamp:%H%M%S}{bak.suffix}")
+            shutil.copy2(path.resolve(), bak)
+        try:
+            _atomic_write(path, new)
+        except OSError as exc:                          # e.g. Gemini's hooks folder is not there
+            errors.append(f"{path}: could not be written ({exc.strerror or exc})")
+            continue
         bad = _verify(path, its[0].kind, its)
         if bad:
-            _atomic_write(path, old)
+            if existed:
+                _atomic_write(path, old)
+            else:
+                path.unlink(missing_ok=True)            # it did not exist before: exactly that again
             errors.append(f"{path}: restored from backup, the written file did not read back right: {'; '.join(bad)}")
             continue
-        done.append(f"{path}  (backup: {bak})")
+        done.append(f"{path}  (backup: {bak if bak else NEW_FILE})")
     return done, errors
 
 
@@ -468,11 +536,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--agents", type=Path, default=None, help="agents.toml to use (default: the repo's)")
     ap.add_argument("--profiles", type=Path, default=PROFILES, help="Hermes profiles folder")
     ap.add_argument("--claude-conf", type=Path, default=CLAUDE_CONF, help="Claude's voice-defaults.conf")
+    ap.add_argument("--gemini-conf", type=Path, default=None,
+                    help="Gemini's voice-defaults.conf (default: the real one, but only when --profiles and "
+                         "--claude-conf are the real ones too, so a run against copies never writes Peter's file)")
     ap.add_argument("--backup-dir", type=Path, default=None, help="sync --apply: where backups go")
     args = ap.parse_args(argv)
 
+    gemini_conf = args.gemini_conf
+    if gemini_conf is None and args.profiles == PROFILES and args.claude_conf == CLAUDE_CONF:
+        gemini_conf = GEMINI_CONF
     cfg = agents.load(args.agents)
-    items = collect(cfg, args.profiles, args.claude_conf)
+    items = collect(cfg, args.profiles, args.claude_conf, gemini_conf)
     files = sorted({str(i.path) for i in items})
     off = drift(items)
     skipped = unmanaged(items)

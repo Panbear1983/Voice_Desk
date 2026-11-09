@@ -522,7 +522,7 @@ def test_status_file() -> None:
            tbl["Wanna Buffet"].en == "en-US-AndrewNeural" and tbl["Wanna Buffet"].zh == "zh-TW-YunJheNeural", str(tbl["Wanna Buffet"]))
     report("voices: Esther keeps her Kokoro voice through her own script; Aria only if it fails (Peter 2026-10-22)",
            tbl["Esther"].en == "alloy" and bool(tbl["Esther"].command) and tbl["Esther"].fallback == "en-US-AriaNeural", str(tbl["Esther"]))
-    report("voices: Claude (not a Hermes profile) gets the shared voice", voices.voice_for("claude").source == "shared")
+    report("voices: Claude speaks with its own voice from agents.toml too (step 5)", voices.voice_for("claude").source == "agents")
     voices.set_per_profile(False)
     report("voices: V off -> everyone shares one voice", voices.voice_for("hermes:wanna-buffet") == voices.shared_voice())
     voices.set_per_profile(True)
@@ -536,6 +536,36 @@ def test_status_file() -> None:
     report("listener: speaks with the voice of whoever is on the line", bool(spoken) and spoken[0].en == "en-US-AndrewNeural", str(spoken))
     report("listener: the status file says which voice spoke (dashboard shows it)",
            lst2.status.data.get("voice") == "Andrew · YunJhe", str(lst2.status.data.get("voice")))
+    # step 5: Gemini and Codex answers spoken by Voice Desk use their own voices from agents.toml
+    import agents as _A
+    import voiceedit as _VE
+    real_path = _A.PATH
+    _A.PATH = Path(tempfile.mkdtemp(prefix="vd-agents-")) / "agents.toml"
+    text = real_path.read_text(encoding="utf-8")
+    for key, f, v in (("gemini", "voice", "en-US-AriaNeural"), ("gemini", "voice_zh", "zh-TW-HsiaoYuNeural"),
+                      ("codex", "voice", "en-GB-RyanNeural"), ("codex", "voice_zh", "zh-TW-YunJheNeural")):
+        text = _VE.set_field(text, key, f, v)
+    _A.PATH.write_text(text, encoding="utf-8")
+    real_synth = lst2.synth
+
+    def _fresh_synth(text, voice=None):
+        spoken.append(voice)
+        p = Path(tempfile.mkdtemp(prefix="vd-voice-")) / "say.wav"   # speak() removes the folder after playing
+        p.write_bytes(b"")
+        return p
+    lst2.synth = _fresh_synth
+    try:
+        for target, want in (("gemini", ("en-US-AriaNeural", "zh-TW-HsiaoYuNeural")),
+                             ("codex", ("en-GB-RyanNeural", "zh-TW-YunJheNeural"))):
+            spoken.clear()
+            lst2.brain.target = lambda t=target: t          # type: ignore[method-assign]
+            lst2.speak("hello")
+            report(f"listener: a {target} answer is spoken with {target}'s own voices",
+                   bool(spoken) and (spoken[0].en, spoken[0].zh) == want, str(spoken))
+    finally:
+        _A.PATH = real_path
+        lst2.synth = real_synth
+        del lst2.brain.target
 
     # -- speed: voice turns ask Hermes for low reasoning; Edge is retried before any fallback voice ----
     import brain as B

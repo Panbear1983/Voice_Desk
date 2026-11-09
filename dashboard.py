@@ -492,7 +492,7 @@ class Dashboard(App):
     # -- changing a voice -------------------------------------------------------------------------
     PROMPTS = {
         "voice": ("English voice", "An Edge voice such as en-US-AvaNeural (Esther: a Kokoro name such as alloy). Enter saves, Esc cancels."),
-        "voice_zh": ("Mandarin voice", "An Edge voice such as zh-TW-HsiaoChenNeural. Enter saves, Esc cancels."),
+        "voice_zh": ("Mandarin voice", "A Taiwan Mandarin Edge voice such as zh-TW-HsiaoChenNeural (zh-TW only). Enter saves, Esc cancels."),
         "voices_extra": ("Extra languages", "code=voice, comma separated, e.g. ja=ja-JP-NanamiNeural. Empty removes them all."),
         "voice_override": ("Language override", "auto (follow the reply's language), en, zh, or an extra code. Stored now, enforced later."),
     }
@@ -581,7 +581,7 @@ class Dashboard(App):
                      f"\n[#e67e22]Talk to {live.name} →[/] the background thread (no single open window"
                      + ("" if live.session_id or target.startswith("hermes:") else f"; pin one in ~/.voice_desk/{target}_live_session") + ")")
         try:
-            off = voicecfg.drift(voicecfg.collect(cfg, voicecfg.PROFILES, voicecfg.CLAUDE_CONF))
+            off = voicecfg.drift(voicecfg.collect(cfg, voicecfg.PROFILES, voicecfg.CLAUDE_CONF, voicecfg.GEMINI_CONF))
         except Exception as exc:                     # never let a bad file take the panel down
             off, text = [], text + f"\n[#e67e22]voice check failed: {exc}[/]"
         if off:

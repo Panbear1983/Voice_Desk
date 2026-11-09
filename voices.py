@@ -35,7 +35,7 @@ _ZH_FOR = {
     "en-US-AndrewNeural": "zh-TW-YunJheNeural",
 }
 _MALE = {"en-US-AndrewNeural", "en-US-BrianNeural", "en-US-GuyNeural", "en-US-ChristopherNeural",
-         "en-US-EricNeural", "en-US-RogerNeural", "en-US-SteffanNeural"}
+         "en-US-EricNeural", "en-US-RogerNeural", "en-US-SteffanNeural", "en-GB-RyanNeural"}
 
 
 class Voice(NamedTuple):
@@ -113,8 +113,10 @@ def shared_voice() -> Voice:
 
 
 def voice_for(target: str) -> Voice:
-    """The voice for a brain target ("hermes:<profile>", "claude", "gemini")."""
-    if not per_profile_enabled() or not target.startswith("hermes:"):
+    """The voice for a brain target ("hermes:<profile>", "claude", "gemini", "codex"). Every agent with its own
+    voice in agents.toml speaks with it (Claude, Gemini and Codex too since 2026-11-09, step 5: Peter wants one
+    distinct voice per agent); an agent without one, or everyone when the V key is off, gets the shared voice."""
+    if not per_profile_enabled():
         return shared_voice()
     a = next((a for a in agents.agents(config()) if a.target == target), None)
     if a is None or not a.voice:

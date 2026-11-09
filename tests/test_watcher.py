@@ -226,6 +226,18 @@ class RepairsVoicesAndFixes(Base):
         self.assertTrue(list((Path(self.e.hermes_backups)).glob("*-watcher/*")))      # a backup was taken first
         self.assertEqual(voicecfg.drift(voicecfg.collect(agents.load(self.e.toml), self.e.profiles, self.e.claude_conf)), [])
 
+    def test_a_hand_edit_of_gemini_voice_file_is_put_back_as_the_panel_set_it(self):
+        res = VE.change("gemini", "voice", "en-US-AriaNeural", self.e)                    # the panel sets Aria
+        self.assertTrue(res.ok, res.message)
+        conf = Path(self.e.gemini_conf)
+        conf.write_text(conf.read_text().replace("en-US-AriaNeural", "en-US-JennyNeural"))   # someone puts Jenny back
+        rep = self.run_w()
+        self.assertEqual(len(rep.repaired), 1, [x.text for x in rep.problems])
+        self.assertIn("Gemini", rep.repaired[0])
+        self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', conf.read_text())
+        self.assertEqual(voicecfg.drift(voicecfg.collect(agents.load(self.e.toml), self.e.profiles, self.e.claude_conf,
+                                                         self.e.gemini_conf)), [])
+
     def test_a_missing_hermes_fix_that_fits_is_put_back_and_a_gateway_one_asks_for_a_restart(self):
         self.pw.gateway_running_since(time.time() - 7200)
         git(self.pw.root, "apply", "-R", str(self.pw.patches / "two.diff"))          # an update removed the gateway fix
