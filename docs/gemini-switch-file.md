@@ -1,7 +1,7 @@
 # Gemini's voice switch file
 
-Prepared in step 3, honoured by Gemini's hook from step 4 (`~/.gemini/config/hooks/speak-response.py` is NOT edited
-before then).
+Prepared in step 3, honoured by Gemini's hook since step 4 (2026-11-09; `~/.gemini/config/hooks/speak-response.py`, backup
+`speak-response.py.bak-20261109-step4` next to it).
 
 **Convention** (same as the speech queue's `speech/off`): a marker file.
 
@@ -11,7 +11,7 @@ before then).
 The folder follows `VOICE_DESK_STATE` when that is set (the tests use it). The file's content is ignored; the panel
 writes `off`.
 
-**What the hook has to do** (step 4, at the top of the hook, before any audio is made):
+**What the hook does** (at the top of the hook, before any audio is made; this is the check now in the hook):
 
 ```python
 import os

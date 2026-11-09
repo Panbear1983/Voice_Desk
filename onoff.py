@@ -311,6 +311,13 @@ def apply_changes(changes: list[dict], backup_dir: Path, toml_backups: Optional[
                 shutil.copy2(path.resolve(), bak)
                 originals[sp] = ("text", old)
                 backup_note = str(bak)
+                if chs[0]["t"] == "json" and any(c.get("remove_if_empty") for c in chs) and json.loads(new.lstrip("\ufeff")) == {}:
+                    path.unlink()                    # undo of "this change created the file": the file goes away again, not an empty shell
+                    if path.exists():
+                        errors.append(f"{path.name} is still there after the undo")
+                        break
+                    files.append({"path": sp, "backup": backup_note})
+                    continue
             else:                                                # a file that did not exist yet (a first Telegram chat mode)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 originals[sp] = ("absent", None)
@@ -351,6 +358,12 @@ def invert(changes: list[dict]) -> list[dict]:
             c["add_at"], c["remove_at"] = ch.get("remove_at", {}), {}
         else:
             c["before"], c["after"] = ch["after"], ch["before"]
+            if ch.get("create"):                      # the change made the file: its undo removes the file if it ends up empty
+                c.pop("create")
+                c["remove_if_empty"] = True
+            elif ch.get("remove_if_empty"):           # ... and undoing that undo makes it again
+                c.pop("remove_if_empty")
+                c["create"] = True
         out.append(c)
     return out
 

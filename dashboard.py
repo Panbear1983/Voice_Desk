@@ -11,7 +11,8 @@ if this panel closes, voices keep working exactly as last set.
 
 ON/OFF CELLS (steps 2-3): ← → pick a place, Enter changes it. Live today: the Telegram team group (Off / Always), Claude's terminal
 (Off / Always), the Voice Desk mic window / phone (own voices vs shared voice, speech queue on / off), the Telegram direct chats
-(Off / Voice-back / Always, gateway_voice_mode.json) and Gemini's terminal (Off / Always, a switch file its hook reads from step 4).
+(Off / Voice-back / Always, gateway_voice_mode.json) and Gemini's terminal (Off / Always, a switch file its hook reads).
+W pauses / resumes the watcher (watcher.py puts drifted settings back; the top strip shows its light).
 Each change backs up the files, writes them, reads them back and goes into the history; U undoes. Hermes windows and the
 iPhone stay read-only. Enter on the voice column edits the voice; Enter on the Voice check column runs the silent test.
 
@@ -53,6 +54,7 @@ import voicecfg
 import live_session
 import brain as brain_mod
 import voices
+import watcher
 
 REFRESH_SEC = 45            # the grid and the top strip are re-read this often, all rows in one pass
 LISTENER_SEC = 15           # the second screen's window look-ups, only while it is open
@@ -147,7 +149,7 @@ class GridScreen(Screen):
     #top { height: 1; }
     #light { width: 1fr; height: 1; color: white; text-style: bold; padding: 0 1; }
     #who { width: 40; height: 1; color: #dddddd; }
-    #health { height: 1; padding: 0 1; }
+    #health { height: auto; max-height: 3; padding: 0 1; }
     #grid { height: 1fr; min-height: 8; }
     #detail { height: auto; max-height: 14; border: round #444444; padding: 0 1; }
     #history { height: auto; max-height: 7; padding: 0 1; }
@@ -162,6 +164,7 @@ class GridScreen(Screen):
         Binding("l", "edit_extra", "extra language"),
         Binding("o", "edit_override", "language override"),
         Binding("u", "undo", "undo"),
+        Binding("w", "watcher", "pause / resume watcher"),
         Binding("s", "listener", "listener screen"),
     ]
 
@@ -212,6 +215,9 @@ class GridScreen(Screen):
 
     def action_undo(self) -> None:
         self.app.undo_last()           # type: ignore[attr-defined]
+
+    def action_watcher(self) -> None:
+        self.app.toggle_watcher()      # type: ignore[attr-defined]
 
     def action_listener(self) -> None:
         self.app.push_screen("listener")
@@ -400,7 +406,18 @@ class Dashboard(App):
         row = self.selected()
         screen.query_one("#detail", Static).update(
             V.detail_text(row, self.tests.get(row.agent.key)) if row else "reading the settings and the logs…")
-        screen.query_one("#history", Static).update(V.history_text(self.edit_paths))
+        screen.query_one("#history", Static).update(V.history_text(self.edit_paths, watcher_lines=watcher.history_lines(self.paths, 3)))
+
+    def toggle_watcher(self) -> None:
+        """W: pause / resume the watcher (the file ~/.voice_desk/watcher_paused). The strip shows it at once."""
+        paused = watcher.toggle_pause(self.paths)
+        fresh = syshealth.watcher(self.paths)
+        self.lights = [fresh if l.label.lower().startswith("watcher") else l for l in self.lights]
+        screen = self.screen
+        if isinstance(screen, GridScreen) and self.lights:
+            screen.query_one("#health", Static).update(V.health_text(self.lights))
+        self.say("watcher PAUSED: it repairs nothing until you press W again" if paused
+                 else "watcher resumed: it checks every few minutes and puts drifted settings back")
 
     # -- the silent voice test ---------------------------------------------------------------------
     def test_selected(self) -> None:

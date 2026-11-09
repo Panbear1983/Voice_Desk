@@ -5,6 +5,8 @@
     speech queue      on / off (the file ~/.voice_desk/speech/off is the off switch)
     Hermes fixes      Peter's local patches in Hermes' own program files are still there (a Hermes
                       update can overwrite them)
+    watcher           the check that puts drifted settings back as the panel set them: OK / paused / not
+                      running / cannot repair (watcher.py; W pauses it)
     Mac output        volume, mute and which speaker/headphones are the output right now
 
 Read-only and gentle: a handful of small file reads and one osascript call, done once per refresh
@@ -130,5 +132,13 @@ def mac_output() -> Light:
     return Light(False if muted or vol == 0 else True, "Mac output: " + ", ".join(bits))
 
 
+def watcher(paths: G.Paths) -> Light:
+    """The watcher (watcher.py): paused / not running / cannot repair / OK. Reads one small status file; the
+    check itself runs from a launchd job, never from the panel."""
+    import watcher as W
+    ok, label, detail = W.light(paths)
+    return Light(ok, label, detail)
+
+
 def collect(paths: G.Paths) -> list[Light]:
-    return [voice_engine(paths), gateway(paths), speech_queue(paths), hermes_fixes(paths), mac_output()]
+    return [voice_engine(paths), gateway(paths), speech_queue(paths), hermes_fixes(paths), watcher(paths), mac_output()]

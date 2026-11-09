@@ -269,10 +269,43 @@ Always) and Gemini's terminal (Off / Always, see [`docs/gemini-switch-file.md`](
 other cells say why they are read-only. The Hermes local patches are kept and checked by `hermes_patches.py`
 (`python3 hermes_patches.py check` / `apply`, see below).
 The listener controls above are on the second screen (<kbd>S</kbd>; <kbd>M</kbd> and <kbd>H</kbd> work on both).
+Since step 4 a **watcher** keeps all of this as the panel set it (see "The watcher" below); <kbd>W</kbd> pauses it.
 Every place's file is listed in [`docs/where-every-voice-setting-lives.md`](docs/where-every-voice-setting-lives.md).
 
 **Keys** (you never *need* them): <kbd>Space</kbd> talk in tap mode or interrupt ·
 <kbd>M</kbd> mode · <kbd>S</kbd> sleep/wake · <kbd>N</kbd> new conversation · <kbd>Q</kbd> quit.
+
+### The watcher (step 4)
+
+The panel is final. `watcher.py` is one cheap check, run by a launchd job every 5 minutes (no process stays alive in
+between), that compares the live settings with what the panel last set and puts back what drifted, through the
+panel's own code (backup, read-back, history):
+
+* **on/off switches**: the newest successful switch per cell in `voice_history.jsonl` (an undo counts, it is the newest
+  change) is what the panel wants; a cell that no longer matches is switched again with `onoff.set_cell`;
+* **voices and knobs**: `agents.toml` against every Hermes `config.yaml` and Claude's `voice-defaults.conf`
+  (`voicecfg.apply`);
+* **Hermes local fixes**: `hermes_patches.apply_missing` (never forced).
+
+It does not fight: a drift must be seen on two runs (at least 90 s apart) before it is repaired, and a setting that has
+been put back 3 times within an hour is left alone and reported. **Pause**: <kbd>W</kbd> in the dashboard, or
+`python3 watcher.py pause` (a file `~/.voice_desk/watcher_paused`; the top strip shows WATCHER PAUSED in grey). Telegram
+goes to Peter's own chat **only** for what it cannot repair (a fix that no longer fits Hermes, a file it cannot read, a
+setting that keeps changing back, a restored Hermes fix that needs a gateway restart): one plain sentence, each problem
+once until it clears, at most one message an hour, sent with `hermes -p orchestrator send` like the gateway guard does
+(no token is read or kept here).
+
+```bash
+.venv/bin/python watcher.py once --dry-run --no-wait   # what it would do right now; changes and sends nothing
+.venv/bin/python watcher.py status | pause | resume
+./install_watcher.sh --print    # show the launchd job; ./install_watcher.sh loads it, --remove unloads it
+```
+
+**Claude and Gemini join the speech queue.** Their Stop hooks (`~/.claude/hooks/speak-natural.py`,
+`~/.gemini/config/hooks/speak-response.py`) play through the `~/bin/afplay` stand-in as `VOICE_DESK_SPEAKER=claude` /
+`gemini`, so they wait for the agent that is speaking instead of talking over it (and Gemini no longer runs
+`killall afplay` while the queue is on). `~/.voice_desk/speech/off`, or no stand-in installed, gives the old behaviour
+exactly. The hooks live outside this repo; `tests/test_speak_hooks.py` runs them against fakes.
 
 ### Several agents at once: one voice at a time
 
@@ -490,6 +523,7 @@ python3 docs/render_images.py          # PNGs + loop.gif (needs playwright + Pil
 | `receiver.py`, `start_receiver.sh`, `install_receiver.sh` | iPhone receiver and its login job |
 | `listener.py`, `start_listener.sh`, `install_listener.sh` | the always-on listener and its login job |
 | `speechq.py`, `install_speechq.sh` | the shared speech line (one voice at a time) and its `afplay` stand-in |
+| `watcher.py`, `install_watcher.sh` | the watcher: puts drifted settings back as the panel set them (launchd job, one check every 5 minutes) |
 | `service.py` | the listener's status file, mute flag and launchd controls |
 | `dashboard.py`, `dashboard.sh` | the control panel for the listener |
 | `make_shortcut.py` | builds the signed iPhone Shortcut |

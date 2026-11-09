@@ -44,6 +44,10 @@ from typing import Callable, Iterable, Iterator, Optional
 
 LISTENER = "voice-desk"         # Voice Desk's own lines
 OTHER = "other"                 # an afplay from anything that is not a Hermes window
+# Claude Code's and Gemini's Stop hooks (step 4) play through the same line. They are not Hermes windows,
+# so they name themselves with VOICE_DESK_SPEAKER=claude|gemini. They wait their turn and hold the floor
+# between their chunks like a Hermes agent, but are never given a "<name> here." opening.
+SPEAKERS = ("claude", "gemini")
 
 FLOOR_SEC = 3.0                 # after a sentence the floor stays with its agent this long (its next
                                 # sentence is usually made while this one plays)
@@ -132,7 +136,11 @@ def is_beep(path: Path) -> bool:
 
 def owner_from_env(env: dict, ppid_cmd: Optional[str] = None) -> str:
     """Which Hermes profile is speaking: its window's HERMES_HOME (.../profiles/<name>), else the
-    parent's `hermes -p <name>` command line, else OTHER."""
+    parent's `hermes -p <name>` command line, else OTHER. The Claude and Gemini hooks say who they are
+    in VOICE_DESK_SPEAKER (only those two names count)."""
+    named = (env.get("VOICE_DESK_SPEAKER") or "").strip().lower()
+    if named in SPEAKERS:
+        return named
     home = env.get("HERMES_HOME") or ""
     if home:
         p = Path(home)
@@ -325,7 +333,7 @@ class Station:
             turn = Turn(why=why, waited=self.clock() - t0, name=name)
             yield turn
             # only an agent's reply holds the floor; Voice Desk's own lines and unknown programs do not
-            if kind == "speech" and turn.keep_floor and owner in known:
+            if kind == "speech" and turn.keep_floor and (owner in known or owner in SPEAKERS):
                 end = self.clock()
                 self._write("floor.json", {"owner": owner, "until": end + FLOOR_SEC})
                 self._write("last.json", {"owner": owner, "end": end})

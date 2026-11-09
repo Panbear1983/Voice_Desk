@@ -119,11 +119,14 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
     return t
 
 
-def history_text(paths: voiceedit.EditPaths, n: int = 4) -> Text:
+def history_text(paths: voiceedit.EditPaths, n: int = 4, watcher_lines: Optional[list[str]] = None) -> Text:
     lines = voiceedit.recent(paths, n)
     t = Text()
     t.append("Changes", style="bold #9b59b6")
     t.append(" (U undoes the newest)  " if lines else "  none yet — Enter on a cell switches it; E / Z / L / O change a voice; all with a backup\n", style="#7f8c8d")
     if lines:
         t.append("\n" + "\n".join(lines), style="#bbbbbb")
+    if watcher_lines:
+        t.append("\nPut back by the watcher (W pauses it)\n", style="bold #9b59b6")
+        t.append("\n".join(watcher_lines), style="#bbbbbb")
     return t

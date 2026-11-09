@@ -90,6 +90,30 @@ class TelegramDirect(Base):
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(), original)
 
+    def test_undo_of_the_change_that_created_the_mode_file_removes_the_file_again(self):
+        self.assertFalse(self.mode_file.exists())
+        self.switch("kylie", "tg_dm", "off")
+        self.assertTrue(self.mode_file.exists())
+        res = self.undo()
+        self.assertTrue(res.ok, res.message)
+        self.assertFalse(self.mode_file.exists(), "exact prior state: the file was absent, not an empty file")
+        self.assertEqual(self.cell("kylie", "tg_dm").value, G.ALWAYS)
+
+    def test_undoing_that_undo_makes_the_file_again(self):
+        self.switch("kylie", "tg_dm", "off")
+        self.assertTrue(self.undo().ok)
+        self.assertFalse(self.mode_file.exists())
+        again = onoff.undo(VE.read_history(self.w.edit)[-1], self.w.edit, self.w.paths)
+        self.assertTrue(again.ok, again.message)
+        self.assertEqual(self.modes(), {KEY: "off"})
+
+    def test_a_file_that_was_there_before_is_never_removed_by_undo(self):
+        self.mode_file.write_text(json.dumps({}))                      # an existing, empty file: it was there before
+        self.switch("kylie", "tg_dm", "off")
+        self.assertTrue(self.undo().ok)
+        self.assertTrue(self.mode_file.exists())
+        self.assertEqual(self.modes(), {})
+
     def test_undo_of_the_first_write_takes_the_key_off_again_and_keeps_a_hand_edit(self):
         self.switch("kylie", "tg_dm", "off")
         data = self.modes()
