@@ -690,6 +690,11 @@ class TheGridShowsHer(unittest.TestCase):
         y = self.w.paths.simba_yaml
         y.write_text(y.read_text().replace("enabled: true", "enabled: false"))
         self.assertEqual(G.tg_group_cell(self.simba, self.w.paths).value, G.OFF)
+        import gridevidence as GE
+        row = next(r for r in GE.build(self.cfg, self.w.paths, GE.LogReader(self.w.paths.profiles))
+                   if r.agent.key == "simba")
+        self.assertEqual((row.evidence["tg_group"].headline, row.evidence["tg_group"].detail),
+                         ("off", "Her Team_Room replies go out as text only."))
         y.unlink()
         self.assertEqual(G.tg_group_cell(self.simba, self.w.paths).value, G.UNKNOWN)
         kylie = agent_of(self.w.toml, "kylie")

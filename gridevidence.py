@@ -370,7 +370,9 @@ def build(cfg: dict, paths: G.Paths, reader: LogReader, now: Optional[float] = N
             else:
                 ev["terminal"] = NA_EVIDENCE
             ev["tg_dm"] = ev["tg_group"] = NA_EVIDENCE
-            if a.key == "simba" and cells["tg_group"].value != G.NA:      # her own listener sends those, not Hermes
+            if a.key == "simba" and cells["tg_group"].value == G.OFF:
+                ev["tg_group"] = Evidence("idle", "off", "Her Team_Room replies go out as text only.")
+            elif a.key == "simba" and cells["tg_group"].value != G.NA:    # her own listener sends those, not Hermes
                 ev["tg_group"] = Evidence("idle", "her listener", "Her Team_Room voice notes are sent by her own "
                                           "listener (panbear-daily simba.py, `simba.py status` counts them); "
                                           "Voice Desk only holds the voice, so it sees no evidence of them.")
