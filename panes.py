@@ -69,13 +69,20 @@ def state_of(tail: Optional[str]) -> str:
     stats, e.g. " claude-fable-5-1 · 147K/1M · ..."), so the voice bar is not always the very
     last line. Scan the last few non-blank rows for the voice marker instead of trusting only
     rows[-1] (seen live 2026-11-06: an already-on pane was misread as "off" because the stats
-    row had become the true last line)."""
+    row had become the true last line).
+
+    Only rows BELOW the input box's top rule count (the input line, the voice bar, the stats
+    row). Above it is scrollback, and "Voice mode disabled." there must not read as voice on,
+    or rearm() never turns voice back on after an end phrase (seen live 2026-11-09)."""
     if tail is None:
         return "gone"
     rows = [r for r in tail.splitlines() if r.strip()]
     if not rows:
         return "gone"                          # an empty read is a herdr hiccup, not "voice off"
-    for bar in reversed(rows[-4:]):
+    rules = [i for i, r in enumerate(rows) if r.strip().startswith("──")]
+    footer = rows[rules[-1] + 1:] if rules else rows[-3:]
+    footer = [r for r in footer if not r.strip().startswith("Voice mode")]   # Hermes' own messages
+    for bar in reversed(footer):
         if "● REC" in bar:
             return "recording"
         if "◉ Transcribing" in bar or "◉ STT" in bar:
