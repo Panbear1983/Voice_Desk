@@ -81,8 +81,20 @@ def speech_queue(paths: G.Paths) -> Light:
                  "agents take turns, one voice at a time" if stand_in else "~/bin/afplay is missing, so lines are not queued")
 
 
-def hermes_fixes(hermes_agent: Optional[Path] = None) -> Light:
-    root = hermes_agent or (Path.home() / ".hermes/hermes-agent")
+def hermes_fixes(paths: Optional[G.Paths] = None, hermes_agent: Optional[Path] = None) -> Light:
+    """Peter's local Hermes patches (hermes_patches.py: manifest + saved diffs in ~/.hermes/backups/local-patches).
+    Green = all in and live; grey = all in, but the gateway has not restarted since a gateway patch changed
+    (on disk is not loaded); red = something is gone. Falls back to the old marker check when no manifest exists."""
+    import hermes_patches
+    loc = hermes_patches.Locations.for_home(paths.hermes_home) if paths else hermes_patches.Locations.default()
+    if hermes_agent is not None:
+        loc = hermes_patches.Locations(hermes_agent, loc.patches, loc.hermes_home)
+    try:
+        ok, label, detail = hermes_patches.summary(hermes_patches.status(loc))
+        return Light(ok, label, detail)
+    except hermes_patches.ManifestError:
+        pass
+    root = loc.root
     missing = []
     for rel, marker, what in FIX_MARKERS:
         try:
@@ -119,4 +131,4 @@ def mac_output() -> Light:
 
 
 def collect(paths: G.Paths) -> list[Light]:
-    return [voice_engine(paths), gateway(paths), speech_queue(paths), hermes_fixes(), mac_output()]
+    return [voice_engine(paths), gateway(paths), speech_queue(paths), hermes_fixes(paths), mac_output()]

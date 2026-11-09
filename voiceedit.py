@@ -291,7 +291,7 @@ def _atomic_write(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
-        os.chmod(tmp, real.stat().st_mode & 0o777)
+        os.chmod(tmp, (real.stat().st_mode & 0o777) if real.exists() else 0o644)      # a new file (first Telegram chat mode): 0644
         os.replace(tmp, real)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

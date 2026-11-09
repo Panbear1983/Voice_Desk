@@ -264,7 +264,10 @@ silent test sentence per language for the selected agent and checks it with ffpr
 change the English / Mandarin voice through `voicecfg` (backup, read-back), <kbd>U</kbd> undoes the last change.
 Since step 2 (2026-11-09) <kbd>←</kbd> <kbd>→</kbd> + <kbd>Enter</kbd> on a cell switches it live: the Telegram team group
 (Off / Always), Claude's terminal (Off / Always) and the mic window / phone (own voices vs shared voice, speech queue
-on / off), with the same backup, read-back and undo; the other cells say why they are still read-only.
+on / off), with the same backup, read-back and undo; since step 3 also the Telegram direct chats (Off / Voice-back /
+Always) and Gemini's terminal (Off / Always, see [`docs/gemini-switch-file.md`](docs/gemini-switch-file.md)); the
+other cells say why they are read-only. The Hermes local patches are kept and checked by `hermes_patches.py`
+(`python3 hermes_patches.py check` / `apply`, see below).
 The listener controls above are on the second screen (<kbd>S</kbd>; <kbd>M</kbd> and <kbd>H</kbd> work on both).
 Every place's file is listed in [`docs/where-every-voice-setting-lives.md`](docs/where-every-voice-setting-lives.md).
 

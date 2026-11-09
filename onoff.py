@@ -76,11 +76,12 @@ def can_switch(agent: agents.Agent, place: str) -> bool:
     kind = G.kind_of(agent)
     if place == "tg_group":
         return kind == G.HERMES and agent.profile in TEAM_VOICED
-    if place == "terminal":
-        return kind == G.CLAUDE
+    if place == "terminal" and kind == G.CLAUDE:
+        return True
     if place == "mic":
         return True
-    return False
+    import onoff_hermes                                    # step 3: Telegram direct chat + Gemini (imports this module)
+    return onoff_hermes.can_switch(agent, place)
 
 
 def menu(agent: agents.Agent, place: str, cell: G.Cell, p: G.Paths) -> Menu:
@@ -90,6 +91,9 @@ def menu(agent: agents.Agent, place: str, cell: G.Cell, p: G.Paths) -> Menu:
     kind = G.kind_of(agent)
     if cell.value == G.NA:
         return Menu(title, why_not=f"{agent.display} has nothing in {name}")
+    import onoff_hermes
+    if onoff_hermes.can_switch(agent, place):
+        return (onoff_hermes.menu_tg_dm if place == "tg_dm" else onoff_hermes.menu_gemini)(agent, cell, p)
     if place == "tg_group":
         if kind == G.HERMES and agent.profile not in TEAM_VOICED:
             return Menu(title, why_not=f"the team room does not voice {agent.display} (text only)")
@@ -110,12 +114,11 @@ def menu(agent: agents.Agent, place: str, cell: G.Cell, p: G.Paths) -> Menu:
                    ("Switch the speech queue on (voices take turns)" if queue_off else "Switch the speech queue off (windows play straight)")
                    + f"   (now: {'off' if queue_off else 'on'})")])
     if place == "tg_dm":
-        return Menu(title, why_not=_later("step 3: the gateway reads this only when it starts"))
+        return Menu(title, why_not="nothing to switch here")
     if place == "iphone":
         return Menu(title, why_not="the iPhone speaks in Siri's own voice; the Mac only sends text, nothing to switch here")
     if place == "terminal":
-        why = ("Gemini's own hook has no off switch yet (step 4)" if kind == G.GEMINI else
-               "Codex has no speech of its own" if kind == G.CODEX else
+        why = ("Codex has no speech of its own" if kind == G.CODEX else
                "a Hermes window decides per window in memory (voice.auto_enable); not switchable from the panel")
         return Menu(title, why_not=why)
     return Menu(title, why_not="nothing to switch here")
@@ -294,20 +297,26 @@ def apply_changes(changes: list[dict], backup_dir: Path, toml_backups: Optional[
                     break
                 files.append({"path": sp, "backup": "(a marker file: nothing to back up)"})
                 continue
-            old = path.read_text(encoding="utf-8")
+            old = path.read_text(encoding="utf-8") if (path.exists() or not chs[0].get("create")) else "{}\n"
             new = _EDITORS[chs[0]["t"]](old, chs)
-            if new == old:
+            if new == old and path.exists():
                 continue
-            if chs[0]["t"] == "toml" and toml_backups is not None:
-                bak_dir, bak_name = Path(toml_backups), f"{stamp}-agents.toml"
-            else:
-                bak_dir, bak_name = Path(backup_dir), _backup_name(path)
-            bak_dir.mkdir(parents=True, exist_ok=True)
-            bak = bak_dir / bak_name
-            shutil.copy2(path.resolve(), bak)
-            originals[sp] = ("text", old)
+            if path.exists():
+                if chs[0]["t"] == "toml" and toml_backups is not None:
+                    bak_dir, bak_name = Path(toml_backups), f"{stamp}-agents.toml"
+                else:
+                    bak_dir, bak_name = Path(backup_dir), _backup_name(path)
+                bak_dir.mkdir(parents=True, exist_ok=True)
+                bak = bak_dir / bak_name
+                shutil.copy2(path.resolve(), bak)
+                originals[sp] = ("text", old)
+                backup_note = str(bak)
+            else:                                                # a file that did not exist yet (a first Telegram chat mode)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                originals[sp] = ("absent", None)
+                backup_note = "(the file did not exist: nothing to back up)"
             voiceedit._atomic_write(path, new)
-            files.append({"path": sp, "backup": str(bak)})
+            files.append({"path": sp, "backup": backup_note})
             bad = _verify_file(path, chs)
             if bad:
                 errors += bad
@@ -323,6 +332,8 @@ def apply_changes(changes: list[dict], backup_dir: Path, toml_backups: Optional[
                         path.write_text("off\n", encoding="utf-8")
                     else:
                         path.unlink(missing_ok=True)
+                elif how == "absent":
+                    path.unlink(missing_ok=True)
                 else:
                     voiceedit._atomic_write(path, old)
             except OSError as exc:
@@ -437,6 +448,7 @@ def set_cell(agent_key: str, place: str, token: str, p: G.Paths, e: Optional[voi
     e = e or voiceedit.EditPaths.default()
     now = now or _dt.datetime.now()
     stamp = now.strftime("%Y%m%d-%H%M%S")
+    import onoff_hermes                                    # step 3 planners (Telegram direct chat, Gemini)
     try:
         cfg = agents.load(e.toml)
         agent = voiceedit._find_agent(cfg, agent_key)
@@ -445,7 +457,10 @@ def set_cell(agent_key: str, place: str, token: str, p: G.Paths, e: Optional[voi
         if place == "tg_group":
             changes, note = _plan_tg_group(agent, token, p)
         elif place == "terminal":
-            changes, note = _plan_claude(agent, token, p, e)
+            changes, note = _plan_claude(agent, token, p, e) if G.kind_of(agent) == G.CLAUDE else \
+                onoff_hermes.plan_gemini(agent, token, p)
+        elif place == "tg_dm":
+            changes, note = onoff_hermes.plan_tg_dm(agent, token, p)
         else:
             changes, note = _plan_mic(token, p)
     except (SwitchError, voiceedit.EditError, OSError, ValueError) as exc:
@@ -463,7 +478,8 @@ def _run(agent: agents.Agent, place: str, token: str, changes: list[dict], note:
          undoes: Optional[str] = None, old_token: Optional[str] = None) -> voiceedit.Result:
     old_token = old_token if old_token is not None else _opposite(place, token, agent, p)
     who = "Voice Desk (all agents)" if place == "mic" else agent.display
-    what = {"tg_group": "Telegram group voice notes", "terminal": "terminal voice", "mic": "Voice Desk switch"}[place]
+    what = {"tg_group": "Telegram group voice notes", "terminal": "terminal voice", "mic": "Voice Desk switch",
+            "tg_dm": "Telegram direct chat voice"}[place]
     if not changes:
         return voiceedit.Result(True, f"{who}: {what} already {_label(place, token)}, nothing to change")
     entry = {"id": f"{stamp}-{agent.key}-switch-{place}", "ts": now.timestamp(), "kind": kind, "agent": agent.key,

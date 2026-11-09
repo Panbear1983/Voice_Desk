@@ -69,20 +69,30 @@ class TheMenus(Base):
 
     def test_the_read_only_cells_say_why(self):
         p = self.w.paths
-        for key, place, word in (("kylie", "tg_dm", "step 3"), ("gemini", "terminal", "step 4"),
-                                 ("kylie", "iphone", "Siri"), ("kylie", "terminal", "voice.auto_enable"),
-                                 ("codex", "tg_group", "nothing in")):
+        for key, place, word in (("kylie", "iphone", "Siri"), ("kylie", "terminal", "voice.auto_enable"),
+                                 ("codex", "terminal", "nothing in"), ("codex", "tg_group", "nothing in")):
             m = onoff.menu(agent_of(self.w, key), place, self.cell(key, place), p)
             self.assertEqual(m.options, [], (key, place))
             self.assertIn(word, m.why_not, (key, place))
             self.assertFalse(onoff.can_switch(agent_of(self.w, key), place), (key, place))
 
+    def test_telegram_direct_and_gemini_are_switchable_since_step_3(self):
+        p = self.w.paths
+        for key, place in (("kylie", "tg_dm"), ("jarvis", "tg_dm"), ("gemini", "terminal")):
+            self.assertTrue(onoff.can_switch(agent_of(self.w, key), place), (key, place))
+            m = onoff.menu(agent_of(self.w, key), place, self.cell(key, place), p)
+            self.assertTrue(m.options, (key, place))
+        m = onoff.menu(agent_of(self.w, "kylie"), "tg_dm", self.cell("kylie", "tg_dm"), p)
+        self.assertEqual([o.token for o in m.options], ["off", "voice_back", "always"])
+        m = onoff.menu(agent_of(self.w, "gemini"), "terminal", self.cell("gemini", "terminal"), p)
+        self.assertEqual([o.token for o in m.options], ["off", "always"])
+
     def test_set_cell_refuses_a_read_only_cell_and_changes_nothing(self):
         before = self.w.toml.read_text()
-        res = self.switch("kylie", "tg_dm", "off")
+        res = self.switch("kylie", "iphone", "off")
         self.assertFalse(res.ok)
-        self.assertIn("step 3", res.message)
-        res = self.switch("gemini", "terminal", "off")
+        self.assertIn("Siri", res.message)
+        res = self.switch("codex", "terminal", "off")
         self.assertFalse(res.ok)
         self.assertEqual(self.w.toml.read_text(), before)
         self.assertEqual(VE.read_history(self.w.edit), [])

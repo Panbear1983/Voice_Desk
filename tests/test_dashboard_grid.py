@@ -302,14 +302,14 @@ class TheOnOffCells(unittest.IsolatedAsyncioTestCase):
         app = make_app(self.w)
         async with app.run_test(size=(180, 50)) as pilot:
             await load(app, pilot)
-            await pilot.press("down", "right", "right", "right", "enter")      # Kylie, Telegram direct chat
+            await pilot.press("down", "right", "right", "right", "right", "right", "right", "enter")      # Kylie, iPhone
             await pilot.pause()
             self.assertIsInstance(app.screen, D.GridScreen)
-            self.assertIn("step 3", text_of(app, "#msg"))
-            await pilot.press("down", "down", "down", "down", "left", "enter")   # Gemini, terminal window
+            self.assertIn("Siri", text_of(app, "#msg"))
+            await pilot.press("down", "down", "down", "down", "down", "left", "left", "left", "left", "enter")   # Codex, terminal window
             await pilot.pause()
             self.assertIsInstance(app.screen, D.GridScreen)
-            self.assertIn("Gemini", text_of(app, "#msg"))
+            self.assertIn("Codex", text_of(app, "#msg"))
 
     async def test_claude_terminal_cell_switches_voice_off_and_the_grid_shows_it(self):
         self.w.paths.claude_dir.joinpath("settings.json").write_text(
@@ -327,6 +327,36 @@ class TheOnOffCells(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await wait_for(lambda: True))
             rows, lights = await asyncio.to_thread(app.collect)
             self.assertEqual({r.agent.key: r.cells["terminal"].value for r in rows}["claude"], "off")
+
+    async def test_kylies_telegram_direct_cell_switches_through_the_chooser(self):
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("down", "right", "right", "right", "enter")      # Kylie, Telegram direct chat
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            await pilot.press("up", "up", "enter")                              # Always -> Off
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            await pilot.pause()
+            self.assertEqual(json.loads(self.w.paths.voice_mode_file.read_text()), {"assistant:telegram:7512954760": "off"})
+            rows, lights = await asyncio.to_thread(app.collect)
+            self.assertEqual({r.agent.key: r.cells["tg_dm"].value for r in rows}["kylie"], "off")
+
+    async def test_gemini_terminal_cell_writes_the_switch_file_and_says_the_hook_is_not_listening_yet(self):
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("down", "down", "down", "down", "down", "right", "right", "enter")   # Gemini, terminal window
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            await pilot.press("up", "enter")
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            await pilot.pause()
+            self.assertTrue(self.w.paths.gemini_switch.exists())
+            self.assertIn("still speaks", text_of(app, "#msg"))
+            rows, lights = await asyncio.to_thread(app.collect)
+            gemini = {r.agent.key: r for r in rows}["gemini"]
+            self.assertIn("does not read it yet", gemini.cells["terminal"].problem)
 
     async def test_the_mic_cell_offers_the_two_voice_desk_switches(self):
         app = make_app(self.w)

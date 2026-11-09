@@ -10,16 +10,16 @@ it: if the dashboard is closed, voices keep working exactly as last set.
 | Extra languages, language override | `agents.toml`: `voices_extra = { ja = "ja-JP-NanamiNeural" }`, `voice_override = "auto"` (`en`, `zh` or an extra code) | Stored now, nothing enforces them yet (Hermes has no language detection: one voice per agent) | **edit** L / O |
 | Quiet hours | `agents.toml`: `quiet_hours = { tg_dm = "22:00-07:00" }` (places: `terminal`, `tg_dm`, `tg_group`, `mic`, `iphone`) | Stored and shown only; enforcement is a later step | by hand |
 | Hermes terminal window: voice on | `~/.hermes/profiles/<profile>/config.yaml` → `voice.auto_enable` (local Hermes patch) and `voice.auto_tts` | Per window, in memory: starts OFF unless `auto_enable: true`; read when the window starts | read-only |
-| Telegram direct chat: off / voice_only / all | `~/.hermes/gateway_voice_mode.json`, keys `<profile>:telegram:<chat id>` (Peter's chat id 7512954760). File does not exist now; old orphaned copies sit in `profiles/orchestrator/` and `profiles/wanna-buffet/` and are NOT read. No saved mode → `voice.auto_tts` decides | Read only when the gateway starts (`gateway/run_runtime_init.py:220`): not live-changeable yet | read-only |
+| Telegram direct chat: off / voice_only / all | `~/.hermes/gateway_voice_mode.json`, keys `<profile>:telegram:<chat id>` (Peter's chat id 7512954760). File does not exist until the panel (or `/voice` in Telegram) writes it; old orphaned copies sit in `profiles/orchestrator/` and `profiles/wanna-buffet/` and are NOT read (and never written). No saved mode → `voice.auto_tts` decides | Read at gateway start AND, with Peter's live-reload patch loaded (`hermes_patches.py`), re-read on the next message after the file changes | **switch** Enter: Off / Voice-back / Always (live once the gateway has restarted with the patch) |
 | Telegram team group: voice notes | `~/.hermes/profiles/orchestrator/scripts/team_room/state/mirror_config.json` → `voice_notes.on` and `voice_notes.agents` (group chat id -5370236728) | Re-read on every line: live | **switch** Enter: Off / Always per agent (same rule and file layout as the team room's own `mirror voice on\|off <agent>`; turning on when the whole group was off also says who else comes on) |
 | Claude | `~/.claude/settings.json` → `voice.enabled` (global, no per-project switch) · `~/.claude/voice-defaults.conf` (`NEURAL_VOICE_EN/ZH`, `VOICE_ALWAYS_ON`, `VOICE_MODE`; the SessionStart hook `voice-defaults.sh` forces it back on) · hooks `~/.claude/hooks/speak-response.sh` + `speak-natural.py` · per-session state in `~/.claude/hooks/state/` (`last-spoken-<session>` = it spoke) | Stop hook, every reply | voice type **edit**; on/off **switch** Enter: Off / Always. Off writes `voice.enabled` **and** the legacy `voiceEnabled` in settings.json (both hooks test `.voice.enabled // .voiceEnabled`, and jq's `//` skips a false), `VOICE_ALWAYS_ON=0` in the conf (else the SessionStart hook switches it back on) and `always_on` in agents.toml (else `voicecfg check` calls it drift). `~/.claude/hooks` is not touched |
-| Gemini | its own Stop hook `~/.gemini/config/hooks/speak-response.py` (Jenny / HsiaoChen hard-coded, no off switch); cache `~/.gemini/config/hooks/audio_cache/` | Stop hook, every reply | read-only (not editable yet) |
+| Gemini | its own Stop hook `~/.gemini/config/hooks/speak-response.py` (Jenny / HsiaoChen hard-coded); cache `~/.gemini/config/hooks/audio_cache/`; off switch = a file `~/.voice_desk/gemini_voice_off` (exists = silent; the hook reads it from step 4, see `gemini-switch-file.md`) | Stop hook, every reply | **switch** Enter: Off / Always (writes the file; the cell says so while the hook does not read it yet) |
 | Codex | no speech hook of its own; speaks only through Voice Desk with the shared voice | — | read-only |
 | Voice Desk: own voice per agent or shared | `~/.voice_desk/voices_per_profile` (exists = everyone uses the shared Jenny voice; V key on the listener screen) | Before every line | **switch** Enter on the mic cell, or V on the listener screen |
 | Voice Desk listener | `~/.voice_desk/listener.json` (state, who is on the line), `muted` flag, `listener.inbox` orders, launchd `com.peter.voice-desk-listener` | Heartbeat every 0.5 s | M, H, N, X, R, K |
 | Speech queue (one voice at a time) | `~/.voice_desk/speech/` — `play.lock`, `floor.json`, `gate.json`, `last.json`; off switch = a file named `off`; stand-in `~/bin/afplay` | Every Hermes window sentence | **switch** Enter on the mic cell (on = voices take turns; off = windows play straight) |
 | iPhone door | `receiver.py` (launchd `com.peter.voice-desk-receiver`, port 8765, token in `~/.voice_desk/receiver_token`), 11 Siri shortcuts (`*.shortcut`, never committed). The Mac sends text; Siri reads it in Siri's own voice | Per request | read-only |
-| Hermes local patches (can vanish on a Hermes update) | `hermes_cli/cli_voice_mixin.py` (quiet while `~/.voice_desk/live_turn` is fresh), `hermes_cli/cli_tui_mixin.py` (`_maybe_auto_enable_voice`) | Shown in the top strip as "Hermes fixes present (n/2)" | read-only |
+| Hermes local patches (can vanish on a Hermes update) | kept outside Hermes: `~/.hermes/backups/local-patches/manifest.json` + one `.diff` each (CLI windows: quiet while `~/.voice_desk/live_turn` is fresh, `voice.auto_enable`, stream-gap read-aloud, Ogg→WAV for afplay; gateway: live chat modes, Telegram voice note for MP3 replies) | Checked by `python3 hermes_patches.py check`; shown in the top strip as "Hermes fixes present (n/n)" (grey = in but the gateway has not restarted since) | `hermes_patches.py apply` puts back what fits |
 
 ## Where the evidence comes from (the Voice check)
 
@@ -58,9 +58,8 @@ Colours: **green** spoke recently and it worked · **grey** idle, nothing to say
 `./dashboard.sh`, ← → to a place, **Enter**. Live today: Telegram team group (Off / Always), Claude terminal
 (Off / Always) and the Voice Desk mic window / phone column, which holds two global switches (each agent's own
 voice vs the shared voice, speech queue on / off) because Voice Desk always answers aloud when Peter speaks.
-Terminals and the team group have no Voice-back (nothing there knows whether Peter spoke). Telegram direct
-chat (read only when the gateway starts), Hermes terminal windows (per window, in memory), Gemini (no off
-switch yet) and the iPhone (Siri speaks) stay read-only; Enter on them says why.
+Terminals and the team group have no Voice-back (nothing there knows whether Peter spoke). Hermes terminal
+windows (per window, in memory) and the iPhone (Siri speaks) stay read-only; Enter on them says why.
 
 Every switch: work out the exact edits, back each file up (`~/.hermes/profile-backups/<time>-voice-panel/`,
 `agents.toml` in `~/.voice_desk/voice_history_backups/`; the two marker files have nothing to back up), write
@@ -68,3 +67,28 @@ atomically, read back the way the file's own reader reads it (json, bash `source
 the Claude hook's own test), put every file back at once if anything does not read back, then one line in
 `~/.voice_desk/voice_history.jsonl`. **U** undoes the newest change or switch key by key, so a hand edit made
 to the same file in between survives, and a name taken off the team-group list goes back to the same place.
+
+**Step 3 additions.** *Telegram direct chat* (Off / Voice-back / Always) writes `~/.hermes/gateway_voice_mode.json`
+(key `<profile>:telegram:<chat id>` → `off` / `voice_only` / `all`; the file is created if it is not there yet,
+a file that cannot be read is never overwritten). It is live ONLY once the running gateway has Peter's
+live-reload patch loaded (the gateway then re-reads the file on the next message, no timer): the cell note and
+the message say which case applies. The stray copies in `profiles/*/gateway_voice_mode.json` are never read or
+written. *Gemini's terminal* (Off / Always) creates / removes `~/.voice_desk/gemini_voice_off`; Gemini's hook
+honours it from step 4, and until then the cell stays red with "the Off switch is set but the hook does not read
+it yet" (see `docs/gemini-switch-file.md`). One trap until the gateway has the patch loaded: a `/voice` command typed
+in Telegram makes the old gateway rewrite the file from its own memory, which would undo a panel change made since
+its start.
+
+## Hermes local patches (step 3)
+
+Peter's patches to Hermes' own files (`~/.hermes/hermes-agent`) are kept OUTSIDE it, in
+`~/.hermes/backups/local-patches/` (`manifest.json` + one diff each), so an update cannot silently lose them:
+
+    python3 hermes_patches.py check    # which are still in; exit 1 when one is gone
+    python3 hermes_patches.py apply    # put back the ones that fit (backs the files up first, never forces)
+
+"In" means the manifest's marker text is found; "missing, fits" can be re-applied; "conflict" means the code around
+it changed upstream and needs a person. For gateway patches `check` also says whether the running gateway has
+them: a file on disk is not loaded code until the gateway restarts. The top strip's "Hermes fixes" light is the
+same check (green all in and live · grey in but the gateway has not restarted · red something is gone).
+

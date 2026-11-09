@@ -46,6 +46,8 @@ _ORDER = {HERMES: 0, CLAUDE: 1, GEMINI: 2, CODEX: 3, OTHER: 4}
 SKIP_PROFILES = {"builder"}                      # Peter: the grid is for the voices he talks to, not Builder
 
 _VOICE_MODE_TO_CELL = {"off": OFF, "voice_only": VOICE_BACK, "all": ALWAYS}
+CELL_TO_VOICE_MODE = {v: k for k, v in _VOICE_MODE_TO_CELL.items()}
+GEMINI_SWITCH_NAME = "gemini_voice_off"
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,18 @@ class Paths:
         return self.gemini_dir / "config/hooks/speak-response.py"
 
     @property
+    def gemini_switch(self) -> Path:
+        """Gemini's off switch (step 3 prepares it, step 4 teaches the hook): the file EXISTS = Gemini stays
+        silent; absent = Gemini speaks as it always did. Same marker convention as speech/off. See
+        docs/gemini-switch-file.md."""
+        return self.state / GEMINI_SWITCH_NAME
+
+    @property
+    def hermes_locations(self):
+        import hermes_patches
+        return hermes_patches.Locations.for_home(self.hermes_home)
+
+    @property
     def speech_dir(self) -> Path:
         return self.state / "speech"
 
@@ -164,6 +178,14 @@ def port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.3) -> bool:
         return False
 
 
+def gemini_hook_honours_switch(p: Paths) -> bool:
+    """True when Gemini's hook source mentions the switch file's name (step 4 puts the check there)."""
+    try:
+        return GEMINI_SWITCH_NAME in p.gemini_hook.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
 # -- one cell per place -------------------------------------------------------------------------
 def terminal_cell(a: agents.Agent, p: Paths) -> Cell:
     kind = kind_of(a)
@@ -188,9 +210,17 @@ def terminal_cell(a: agents.Agent, p: Paths) -> Cell:
                         + ("; VOICE_ALWAYS_ON=1 keeps it on" if always_on == "1" else ""), problem)
         return Cell(OFF if enabled is False else UNKNOWN, "settings.json voice.enabled is " + str(enabled).lower(), problem)
     if kind == GEMINI:
-        if p.gemini_hook.exists():
-            return Cell(ALWAYS, "Gemini's own Stop hook speaks every reply (Jenny / HsiaoChen hard-coded, no off switch yet)")
-        return Cell(OFF, "no Gemini speak hook found")
+        if not p.gemini_hook.exists():
+            return Cell(OFF, "no Gemini speak hook found")
+        honours = gemini_hook_honours_switch(p)
+        spoken = "Gemini's own Stop hook speaks every reply (Jenny / HsiaoChen hard-coded)"
+        if p.gemini_switch.exists():
+            if honours:
+                return Cell(OFF, f"{GEMINI_SWITCH_NAME} exists in ~/.voice_desk and Gemini's hook honours it: it stays silent")
+            return Cell(ALWAYS, f"{GEMINI_SWITCH_NAME} says Off, but the hook does not read it yet", problem=(
+                "the Off switch is set but Gemini's hook does not read it yet (step 4): Gemini still speaks"))
+        return Cell(ALWAYS, spoken + ("; the hook honours the off-switch file" if honours else
+                                      f"; the off-switch file ({GEMINI_SWITCH_NAME}) is prepared, the hook reads it from step 4"))
     if kind == CODEX:
         return Cell(NA, "Codex has no speech hook of its own; it speaks only through Voice Desk")
     return Cell(UNKNOWN, "unknown kind of agent")
@@ -203,7 +233,12 @@ def tg_dm_cell(a: agents.Agent, p: Paths) -> Cell:
     modes = _read_json(p.voice_mode_file) or {}
     mode = modes.get(key)
     if mode in _VOICE_MODE_TO_CELL:
-        return Cell(_VOICE_MODE_TO_CELL[mode], f"gateway_voice_mode.json says {mode} (read only when the gateway starts)")
+        import hermes_patches
+        live = hermes_patches.live_voice_mode(p.hermes_locations)
+        how = {hermes_patches.LIVE: "the gateway re-reads it when it changes",
+               hermes_patches.PENDING: "the gateway has the live re-read on disk but has not restarted yet, so it reads this only when it starts",
+               }.get(live, "read only when the gateway starts")
+        return Cell(_VOICE_MODE_TO_CELL[mode], f"gateway_voice_mode.json says {mode} ({how})")
     ok, auto = _yaml_value(p.profiles, a.profile, "voice.auto_tts")
     if auto is True:
         return Cell(ALWAYS, "no saved chat mode, so voice.auto_tts: true decides (a chat mode, once set, wins)")

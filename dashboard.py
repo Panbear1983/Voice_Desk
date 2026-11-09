@@ -9,9 +9,10 @@ failure). The top strip: voice engine · Hermes gateway · speech queue · Herme
 It is an overseer, never a lifeline: every voice setting stays where the agents already read it, so
 if this panel closes, voices keep working exactly as last set.
 
-ON/OFF CELLS (step 2): ← → pick a place, Enter changes it. Live today: the Telegram team group (Off / Always), Claude's terminal
-(Off / Always) and the Voice Desk mic window / phone (own voices vs shared voice, speech queue on / off). Each change backs up the
-files, writes them, reads them back and goes into the history; U undoes. Telegram direct chat, Gemini, Hermes windows and the
+ON/OFF CELLS (steps 2-3): ← → pick a place, Enter changes it. Live today: the Telegram team group (Off / Always), Claude's terminal
+(Off / Always), the Voice Desk mic window / phone (own voices vs shared voice, speech queue on / off), the Telegram direct chats
+(Off / Voice-back / Always, gateway_voice_mode.json) and Gemini's terminal (Off / Always, a switch file its hook reads from step 4).
+Each change backs up the files, writes them, reads them back and goes into the history; U undoes. Hermes windows and the
 iPhone stay read-only. Enter on the voice column edits the voice; Enter on the Voice check column runs the silent test.
 
   ↑ ↓ pick an agent   T silent voice test (no sound)   A test everyone   C check now
