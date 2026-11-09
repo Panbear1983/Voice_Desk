@@ -103,15 +103,19 @@ voice_zh = "zh-TW-YunJheNeural"
 # Simba (Peter 2026-11-10): a girl cat with a scratchy, smoky witch voice, American accent only, made by Kokoro.
 # Voice only: Simba is not a brain Voice Desk talks to ("hello Simba" wakes nothing, so she is not in
 # whisper_prompt), and nothing in Voice Desk makes her speak; this block is her voice, ready for whatever does.
-# voice  = an American female Kokoro voice (af_...), E key; effect = smoky / raspy / plain, F key.
-# Jarvis's numbered samples: 1 nicole smoky, 2 nicole raspy, 3 kore smoky, 4 kore raspy, 5 river smoky,
-# 6 river raspy, 7 jessica smoky, 8 jessica raspy, 9 nova smoky, 10 nova raspy (simba_tts.SAMPLES).
+# voice  = an American Kokoro voice (af_... female, am_... male; no British), E key.
+# effect = a recipe, F key: a sample number 1-30 or fenrir16 / smoky / raspy / plain, then changes if wanted,
+#          e.g. "23 but slower and breathier", "23 26", "16 pitch=1.1 tremolo=0.15" (simba_tts.py explains).
+# Jarvis's numbered samples (voice, effect): 1-10 = nicole, kore, river, jessica, nova, each smoky then raspy;
+# 11 nicole, 12 kore, 13 river, 14 jessica, 15 onyx, 16 fenrir, 17 michael, 18 river, 19 nova, 20 bella;
+# 21-30 = variations of 16 (fenrir). A number sets the effect only: set the voice with E (simba_tts.SAMPLES).
+# Until Peter picks: sample 16 (am_fenrir + fenrir16), his favourite on 2026-11-10.
 [agents.simba]
 target = "simba"
 display = "Simba"
 names = ["simba"]
-voice = "af_nicole"                  # sample 1, a placeholder until Peter picks his sample
-effect = "smoky"
+voice = "am_fenrir"
+effect = "fenrir16"
 voice_zh = "zh-TW-HsiaoYuNeural"     # Kokoro speaks English only; her Mandarin lines use this Taiwan Edge voice
 # Voice Desk speaks her English lines through: <command> <text file> <out.wav> <voice> <effect>
 command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python", "~/GitHub/Voice_Desk/simba_tts.py"]

@@ -43,7 +43,7 @@ class EditError(ValueError):
 
 def uses_simba_script(agent: agents.Agent) -> bool:
     """The agent's English lines are made by simba_tts.py (Kokoro + effect): its voice must be one that script
-    speaks (American female Kokoro) and it has an effect setting."""
+    speaks (an American Kokoro voice) and it has an effect setting (a recipe such as "16" or "23 slower")."""
     return any(Path(c).name == "simba_tts.py" for c in agent.command)
 
 
@@ -58,14 +58,14 @@ def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
     """Return the cleaned value or raise EditError with a sentence Peter can read."""
     if field_name == "effect":
         import simba_tts
-        v = str(value or "").strip().lower()
+        v = simba_tts.clean_effect(str(value or ""))              # a recipe: "16", "23 but slower and breathier"
         if not uses_simba_script(agent):
             raise EditError(f"{agent.display} has no voice effect (only a voice made by simba_tts.py has one).")
         problem = simba_tts.effect_problem(v)
         if problem:
             raise EditError(problem)
         return v
-    if field_name == "voice" and uses_simba_script(agent):        # Peter 2026-11-10: American accent only, a girl cat
+    if field_name == "voice" and uses_simba_script(agent):        # Peter 2026-11-10: American accent only (af_/am_)
         import simba_tts
         v = simba_tts.clean_voice(str(value or ""))
         problem = simba_tts.voice_problem(v)
@@ -417,6 +417,11 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
     tail = (" Voice Desk speaks it from the next line; Hermes agents use it from their next session."
             if field_name in ("voice", "voice_zh") else " Voice Desk uses it from the next line."
             if field_name == "effect" else " Stored for later: nothing enforces it yet.")
+    if field_name == "effect" and new is not None:
+        import simba_tts
+        made_with = simba_tts.sample_voice(new)
+        if made_with and simba_tts.clean_voice(agent.voice or "") != made_with:      # the number fixes the effect only
+            tail += f" That sample was made with {made_with}; {agent.display} speaks with {agent.voice} (E changes it)."
     return Result(True, f"{agent.display} {field_name}: {_short(old)} → {_short(new)}; {where}.{tail}", entry,
                   [f["path"] for f in files])
 

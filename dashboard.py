@@ -496,11 +496,14 @@ class Dashboard(App):
     # -- changing a voice -------------------------------------------------------------------------
     PROMPTS = {
         "voice": ("English voice", "An Edge voice such as en-US-AvaNeural (Esther: a Kokoro name such as alloy; "
-                  "Simba: an American Kokoro voice such as af_nicole). Enter saves, Esc cancels."),
+                  "Simba: an American Kokoro voice such as am_fenrir or af_nicole). Enter saves, Esc cancels."),
         "voice_zh": ("Mandarin voice", "A Taiwan Mandarin Edge voice such as zh-TW-HsiaoChenNeural (zh-TW only). Enter saves, Esc cancels."),
         "voices_extra": ("Extra languages", "code=voice, comma separated, e.g. ja=ja-JP-NanamiNeural. Empty removes them all."),
         "voice_override": ("Language override", "auto (follow the reply's language), en, zh, or an extra code. Stored now, enforced later."),
-        "effect": ("Voice effect", "smoky, raspy or plain (the sound put on top of the Kokoro voice). Enter saves, Esc cancels."),
+        "effect": ("Voice effect", "A sample number 1-30 (or fenrir16, smoky, raspy, plain), then changes if you like: "
+                   "higher / lower, slower / faster, crunchier, breathier, rougher, echo, 21-30, or knob=value "
+                   "(speed pitch tempo bits mix noise tremolo echo). E.g. 23 but slower and breathier. "
+                   "Enter saves, Esc cancels."),
     }
 
     def current_value(self, row: E.Row, field_name: str) -> str:

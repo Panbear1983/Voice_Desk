@@ -90,7 +90,8 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
     t.append(f"{row.agent.display}", style="bold #9b59b6")
     t.append(f"  English {v.en}  ·  Mandarin {v.zh}  ·  backup {v.backup}  ·  language: {v.override}")
     if v.effect:
-        t.append(f"  ·  effect: {v.effect} (F changes it)")
+        import simba_tts
+        t.append(f"  ·  effect: {v.effect} = {simba_tts.describe(v.effect)} (F changes it)")
     if v.extra:
         t.append("  ·  also " + ", ".join(f"{k}: {x}" for k, x in v.extra.items()))
     if v.using_shared:

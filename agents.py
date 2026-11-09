@@ -27,7 +27,7 @@ class Agent:
     speed: Optional[float] = None
     command: tuple[str, ...] = ()    # a non-Edge voice is spoken through this script
     fallback: Optional[str] = None   # Edge voice used if that script fails
-    effect: Optional[str] = None     # the script's sound effect, passed after the voice (Simba: smoky / raspy / plain)
+    effect: Optional[str] = None     # the script's sound effect, passed after the voice (Simba: a recipe such as "16")
     knobs: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
     voices_extra: dict = field(default_factory=dict)    # more languages: {"ja": "ja-JP-NanamiNeural"}

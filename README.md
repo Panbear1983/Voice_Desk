@@ -410,8 +410,10 @@ Esther keeps her own Kokoro voice everywhere: Voice Desk speaks her lines throug
 (`command` in her block), with an Edge voice (`fallback`) only if Kokoro fails.
 
 Simba (a girl cat, 2026-11-10) has a voice entry only: `simba_tts.py` makes her lines with an American
-female Kokoro voice (`voice`) and a scratchy effect on top (`effect`: `smoky`, `raspy` or `plain`),
-both changed on the grid with E and F. She is not a brain, so "hello Simba" wakes nothing.
+Kokoro voice (`voice`: `af_…` or `am_…`, today `am_fenrir`) and a scratchy effect on top (`effect`: a
+recipe such as `16`, `fenrir16`, `23 but slower and breathier` or `16 pitch=1.1 tremolo=0.15`; numbers
+are Jarvis's samples 1-30), both changed on the grid with E and F. She is not a brain, so "hello Simba"
+wakes nothing.
 
 Everything else adjustable is a plain constant in `settings.py`:
 
