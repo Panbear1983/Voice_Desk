@@ -87,11 +87,15 @@ mode = "tap"                         # VOICE_MODE: tap Space to start, tap to se
 target = "gemini"
 display = "Gemini"
 names = ["gemini", "jemini", "google gemini"]
+voice = "en-US-AriaNeural"
+voice_zh = "zh-TW-HsiaoYuNeural"
 
 [agents.codex]
 target = "codex"
 display = "Codex"
 names = ["codex", "code x", "openai codex"]
+voice = "en-GB-RyanNeural"
+voice_zh = "zh-TW-YunJheNeural"
 
 [agents.jarvis]
 profile = "orchestrator"
