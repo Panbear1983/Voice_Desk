@@ -73,7 +73,7 @@ spellings = { "that's" = ["that's", "that is", "that’s"] }   # the last one ha
 target = "claude"
 display = "Claude"
 names = ["claude", "claud", "clod", "claude code", "克勞德", "克劳德"]
-voice = "en-US-JennyNeural"          # Claude Code's spoken replies (NEURAL_VOICE_EN)
+voice = "en-US-GuyNeural"          # Claude Code's spoken replies (NEURAL_VOICE_EN)
 voice_zh = "zh-TW-HsiaoChenNeural"   # NEURAL_VOICE_ZH
 always_on = true                     # VOICE_ALWAYS_ON: every Claude Code session starts with voice on
 mode = "tap"                         # VOICE_MODE: tap Space to start, tap to send (Peter 2026-10-25; was hold)

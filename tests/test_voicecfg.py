@@ -325,7 +325,7 @@ command_allowlist:
 """,
 }
 CLAUDE_CONF = """# Peter's spoken-reply defaults (chosen by ear 2026-09-17). THE place to change voices.
-NEURAL_VOICE_EN="en-US-JennyNeural"        # English: Jenny
+NEURAL_VOICE_EN="en-US-GuyNeural"        # English: Jenny
 NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"    # Chinese: HsiaoChen, Taiwan Mandarin
 VOICE_ALWAYS_ON=1                          # 1 = every Claude Code session starts with voice on
 VOICE_MODE="tap"                           # push-to-talk mode restored if missing
@@ -520,7 +520,7 @@ CLAUDE_HOOK = Path.home() / ".claude/hooks/speak-response.sh"
 def test_sync_claude() -> None:
     import subprocess
     profiles, conf = make_fixtures()
-    toml = _edited_copy(lambda t: t.replace('voice = "en-US-JennyNeural"          # Claude Code',
+    toml = _edited_copy(lambda t: t.replace('voice = "en-US-GuyNeural"          # Claude Code',
                                             'voice = "en-US-AriaNeural"          # Claude Code'))
     rc, out = _cli(["sync", "--dry-run", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf)])
     report("claude: --dry-run shows the one NEURAL_VOICE_EN line", rc == 0 and '+NEURAL_VOICE_EN="en-US-AriaNeural"' in out
@@ -531,7 +531,7 @@ def test_sync_claude() -> None:
     changed = _changed_lines(CLAUDE_CONF, conf.read_text())
     report("claude: --apply backs up voice-defaults.conf and changes only that line, comment kept",
            rc == 0 and (bdir / "claude-voice-defaults.conf").read_text() == CLAUDE_CONF
-           and changed == [('NEURAL_VOICE_EN="en-US-JennyNeural"        # English: Jenny',
+           and changed == [('NEURAL_VOICE_EN="en-US-GuyNeural"        # English: Jenny',
                             'NEURAL_VOICE_EN="en-US-AriaNeural"        # English: Jenny')], str(changed))
     report("claude: the Hermes profiles are untouched",
            all((profiles / p / "config.yaml").read_text() == t for p, t in FIXTURES.items()))
