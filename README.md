@@ -256,6 +256,15 @@ warning if a profile drifted from it. Keys: <kbd>M</kbd> mute/unmute · <kbd>H</
 <kbd>R</kbd> restart the listener · <kbd>K</kbd> stop it ·
 <kbd>Q</kbd> close the panel (the listener keeps running).
 
+Since 2026-11-09 the dashboard opens on the **voice grid**: one row per agent in `agents.toml`, one column per
+place it can speak (terminal window, Telegram direct chat, Telegram team group, the mic window / phone, the
+iPhone). Each cell shows the setting read from the file where it really lives and, under it, what the logs say
+really happened (green spoke OK · grey idle · yellow mixed · red mismatch or failure). <kbd>T</kbd> renders a
+silent test sentence per language for the selected agent and checks it with ffprobe; <kbd>E</kbd> / <kbd>Z</kbd>
+change the English / Mandarin voice through `voicecfg` (backup, read-back), <kbd>U</kbd> undoes the last change.
+The listener controls above are on the second screen (<kbd>S</kbd>; <kbd>M</kbd> and <kbd>H</kbd> work on both).
+Every place's file is listed in [`docs/where-every-voice-setting-lives.md`](docs/where-every-voice-setting-lives.md).
+
 **Keys** (you never *need* them): <kbd>Space</kbd> talk in tap mode or interrupt ·
 <kbd>M</kbd> mode · <kbd>S</kbd> sleep/wake · <kbd>N</kbd> new conversation · <kbd>Q</kbd> quit.
 

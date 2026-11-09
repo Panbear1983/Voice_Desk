@@ -29,6 +29,9 @@ class Agent:
     fallback: Optional[str] = None   # Edge voice used if that script fails
     knobs: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
+    voices_extra: dict = field(default_factory=dict)    # more languages: {"ja": "ja-JP-NanamiNeural"}
+    voice_override: str = "auto"     # "auto" = follow the reply's language; "en", "zh" or an extra code pins it
+    quiet_hours: dict = field(default_factory=dict)     # place -> "22:00-07:00" (stored and shown only)
 
     @property
     def profile(self) -> Optional[str]:
@@ -47,6 +50,8 @@ def _agent(key: str, raw: dict) -> Agent:
         voice=raw.get("voice"), voice_zh=raw.get("voice_zh"), speed=raw.get("speed"),
         command=tuple(os.path.expanduser(c) for c in raw.get("command", ())), fallback=raw.get("fallback"),
         knobs={k: raw[k] for k in KNOBS if k in raw}, raw=raw,
+        voices_extra=dict(raw.get("voices_extra") or {}), voice_override=str(raw.get("voice_override") or "auto"),
+        quiet_hours=dict(raw.get("quiet_hours") or {}),
     )
 
 

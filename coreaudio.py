@@ -19,6 +19,7 @@ def _code(s: str) -> int:                     # 'dIn ' -> the four-character cod
 
 
 _DEFAULT_INPUT = _code("dIn ")                # kAudioHardwarePropertyDefaultInputDevice
+_DEFAULT_OUTPUT = _code("dOut")               # kAudioHardwarePropertyDefaultOutputDevice
 _DEVICES = _code("dev#")                      # kAudioHardwarePropertyDevices
 _RUN_LOOP = _code("rnlp")                     # kAudioHardwarePropertyRunLoop
 _NAME = _code("lnam")                         # kAudioObjectPropertyName
@@ -97,6 +98,12 @@ def default_input_name() -> Optional[str]:
     """The name of the Mac's current default microphone, e.g. 'MacBook Pro Microphone'; None if
     CoreAudio could not say (then the caller keeps what it has)."""
     dev = _uint(_SYSTEM, _DEFAULT_INPUT)
+    return _name(dev) if dev else None
+
+
+def default_output_name() -> Optional[str]:
+    """The name of the Mac's current default speaker/headphones (read-only, for the dashboard)."""
+    dev = _uint(_SYSTEM, _DEFAULT_OUTPUT)
     return _name(dev) if dev else None
 
 

@@ -564,11 +564,13 @@ def test_dashboard_panel() -> None:
     V.PROFILES, V.CLAUDE_CONF = profiles, conf
 
     async def render() -> str:
-        app = D.Dashboard()
+        app = D.Dashboard(autostart=False)          # the voices panel moved to the listener screen (S) with the grid
         async with app.run_test(size=(140, 40)) as pilot:
             await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
             app.refresh_voices()
-            return str(app.query_one("#voices", Static).render())
+            return str(app.screen.query_one("#voices", Static).render())
 
     try:
         clean = asyncio.run(render())

@@ -480,25 +480,27 @@ def test_status_file() -> None:
     from textual.widgets import Static
 
     async def run() -> tuple[str, str, str, str]:
-        app = Dashboard()
+        app = Dashboard(autostart=False)            # the grid is the main screen; Heard/Reply live on the second one (S)
         async with app.run_test(size=(100, 24)) as pilot:
             await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
             app.refresh_status()
-            light = str(app.query_one("#light", Static).render())
-            body = str(app.query_one("#body", Static).render())
+            light = str(app.screen.query_one("#light", Static).render())
+            body = str(app.screen.query_one("#body", Static).render())
             await pilot.press("m")
             await pilot.pause()
             muted = service.is_muted()
             live.set_state("asleep")
             app.refresh_status()
-            light2 = str(app.query_one("#light", Static).render())
+            light2 = str(app.screen.query_one("#light", Static).render())
             await pilot.press("m")
             await pilot.press("h")
             await pilot.pause()
             live.data["updated"] = 0
             service.write_status(live.data)
             app.refresh_status()
-            light3 = str(app.query_one("#light", Static).render())
+            light3 = str(app.screen.query_one("#light", Static).render())
             return light, body + f" muted={muted}", light2, light3
 
     light, body, light2, light3 = asyncio.run(run())

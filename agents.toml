@@ -60,6 +60,14 @@ spellings = { "that's" = ["that's", "that is", "that’s"] }   # the last one ha
 # speed:     tts.edge.speed in the profile
 # auto_tts, silence_duration, silence_threshold, barge_in, barge_in_grace_seconds:
 #            the profile's voice-mode knobs (its top-level `voice:` block)
+# Optional, stored and shown by the dashboard grid (nothing enforces them yet; add them by hand or with
+# the grid's L / O keys):
+# voices_extra:   more languages beyond English + Mandarin, e.g. voices_extra = { ja = "ja-JP-NanamiNeural" }
+# voice_override: pin the language instead of following the reply: "auto" (default), "en", "zh" or an extra code
+# quiet_hours:    per place, e.g. quiet_hours = { tg_dm = "22:00-07:00" }; places: terminal, tg_dm, tg_group,
+#                 mic, iphone
+# The grid's E / Z keys change `voice` / `voice_zh` here and run the same sync as `voicecfg sync --apply`
+# (backup first, read back with Hermes' own parser); U undoes the last change.
 
 [agents.claude]
 target = "claude"

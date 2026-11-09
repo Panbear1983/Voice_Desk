@@ -62,12 +62,14 @@ async def shoot():
                     "note": "Recorded conversation replay: the second question resumed the same Codex thread."}
         with patch.object(service, "read_status", return_value=snapshot), \
              patch.object(service, "is_muted", return_value=False):
-            dashboard = Dashboard()
+            dashboard = Dashboard(autostart=False)          # the listener view is the dashboard's second screen (S)
             async with dashboard.run_test(size=(110, 28)) as pilot:
                 await pilot.pause(0.3)
-                assert "Codex" in str(dashboard.query_one("#who", Static).render())
-                assert last["codex"] in str(dashboard.query_one("#body", Static).render())
-                assert "Codex:" in str(dashboard.query_one("#voices", Static).render())
+                await pilot.press("s")
+                await pilot.pause(0.3)
+                assert "Codex" in str(dashboard.screen.query_one("#who", Static).render())
+                assert last["codex"] in str(dashboard.screen.query_one("#body", Static).render())
+                assert "Codex:" in str(dashboard.screen.query_one("#voices", Static).render())
                 save_svg("09_codex_dashboard.svg", dashboard.export_screenshot())
 
 
