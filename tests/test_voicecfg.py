@@ -210,7 +210,7 @@ voice:
   auto_tts: true
   name: natural
   silence_duration: 1.5
-  silence_threshold: 200
+  silence_threshold: 450
   barge_in: false
 # a comment between blocks
 moa:
@@ -328,7 +328,7 @@ CLAUDE_CONF = """# Peter's spoken-reply defaults (chosen by ear 2026-09-17). THE
 NEURAL_VOICE_EN="en-US-JennyNeural"        # English: Jenny
 NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"    # Chinese: HsiaoChen, Taiwan Mandarin
 VOICE_ALWAYS_ON=1                          # 1 = every Claude Code session starts with voice on
-VOICE_MODE="hold"                          # push-to-talk mode restored if missing
+VOICE_MODE="tap"                           # push-to-talk mode restored if missing
 """
 LIVE_PROFILES = Path.home() / ".hermes/profiles"
 LIVE_CLAUDE_CONF = Path.home() / ".claude/voice-defaults.conf"
@@ -373,14 +373,14 @@ def test_check() -> None:
     e.write_text(e.read_text().replace(', "thank you, no further question"]', "]"))
     j = profiles / "orchestrator" / "config.yaml"
     j.write_text(j.read_text().replace('stop_phrases: ["stop", "that\'s all", ', 'stop_phrases: ["that\'s all", "stop", '))
-    conf.write_text(conf.read_text().replace('VOICE_MODE="hold"', 'VOICE_MODE="tap"'))
+    conf.write_text(conf.read_text().replace('VOICE_MODE="tap"', 'VOICE_MODE="hold"'))
     d = {(i.where, i.key): (i.have, i.want) for i in V.drift(V.collect(cfg, profiles, conf))}
     report("check: a hand edit shows up as drift, with both values",
            d.get(("kylie", "voice.silence_threshold")) == (300, 200), str(d))
     report("check: a missing end phrase shows up", ("esther", "voice.stop_phrases") in d)
     report("check: end phrases in another order are not drift (Hermes matches them as a set)",
            ("jarvis", "voice.stop_phrases") not in d)
-    report("check: Claude's voice file is checked too", d.get(("claude", "VOICE_MODE")) == ("tap", "hold"), str(d))
+    report("check: Claude's voice file is checked too", d.get(("claude", "VOICE_MODE")) == ("hold", "tap"), str(d))
     report("check: nothing else is reported", len(d) == 3, str(sorted(d)))
     out = _cli(["check", "--profiles", str(profiles), "--claude-conf", str(conf)])
     report("check: the command prints each difference and exits 1 on drift",

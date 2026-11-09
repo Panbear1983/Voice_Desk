@@ -97,7 +97,7 @@ voice_zh = "zh-TW-HsiaoChenNeural"
 speed = 1.0
 auto_tts = true
 silence_duration = 1.5
-silence_threshold = 200
+silence_threshold = 450               # live value Peter has been running (was 200 here until 2026-11-09)
 barge_in = false
 
 [agents.kylie]
