@@ -66,6 +66,8 @@ spellings = { "that's" = ["that's", "that is", "that’s"] }   # the last one ha
 # command, fallback, effect:
 #            a non-Edge voice made by the agent's own script (Esther's and Simba's Kokoro), the Edge voice used if
 #            that script fails, and (Simba only) the sound effect the script puts on top (F key on the grid)
+# english_only: true = the agent speaks English only: no Mandarin or other-language voice, and a line with
+#            Chinese in it stays silent (Simba, Peter 2026-11-10)
 # auto_tts, silence_duration, silence_threshold, barge_in, barge_in_grace_seconds:
 #            the profile's voice-mode knobs (its top-level `voice:` block)
 # Optional, stored and shown by the dashboard grid (nothing enforces them yet; add them by hand or with
@@ -101,22 +103,25 @@ voice = "en-GB-RyanNeural"
 voice_zh = "zh-TW-YunJheNeural"
 
 # Simba (Peter 2026-11-10): a girl cat with a scratchy, smoky witch voice, American accent only, made by Kokoro.
-# Voice only: Simba is not a brain Voice Desk talks to ("hello Simba" wakes nothing, so she is not in
-# whisper_prompt), and nothing in Voice Desk makes her speak; this block is her voice, ready for whatever does.
+# English ONLY (Peter 2026-11-10): no Mandarin voice; a line with any Chinese in it stays silent, and the panel
+# refuses a Mandarin or other-language voice for her (english_only below).
+# Not a brain Voice Desk talks to ("hello Simba" wakes nothing, so she is not in whisper_prompt). Her own listener
+# (~/GitHub/panbear-daily, simba_voice.py) reads this block before every voice note she sends in the Team_Room
+# Telegram group, so a change here is heard there from her next note.
 # voice  = an American Kokoro voice (af_... female, am_... male; no British), E key.
 # effect = a recipe, F key: a sample number 1-30 or fenrir16 / smoky / raspy / plain, then changes if wanted,
 #          e.g. "23 but slower and breathier", "23 26", "16 pitch=1.1 tremolo=0.15" (simba_tts.py explains).
 # Jarvis's numbered samples (voice, effect): 1-10 = nicole, kore, river, jessica, nova, each smoky then raspy;
 # 11 nicole, 12 kore, 13 river, 14 jessica, 15 onyx, 16 fenrir, 17 michael, 18 river, 19 nova, 20 bella;
 # 21-30 = variations of 16 (fenrir). A number sets the effect only: set the voice with E (simba_tts.SAMPLES).
-# Until Peter picks: sample 16 (am_fenrir + fenrir16), his favourite on 2026-11-10.
+# Peter's pick (panel, 2026-11-10 07:18): am_fenrir with "16 pitch=1.4" (his sample #33).
 [agents.simba]
 target = "simba"
 display = "Simba"
 names = ["simba"]
 voice = "am_fenrir"
-effect = "fenrir16"
-voice_zh = "zh-TW-HsiaoYuNeural"     # Kokoro speaks English only; her Mandarin lines use this Taiwan Edge voice
+effect = "16 pitch=1.4"
+english_only = true                  # no Mandarin voice: a Chinese line stays silent (Voice Desk and simba_tts.py)
 # Voice Desk speaks her English lines through: <command> <text file> <out.wav> <voice> <effect>
 command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python", "~/GitHub/Voice_Desk/simba_tts.py"]
 fallback = "en-US-MichelleNeural"    # only if Kokoro fails, so the line never goes silent (no effect on it)
