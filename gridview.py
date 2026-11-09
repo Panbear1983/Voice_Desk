@@ -63,7 +63,8 @@ def voice_text(row: E.Row) -> Text:
     t = Text()
     t.append(f"{voice_short(v.en)} · {voice_short(v.zh)}")
     extras = f" +{len(v.extra)}" if v.extra else ""
-    t.append(f"\nbackup {voice_short(v.backup)}{extras}", style="#7f8c8d")
+    effect = f" · {v.effect}" if v.effect else ""
+    t.append(f"\nbackup {voice_short(v.backup)}{extras}{effect}", style="#7f8c8d")
     return t
 
 
@@ -88,6 +89,8 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
     t = Text()
     t.append(f"{row.agent.display}", style="bold #9b59b6")
     t.append(f"  English {v.en}  ·  Mandarin {v.zh}  ·  backup {v.backup}  ·  language: {v.override}")
+    if v.effect:
+        t.append(f"  ·  effect: {v.effect} (F changes it)")
     if v.extra:
         t.append("  ·  also " + ", ".join(f"{k}: {x}" for k, x in v.extra.items()))
     if v.using_shared:

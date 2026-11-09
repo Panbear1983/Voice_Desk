@@ -163,6 +163,7 @@ class GridScreen(Screen):
         Binding("z", "edit_zh", "Mandarin voice"),
         Binding("l", "edit_extra", "extra language"),
         Binding("o", "edit_override", "language override"),
+        Binding("f", "edit_effect", "voice effect"),
         Binding("u", "undo", "undo"),
         Binding("w", "watcher", "pause / resume watcher"),
         Binding("s", "listener", "listener screen"),
@@ -212,6 +213,9 @@ class GridScreen(Screen):
 
     def action_edit_override(self) -> None:
         self.app.ask_edit("voice_override")  # type: ignore[attr-defined]
+
+    def action_edit_effect(self) -> None:
+        self.app.ask_edit("effect")    # type: ignore[attr-defined]
 
     def action_undo(self) -> None:
         self.app.undo_last()           # type: ignore[attr-defined]
@@ -491,16 +495,18 @@ class Dashboard(App):
 
     # -- changing a voice -------------------------------------------------------------------------
     PROMPTS = {
-        "voice": ("English voice", "An Edge voice such as en-US-AvaNeural (Esther: a Kokoro name such as alloy). Enter saves, Esc cancels."),
+        "voice": ("English voice", "An Edge voice such as en-US-AvaNeural (Esther: a Kokoro name such as alloy; "
+                  "Simba: an American Kokoro voice such as af_nicole). Enter saves, Esc cancels."),
         "voice_zh": ("Mandarin voice", "A Taiwan Mandarin Edge voice such as zh-TW-HsiaoChenNeural (zh-TW only). Enter saves, Esc cancels."),
         "voices_extra": ("Extra languages", "code=voice, comma separated, e.g. ja=ja-JP-NanamiNeural. Empty removes them all."),
         "voice_override": ("Language override", "auto (follow the reply's language), en, zh, or an extra code. Stored now, enforced later."),
+        "effect": ("Voice effect", "smoky, raspy or plain (the sound put on top of the Kokoro voice). Enter saves, Esc cancels."),
     }
 
     def current_value(self, row: E.Row, field_name: str) -> str:
         v = row.voice
         return {"voice": v.en, "voice_zh": v.zh, "voices_extra": ", ".join(f"{k}={x}" for k, x in v.extra.items()),
-                "voice_override": v.override}[field_name]
+                "voice_override": v.override, "effect": v.effect or ""}[field_name]
 
     def ask_edit(self, field_name: str) -> None:
         row = self.selected()
@@ -508,6 +514,9 @@ class Dashboard(App):
             return
         if not voiceedit.editable(row.agent):
             self.say(f"{row.agent.display}: no voice setting the panel can change yet (shared Voice Desk voice + its own hook)")
+            return
+        if field_name == "effect" and not voiceedit.uses_simba_script(row.agent):
+            self.say(f"{row.agent.display} has no voice effect (only Simba's Kokoro voice has one)")
             return
         title, hint = self.PROMPTS[field_name]
 

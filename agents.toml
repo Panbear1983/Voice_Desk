@@ -63,6 +63,9 @@ spellings = { "that's" = ["that's", "that is", "that’s"] }   # the last one ha
 # voice_zh:  the Mandarin voice Voice Desk (and Claude's and Gemini's hooks) speak with; Taiwan
 #            Mandarin (zh-TW-...) only, Peter 2026-11-09
 # speed:     tts.edge.speed in the profile
+# command, fallback, effect:
+#            a non-Edge voice made by the agent's own script (Esther's and Simba's Kokoro), the Edge voice used if
+#            that script fails, and (Simba only) the sound effect the script puts on top (F key on the grid)
 # auto_tts, silence_duration, silence_threshold, barge_in, barge_in_grace_seconds:
 #            the profile's voice-mode knobs (its top-level `voice:` block)
 # Optional, stored and shown by the dashboard grid (nothing enforces them yet; add them by hand or with
@@ -96,6 +99,23 @@ display = "Codex"
 names = ["codex", "code x", "openai codex"]
 voice = "en-GB-RyanNeural"
 voice_zh = "zh-TW-YunJheNeural"
+
+# Simba (Peter 2026-11-10): a girl cat with a scratchy, smoky witch voice, American accent only, made by Kokoro.
+# Voice only: Simba is not a brain Voice Desk talks to ("hello Simba" wakes nothing, so she is not in
+# whisper_prompt), and nothing in Voice Desk makes her speak; this block is her voice, ready for whatever does.
+# voice  = an American female Kokoro voice (af_...), E key; effect = smoky / raspy / plain, F key.
+# Jarvis's numbered samples: 1 nicole smoky, 2 nicole raspy, 3 kore smoky, 4 kore raspy, 5 river smoky,
+# 6 river raspy, 7 jessica smoky, 8 jessica raspy, 9 nova smoky, 10 nova raspy (simba_tts.SAMPLES).
+[agents.simba]
+target = "simba"
+display = "Simba"
+names = ["simba"]
+voice = "af_nicole"                  # sample 1, a placeholder until Peter picks his sample
+effect = "smoky"
+voice_zh = "zh-TW-HsiaoYuNeural"     # Kokoro speaks English only; her Mandarin lines use this Taiwan Edge voice
+# Voice Desk speaks her English lines through: <command> <text file> <out.wav> <voice> <effect>
+command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python", "~/GitHub/Voice_Desk/simba_tts.py"]
+fallback = "en-US-MichelleNeural"    # only if Kokoro fails, so the line never goes silent (no effect on it)
 
 [agents.jarvis]
 profile = "orchestrator"

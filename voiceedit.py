@@ -30,7 +30,7 @@ import agents
 import settings as S
 import voicecfg
 
-FIELDS = ("voice", "voice_zh", "voices_extra", "voice_override")
+FIELDS = ("voice", "voice_zh", "voices_extra", "voice_override", "effect")
 _EDGE = re.compile(r"^([a-z]{2,3})-[A-Z]{2}-[A-Za-z]+Neural$")
 _BARE = re.compile(r"^[A-Za-z][A-Za-z0-9_.\-]{1,63}$")
 _LANG = re.compile(r"^[a-z]{2,3}$")
@@ -41,9 +41,37 @@ class EditError(ValueError):
     """The change was refused before anything was written."""
 
 
+def uses_simba_script(agent: agents.Agent) -> bool:
+    """The agent's English lines are made by simba_tts.py (Kokoro + effect): its voice must be one that script
+    speaks (American female Kokoro) and it has an effect setting."""
+    return any(Path(c).name == "simba_tts.py" for c in agent.command)
+
+
+def _kokoro_name(v: Optional[str]) -> str:
+    """'alloy' and 'af_alloy' are the same Kokoro voice (Esther's file says the short name)."""
+    v = (v or "").strip().lower()
+    return v.split("_", 1)[1] if re.fullmatch(r"[a-z]{2}_[a-z]+", v) else v
+
+
 # ---- validating what Peter types ----------------------------------------------------------------
 def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
     """Return the cleaned value or raise EditError with a sentence Peter can read."""
+    if field_name == "effect":
+        import simba_tts
+        v = str(value or "").strip().lower()
+        if not uses_simba_script(agent):
+            raise EditError(f"{agent.display} has no voice effect (only a voice made by simba_tts.py has one).")
+        problem = simba_tts.effect_problem(v)
+        if problem:
+            raise EditError(problem)
+        return v
+    if field_name == "voice" and uses_simba_script(agent):        # Peter 2026-11-10: American accent only, a girl cat
+        import simba_tts
+        v = simba_tts.clean_voice(str(value or ""))
+        problem = simba_tts.voice_problem(v)
+        if problem:
+            raise EditError(problem)
+        return v
     if field_name in ("voice", "voice_zh"):
         v = str(value or "").strip()
         m = _EDGE.match(v)
@@ -96,8 +124,9 @@ def parse_extra(text: str) -> dict:
 def editable(agent: agents.Agent) -> bool:
     """Only voices something already reads live can be changed from the panel: Hermes agents (their
     config.yaml and Voice Desk), Claude (voice-defaults.conf), Gemini (its hook's voice-defaults.conf, and
-    Voice Desk) and Codex (only Voice Desk speaks for it; it reads agents.toml before every line)."""
-    return bool(agent.profile) or agent.target in ("claude", "gemini", "codex")
+    Voice Desk), Codex (only Voice Desk speaks for it; it reads agents.toml before every line) and Simba
+    (her lines are made by simba_tts.py from agents.toml, read before every line)."""
+    return bool(agent.profile) or agent.target in ("claude", "gemini", "codex") or uses_simba_script(agent)
 
 
 # ---- editing agents.toml line by line -------------------------------------------------------------
@@ -255,7 +284,7 @@ def describe(entry: dict) -> str:
         return (f"{when}  {verb}{entry['display']} {entry['what']}: "
                 f"{entry['old_label']} → {entry['new_label']}{mark}")
     what = {"voice": "English voice", "voice_zh": "Mandarin voice", "voices_extra": "extra languages",
-            "voice_override": "language override"}.get(entry["field"], entry["field"])
+            "voice_override": "language override", "effect": "voice effect"}.get(entry["field"], entry["field"])
     verb = "undo: " if entry.get("kind") == "undo" else ""
     mark = "" if entry.get("ok", True) else "  (failed, nothing changed)"
     return f"{when}  {verb}{entry['display']} {what}: {_short(entry['old'])} → {_short(entry['new'])}{mark}"
@@ -329,8 +358,13 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
             new = None                                  # taking a setting away again (undo, or clearing the extras)
         else:
             new = check_voice(field_name, new, agent)
+        if field_name == "voice" and uses_simba_script(agent) and new is not None:
+            taken = next((a.display for a in agents.agents(cfg)
+                          if a.key != agent_key and _kokoro_name(a.voice) == _kokoro_name(new)), None)
+            if taken:                                   # Peter: a voice of her own, not one he already hears
+                raise EditError(f"{new} is already {taken}'s voice; {agent.display} needs one of her own.")
         old = {"voice": agent.voice, "voice_zh": agent.voice_zh, "voices_extra": agent.voices_extra or None,
-               "voice_override": agent.raw.get("voice_override")}[field_name]
+               "voice_override": agent.raw.get("voice_override"), "effect": agent.effect}[field_name]
         if old == new or (field_name == "voice_override" and old is None and new == "auto"):
             return Result(True, f"{agent.display}: already {_short(new)}, nothing to change")
         new_text = set_field(old_text, agent_key, field_name, new)
@@ -377,9 +411,12 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
     _append_history(paths, entry)
     where = (f"{len(files)} Hermes/Claude/Gemini file(s) updated and read back" if files
              else "saved in agents.toml, where Voice Desk reads it (Codex speaks only through Voice Desk)"
-             if agent.target == "codex" else "saved in agents.toml (no Hermes or Claude file holds this setting)")
+             if agent.target == "codex"
+             else f"saved in agents.toml, where Voice Desk reads it ({agent.display}'s lines are made by simba_tts.py)"
+             if uses_simba_script(agent) else "saved in agents.toml (no Hermes or Claude file holds this setting)")
     tail = (" Voice Desk speaks it from the next line; Hermes agents use it from their next session."
-            if field_name in ("voice", "voice_zh") else " Stored for later: nothing enforces it yet.")
+            if field_name in ("voice", "voice_zh") else " Voice Desk uses it from the next line."
+            if field_name == "effect" else " Stored for later: nothing enforces it yet.")
     return Result(True, f"{agent.display} {field_name}: {_short(old)} → {_short(new)}; {where}.{tail}", entry,
                   [f["path"] for f in files])
 

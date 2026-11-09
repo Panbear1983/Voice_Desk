@@ -44,6 +44,7 @@ class Voice(NamedTuple):
     source: str                      # "agents" (agents.toml), "fallback" or "shared"
     command: tuple[str, ...] = ()    # non-Edge voice: English lines are made by this script
     fallback: Optional[str] = None   # Edge voice if that script fails
+    effect: Optional[str] = None     # passed to that script after the voice (Simba's smoky / raspy / plain)
 
 
 def is_edge(voice: Optional[str]) -> bool:
@@ -124,7 +125,7 @@ def voice_for(target: str) -> Voice:
     if is_edge(a.voice):
         return Voice(a.voice, a.voice_zh or zh_for(a.voice), "agents")
     if a.command:
-        return Voice(a.voice, a.voice_zh or zh_for(a.fallback or ""), "agents", a.command, a.fallback)
+        return Voice(a.voice, a.voice_zh or zh_for(a.fallback or ""), "agents", a.command, a.fallback, a.effect)
     if a.fallback:
         return Voice(a.fallback, a.voice_zh or zh_for(a.fallback), "fallback")
     return shared_voice()

@@ -30,11 +30,13 @@ def report(name: str, passed: bool, detail: str = "") -> None:
     print(f"[{'PASS' if passed else 'FAIL'}] {name}" + (f"  {detail}" if detail and not passed else ""))
 
 
-# Original agents and settings, plus the optional Codex entry added 2026-10-24.
+# Original agents and settings, plus the optional Codex entry added 2026-10-24 and Simba's voice-only entry
+# (2026-11-10, step 6: a name for the record, not a wake word; brain.name_aliases skips targets that are no brain).
 DAY_ONE_NAMES = {
     "claude": ("Claude", ("claude", "claud", "clod", "claude code", "克勞德", "克劳德")),
     "gemini": ("Gemini", ("gemini", "jemini", "google gemini")),
     "codex": ("Codex", ("codex", "code x", "openai codex")),
+    "simba": ("Simba", ("simba",)),
     "hermes:orchestrator": ("Jarvis", ("jarvis", "javis", "jaarvis", "javas", "jervis", "jarvas", "orchestrator")),
     "hermes:assistant": ("Kylie", ("kylie", "kiley", "kylee", "kyley", "kailey", "kaylee", "kayley", "kaley",
                                    "kyli", "kylie's", "assistant")),

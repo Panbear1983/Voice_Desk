@@ -110,8 +110,8 @@ def _edge_direct(txt: Path, out: Path, voice: str) -> bool:
 
 def _real_synth(txt: Path, out: Path, voice: str, agent: agents.Agent, lang: str) -> Optional[str]:
     """Make the file; return None on failure, else which path made it ('voice' or 'backup')."""
-    if lang == "en" and agent.command and not tts.voices.is_edge(voice):          # Esther: her own Kokoro script
-        if tts._script(agent.command, txt, out, voice):
+    if lang == "en" and agent.command and not tts.voices.is_edge(voice):          # Esther / Simba: their own Kokoro script
+        if tts._script(agent.command, txt, out, voice, effect=agent.effect):
             return "voice"
         return "backup" if agent.fallback and _edge_direct(txt, out, agent.fallback) else None
     return "voice" if _edge_direct(txt, out, voice) else None

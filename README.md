@@ -409,6 +409,10 @@ profile was hand-edited away from `agents.toml`.
 Esther keeps her own Kokoro voice everywhere: Voice Desk speaks her lines through her script
 (`command` in her block), with an Edge voice (`fallback`) only if Kokoro fails.
 
+Simba (a girl cat, 2026-11-10) has a voice entry only: `simba_tts.py` makes her lines with an American
+female Kokoro voice (`voice`) and a scratchy effect on top (`effect`: `smoky`, `raspy` or `plain`),
+both changed on the grid with E and F. She is not a brain, so "hello Simba" wakes nothing.
+
 Everything else adjustable is a plain constant in `settings.py`:
 
 | Setting | Default | Change it to… |

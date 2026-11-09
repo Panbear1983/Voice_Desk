@@ -27,6 +27,7 @@ class Agent:
     speed: Optional[float] = None
     command: tuple[str, ...] = ()    # a non-Edge voice is spoken through this script
     fallback: Optional[str] = None   # Edge voice used if that script fails
+    effect: Optional[str] = None     # the script's sound effect, passed after the voice (Simba: smoky / raspy / plain)
     knobs: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
     voices_extra: dict = field(default_factory=dict)    # more languages: {"ja": "ja-JP-NanamiNeural"}
@@ -49,6 +50,7 @@ def _agent(key: str, raw: dict) -> Agent:
         key=key, target=target, display=raw["display"], names=tuple(raw.get("names", ())),
         voice=raw.get("voice"), voice_zh=raw.get("voice_zh"), speed=raw.get("speed"),
         command=tuple(os.path.expanduser(c) for c in raw.get("command", ())), fallback=raw.get("fallback"),
+        effect=raw.get("effect"),
         knobs={k: raw[k] for k in KNOBS if k in raw}, raw=raw,
         voices_extra=dict(raw.get("voices_extra") or {}), voice_override=str(raw.get("voice_override") or "auto"),
         quiet_hours=dict(raw.get("quiet_hours") or {}),

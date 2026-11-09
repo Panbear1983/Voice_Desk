@@ -44,6 +44,9 @@ PLACE_NAME = dict(PLACES)
 HERMES, CLAUDE, GEMINI, CODEX, OTHER = "hermes", "claude", "gemini", "codex", "other"
 _ORDER = {HERMES: 0, CLAUDE: 1, GEMINI: 2, CODEX: 3, OTHER: 4}
 SKIP_PROFILES = {"builder"}                      # Peter: the grid is for the voices he talks to, not Builder
+# An agent that is not a brain Voice Desk talks to (Simba, 2026-11-10): agents.toml holds only her voice, ready for
+# whatever makes her speak later; no place on the grid has a switch for her.
+VOICE_ONLY_NOTE = "voice only: Voice Desk holds this agent's voice, nothing here makes it speak"
 
 _VOICE_MODE_TO_CELL = {"off": OFF, "voice_only": VOICE_BACK, "all": ALWAYS}
 CELL_TO_VOICE_MODE = {v: k for k, v in _VOICE_MODE_TO_CELL.items()}
@@ -223,10 +226,14 @@ def terminal_cell(a: agents.Agent, p: Paths) -> Cell:
                                       f"; the off-switch file ({GEMINI_SWITCH_NAME}) is prepared, the hook reads it from step 4"))
     if kind == CODEX:
         return Cell(NA, "Codex has no speech hook of its own; it speaks only through Voice Desk")
+    if kind == OTHER:
+        return Cell(NA, VOICE_ONLY_NOTE)
     return Cell(UNKNOWN, "unknown kind of agent")
 
 
 def tg_dm_cell(a: agents.Agent, p: Paths) -> Cell:
+    if kind_of(a) == OTHER:
+        return Cell(NA, VOICE_ONLY_NOTE)
     if kind_of(a) != HERMES:
         return Cell(NA, "no Telegram for this agent")
     key = f"{a.profile}:telegram:{p.tg_dm_chat}"
@@ -248,6 +255,8 @@ def tg_dm_cell(a: agents.Agent, p: Paths) -> Cell:
 
 
 def tg_group_cell(a: agents.Agent, p: Paths) -> Cell:
+    if kind_of(a) == OTHER:
+        return Cell(NA, VOICE_ONLY_NOTE)
     if kind_of(a) != HERMES:
         return Cell(NA, "no Telegram for this agent")
     data = _read_json(p.mirror_config)
@@ -264,6 +273,8 @@ def tg_group_cell(a: agents.Agent, p: Paths) -> Cell:
 
 
 def mic_cell(a: agents.Agent, p: Paths) -> Cell:
+    if kind_of(a) == OTHER:                                             # not a brain: "hello Simba" wakes nothing
+        return Cell(NA, VOICE_ONLY_NOTE)
     per_profile = not (p.state / "voices_per_profile").exists()          # exists = everyone uses the shared voice
     own = kind_of(a) == HERMES and per_profile
     shared = "" if own or kind_of(a) != HERMES else " — own voices are off, so it speaks with the shared voice"
@@ -272,6 +283,8 @@ def mic_cell(a: agents.Agent, p: Paths) -> Cell:
 
 
 def iphone_cell(a: agents.Agent, p: Paths) -> Cell:
+    if kind_of(a) == OTHER:
+        return Cell(NA, VOICE_ONLY_NOTE)
     shortcut = p.repo / f"Talk to {a.display}.shortcut"        # only the NAME is looked at, never its contents
     note = "the Mac sends text; Siri reads it in Siri's own voice"
     if not shortcut.exists() and not (kind_of(a) == HERMES and (p.repo / "Talk to Orchestrator.shortcut").exists()):
@@ -296,6 +309,7 @@ class VoiceInfo:
     override: str
     backup: str
     using_shared: bool               # the V key is off, so the mic window ignores this agent's own voice
+    effect: Optional[str] = None     # Simba's sound effect on top of her Kokoro voice (F key)
 
 
 def voice_info(a: agents.Agent, cfg: dict) -> VoiceInfo:
@@ -305,7 +319,7 @@ def voice_info(a: agents.Agent, cfg: dict) -> VoiceInfo:
     zh = a.voice_zh or shared.get("voice_zh") or voices.zh_for(en)
     backup = a.fallback or shared.get("voice", S.TTS_VOICE_EN)
     return VoiceInfo(en, zh, dict(a.voices_extra), a.voice_override, backup,
-                     bool(a.voice) and not voices.per_profile_enabled())
+                     bool(a.voice) and not voices.per_profile_enabled(), a.effect)
 
 
 QUIET_PLACES = set(PLACE_KEYS)
