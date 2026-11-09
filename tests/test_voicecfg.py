@@ -587,6 +587,45 @@ def test_dashboard_panel() -> None:
            "drift" in drifted.lower() and "Kylie" in drifted and "voicecfg" in drifted, drifted)
 
 
+def test_unmanaged_block_list() -> None:
+    """Esther's live end phrases are a multi-line list (and lack "stop"). voicecfg reads it, never writes it."""
+    import agents
+    import voicecfg as V
+    cfg = agents.load()
+    profiles, conf = make_fixtures()
+    e = profiles / "tax_angel_esther" / "config.yaml"
+    block = "\n".join(["  stop_phrases:", "    - that's all", '    - "that’s all"', "    - no further questions  # tail"])
+    e.write_text(e.read_text().replace(f"  stop_phrases: {_STOP}", block))
+    j = profiles / "orchestrator" / "config.yaml"
+    j.write_text(j.read_text().replace("silence_threshold: 450", "silence_threshold: 300"))   # a real drift beside it
+    before = {p: (p / "config.yaml").read_text() for p in profiles.iterdir()}
+    items = V.collect(cfg, profiles, conf)
+    it = next(i for i in items if (i.where, i.key) == ("esther", "voice.stop_phrases"))
+    report("block list: read as a list, marked 'multi-line list, not managed'",
+           it.have == ["that's all", "that’s all", "no further questions"] and bool(it.unmanaged) and it.line is not None, str(it))
+    report("block list: it is not drift (and not 'missing')", it not in V.drift(items) and V.unmanaged(items) == [it])
+    if HERMES_PY.exists():
+        report("block list: voicecfg's reading agrees with Hermes' loader",
+               V.same(it.key, V.dig(V.hermes_readback(e), it.key), it.have))
+    rc, out = _cli(["check", "--profiles", str(profiles), "--claude-conf", str(conf)])
+    report("block list: check says so and still reports the real drift",
+           rc == 1 and "multi-line list, not managed" in out and "silence_threshold" in out and "1 differences" in out, out)
+    rc, out = _cli(["sync", "--dry-run", "--profiles", str(profiles), "--claude-conf", str(conf)])
+    report("block list: sync --dry-run leaves it out of the diff and says it is left alone",
+           rc == 0 and "left alone" in out and "stop_phrases" in out and "1 files would change" in out
+           and "--- " in out and out.count("--- ") == 1 and "orchestrator" in out.split("+++")[0], out)
+    bdir = Path(tempfile.mkdtemp(prefix="vd-bak-"))
+    rc, out = _cli(["sync", "--apply", "--profiles", str(profiles), "--claude-conf", str(conf), "--backup-dir", str(bdir)])
+    report("block list: sync --apply fixes the real drift, never writes Esther, no errors",
+           rc == 0 and "ERROR" not in out and "wrote" in out and not (bdir / "tax_angel_esther-config.yaml").exists()
+           and e.read_text() == before[e.parent], out)
+    after = V.collect(cfg, profiles, conf)
+    report("block list: afterwards zero drift, Esther's file byte-for-byte as before",
+           V.drift(after) == [] and e.read_text() == before[e.parent])
+    rc, out = _cli(["sync", "--apply", "--profiles", str(profiles), "--claude-conf", str(conf), "--backup-dir", str(bdir)])
+    report("block list: a second --apply has nothing to do", rc == 0 and out.startswith("No changes"), out)
+
+
 if __name__ == "__main__":
     test_agents_toml_day_one()
     test_settings_read_agents_toml()
@@ -594,6 +633,7 @@ if __name__ == "__main__":
     test_esther_speaks_through_kokoro()
     test_end_phrases()
     test_check()
+    test_unmanaged_block_list()
     test_sync()
     test_sync_claude()
     test_dashboard_panel()

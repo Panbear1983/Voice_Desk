@@ -208,6 +208,23 @@ class Item:
     insert_after: Optional[int] = None
     insert_indent: int = 0
     problem: str = ""               # set when the key can be neither read nor placed
+    unmanaged: str = ""             # set when the live value is a shape we only read, never write (block list)
+
+
+def _block_list(text: str, entry: Entry) -> Optional[list]:
+    """The items of a multi-line (`- item` per line) list under `entry`, or None if it is not one."""
+    items: list = []
+    for raw in text.splitlines()[entry.line + 1:]:
+        body = raw.strip()
+        if not body or body.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" \t"))
+        if indent < entry.indent or (indent == entry.indent and not body.startswith("- ")):
+            break
+        if not (body.startswith("- ") or body == "-"):
+            return None
+        items.append(parse_value(_split_comment(body[1:].strip())[0]))
+    return items or None
 
 
 def _yaml_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
@@ -231,6 +248,11 @@ def _yaml_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
     items = []
     for key, value in want:
         if key in e:
+            if e[key].value == "" and (blk := _block_list(text, e[key])) is not None:
+                # a multi-line list: read it, never write it (a one-line rewrite would break the file)
+                items.append(Item(a.key, label, path, "yaml", key, blk, value, line=e[key].line,
+                                  unmanaged="multi-line list, not managed"))
+                continue
             items.append(Item(a.key, label, path, "yaml", key, parse_value(e[key].value), value, line=e[key].line))
             continue
         parent = key.rsplit(".", 1)[0]
@@ -289,7 +311,12 @@ def collect(cfg: dict, profiles: Path = PROFILES, claude_conf: Path = CLAUDE_CON
 
 
 def drift(items: list[Item]) -> list[Item]:
-    return [i for i in items if i.problem or not same(i.key, i.have, i.want)]
+    return [i for i in items if not i.unmanaged and (i.problem or not same(i.key, i.have, i.want))]
+
+
+def unmanaged(items: list[Item]) -> list[Item]:
+    """Settings written in a shape voicecfg only reads (check/sync never touch them)."""
+    return [i for i in items if i.unmanaged]
 
 
 # ---- writing ------------------------------------------------------------------------------------
@@ -426,6 +453,11 @@ def describe(i: Item) -> str:
     return f"  {i.label}  {i.key} ({where}): is {_show(i.have)}, agents.toml says {_show(i.want)}"
 
 
+def describe_unmanaged(i: Item) -> str:
+    n = len(i.have) if isinstance(i.have, list) else "?"
+    return f"  {i.label}  {i.key} (line {(i.line or 0) + 1}): {i.unmanaged} ({n} items), left alone"
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m voicecfg",
                                  description="Keep every agent's voice settings in step with agents.toml.")
@@ -443,14 +475,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     items = collect(cfg, args.profiles, args.claude_conf)
     files = sorted({str(i.path) for i in items})
     off = drift(items)
+    skipped = unmanaged(items)
+
+    def note_unmanaged() -> None:
+        for i in skipped:
+            print(describe_unmanaged(i))
 
     if args.command == "check":
         if not off:
-            print(f"No drift: {len(items)} voice settings in {len(files)} files match agents.toml.")
+            print(f"No drift: {len(items) - len(skipped)} voice settings in {len(files)} files match agents.toml.")
+            note_unmanaged()
             return 0
         print("Differences between agents.toml and the live settings:")
         for i in off:
             print(describe(i))
+        note_unmanaged()
         print(f"{len(off)} differences. `python -m voicecfg sync --dry-run` shows the fix.")
         return 1
 
@@ -458,13 +497,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     problems = [i for i in off if i.problem]
     if not args.apply:
         if not changes and not problems:
-            print(f"No changes: {len(items)} voice settings in {len(files)} files already match agents.toml.")
+            print(f"No changes: {len(items) - len(skipped)} voice settings in {len(files)} files already match agents.toml.")
+            note_unmanaged()
             return 0
         for path, (old, new) in changes.items():
             sys.stdout.writelines(difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
                                                        str(path), f"{path} (after sync)", n=1))
         for i in problems:
             print("cannot sync:" + describe(i))
+        note_unmanaged()
         print(f"{len(changes)} files would change. Run `python -m voicecfg sync --apply` to write them (backups first).")
         return 0 if not problems else 1
     done, errors = apply(items, args.backup_dir)
@@ -474,6 +515,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"ERROR {e}")
     if not done and not errors:
         print("No changes: everything already matches agents.toml.")
+    note_unmanaged()
     if done:
         print("Hermes reads voice settings when a session starts: reopen the agent's window (and restart "
               "the Telegram gateway from a separate terminal) to hear a changed voice.")
