@@ -45,6 +45,7 @@ class Voice(NamedTuple):
     command: tuple[str, ...] = ()    # non-Edge voice: English lines are made by this script
     fallback: Optional[str] = None   # Edge voice if that script fails
     effect: Optional[str] = None     # passed to that script after the voice (Simba's effect recipe, e.g. "16")
+    # zh == "" means English only (agents.toml english_only = true, Simba): a line with Chinese in it stays silent
 
 
 def is_edge(voice: Optional[str]) -> bool:
@@ -125,7 +126,8 @@ def voice_for(target: str) -> Voice:
     if is_edge(a.voice):
         return Voice(a.voice, a.voice_zh or zh_for(a.voice), "agents")
     if a.command:
-        return Voice(a.voice, a.voice_zh or zh_for(a.fallback or ""), "agents", a.command, a.fallback, a.effect)
+        zh = "" if a.english_only else a.voice_zh or zh_for(a.fallback or "")
+        return Voice(a.voice, zh, "agents", a.command, a.fallback, a.effect)
     if a.fallback:
         return Voice(a.fallback, a.voice_zh or zh_for(a.fallback), "fallback")
     return shared_voice()
@@ -141,4 +143,4 @@ def short(v: Voice) -> str:
     def nm(x: str) -> str:
         m = re.match(r"^[a-z]{2}-[A-Z]{2}-([A-Za-z]+?)(Multilingual)?Neural$", x)
         return m.group(1) if m else x
-    return f"{'Kokoro ' if v.command else ''}{nm(v.en)} · {nm(v.zh)}"
+    return f"{'Kokoro ' if v.command else ''}{nm(v.en)} · {nm(v.zh) if v.zh else 'English only'}"

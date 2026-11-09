@@ -7,9 +7,11 @@ to make them. Called by Voice Desk exactly like Esther's script:
 
     simba_tts.py <text file> <out file> <voice> [effect]
 
-The out file's ending picks the format: .wav (the Mac's player), .mp3, or .ogg (Telegram voice bubble).
-Exit 0 = the file is written; 2 = a voice or effect this script does not make (nothing written); 1 = Kokoro
-or ffmpeg failed (Voice Desk then speaks the line with the agent's Edge backup voice).
+The out file's ending picks the format: .wav (the Mac's player), .mp3, or .ogg (Telegram voice bubble: Simba's
+listener in ~/GitHub/panbear-daily sends her Team_Room replies as voice notes made this way).
+Exit 0 = the file is written; 2 = a voice or effect this script does not make, or a line that is not English
+(nothing written: Simba speaks English only); 1 = Kokoro or ffmpeg failed (Voice Desk then speaks the line with the
+agent's Edge backup voice).
 
 The effect is a short recipe, written the way Peter picks samples:
 
@@ -51,6 +53,11 @@ FFMPEG = os.environ.get("SIMBA_FFMPEG", "/opt/homebrew/bin/ffmpeg")
 LANG = "en-us"                     # American pronunciation, whatever the voice
 DEFAULT_EFFECT = "fenrir16"
 ECHO = "aecho=0.8:0.6:60|110:0.3|0.2"      # sample 30's cave echo
+# Simba speaks English ONLY (Peter 2026-11-10): text with any Chinese, Japanese or Korean in it is refused (exit 2),
+# so nothing that would speak Chinese for her ever makes a sound. Same ranges as Voice Desk's tts._CJK, plus kana,
+# Hangul and the CJK extension blocks.
+NOT_ENGLISH = re.compile(r"[\u2e80-\u2fff\u3000-\u30ff\u3100-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af"
+                         r"\uf900-\ufaff\uff00-\uffef\U00020000-\U0003ffff]")
 
 # The American voices in voices-v1.0.bin (read from the file 2026-11-10): af_ female, am_ male. Peter:
 # American accent only, so British (bf_/bm_) and other languages are refused. Sample 16 is am_fenrir.
@@ -349,6 +356,9 @@ def make(text: str, out: Path, voice: str, effect: str = DEFAULT_EFFECT) -> int:
         return 2
     if not text.strip():
         print("nothing to say", file=sys.stderr)
+        return 2
+    if NOT_ENGLISH.search(text):                       # Peter 2026-11-10: Simba speaks English ONLY
+        print("Simba speaks English only: a line with Chinese (or other CJK) in it stays silent", file=sys.stderr)
         return 2
     p = recipe(effect)
     fmt = out.suffix.lower().lstrip(".")

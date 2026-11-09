@@ -413,7 +413,12 @@ Simba (a girl cat, 2026-11-10) has a voice entry only: `simba_tts.py` makes her 
 Kokoro voice (`voice`: `af_…` or `am_…`, today `am_fenrir`) and a scratchy effect on top (`effect`: a
 recipe such as `16`, `fenrir16`, `23 but slower and breathier` or `16 pitch=1.1 tremolo=0.15`; numbers
 are Jarvis's samples 1-30), both changed on the grid with E and F. She is not a brain, so "hello Simba"
-wakes nothing.
+wakes nothing. She speaks **English only** (`english_only = true`, Peter 2026-11-10): she has no Mandarin
+voice, a line with any Chinese in it stays silent (Voice Desk and `simba_tts.py` both refuse it), and the
+panel refuses a Mandarin or other-language voice for her. Her own listener (`~/GitHub/panbear-daily`,
+`simba_voice.py`) reads this entry before every Team_Room voice note it sends, so a voice changed here is
+heard there from her next note; the grid's Telegram group cell on her row shows that switch
+(`voice_notes.enabled` in panbear-daily's `simba.yaml`), read only.
 
 Everything else adjustable is a plain constant in `settings.py`:
 

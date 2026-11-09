@@ -142,8 +142,13 @@ def make_world(*, group_on: bool = True, dm_modes: dict | None = None) -> Simple
         (repo / f"Talk to {name}.shortcut").write_text("")           # only the NAME is ever looked at
     toml = root / "agents.toml"
     toml.write_text(AGENTS_TOML, encoding="utf-8")
+    simba_yaml = root / "panbear-daily/simba.yaml"                     # Simba's own settings (her voice-note switch)
+    simba_yaml.parent.mkdir()
+    simba_yaml.write_text("chip_in:\n  chat_id: \"-1\"\n# her voice in Telegram\nvoice_notes:\n  enabled: true     # on\n"
+                          "  chat_id: \"-1\"\n  max_per_day: 15\n", encoding="utf-8")
     paths = G.Paths(hermes_home=root / "hermes", profiles=profiles, claude_dir=claude, gemini_dir=gemini, state=state,
-                    mirror_config=mirror, repo=repo, receiver_port=1)           # port 1: nothing listens
+                    mirror_config=mirror, repo=repo, receiver_port=1,           # port 1: nothing listens
+                    simba_yaml=simba_yaml)
     edit = voiceedit.EditPaths(toml=toml, history=state / "voice_history.jsonl", toml_backups=state / "voice_history_backups",
                                hermes_backups=root / "profile-backups", profiles=profiles, claude_conf=claude / "voice-defaults.conf",
                                gemini_conf=gemini_conf)

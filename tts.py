@@ -70,6 +70,10 @@ def synthesize(text: str, voice: Optional[voices.Voice] = None) -> Optional[Path
     txt = tmp / "say.txt"
     txt.write_text(text, encoding="utf-8")
     out = tmp / "say.wav"
+    if not v.zh and _CJK.search(text):
+        # an English-only voice (Simba, Peter 2026-11-10: English ONLY) never speaks Chinese: it has no Mandarin
+        # voice and Kokoro's American rules would mangle it, so the line stays silent
+        return None
     if is_mandarin(text):
         got = _chain(txt, out, v.zh)
         if got:

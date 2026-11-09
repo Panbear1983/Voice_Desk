@@ -56,6 +56,12 @@ def _kokoro_name(v: Optional[str]) -> str:
 # ---- validating what Peter types ----------------------------------------------------------------
 def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
     """Return the cleaned value or raise EditError with a sentence Peter can read."""
+    if agent.english_only and (field_name in ("voice_zh", "voices_extra")
+                               or (field_name == "voice_override" and str(value or "").strip().lower()
+                                   not in ("auto", "en"))):
+        # Peter 2026-11-10 (Simba): English ONLY; a line in another language stays silent
+        raise EditError(f"{agent.display} speaks English only (english_only in agents.toml): no Mandarin or other "
+                        "language voice, and a Chinese line stays silent.")
     if field_name == "effect":
         import simba_tts
         v = simba_tts.clean_effect(str(value or ""))              # a recipe: "16", "23 but slower and breathier"

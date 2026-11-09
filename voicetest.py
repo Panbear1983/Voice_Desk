@@ -120,6 +120,8 @@ def _real_synth(txt: Path, out: Path, voice: str, agent: agents.Agent, lang: str
 def voices_to_test(agent: agents.Agent, cfg: dict) -> list[tuple[str, str]]:
     """[(language, voice name)] exactly as the agent would speak: its own, else the shared Voice Desk voice."""
     info = G.voice_info(agent, cfg)
+    if agent.english_only:                                  # Simba: English only, nothing else is tested or spoken
+        return [("en", info.en)]
     out = [("en", info.en), ("zh", info.zh)]
     out += [(code, v) for code, v in info.extra.items()]
     return out

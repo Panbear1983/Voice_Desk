@@ -44,8 +44,9 @@ PLACE_NAME = dict(PLACES)
 HERMES, CLAUDE, GEMINI, CODEX, OTHER = "hermes", "claude", "gemini", "codex", "other"
 _ORDER = {HERMES: 0, CLAUDE: 1, GEMINI: 2, CODEX: 3, OTHER: 4}
 SKIP_PROFILES = {"builder"}                      # Peter: the grid is for the voices he talks to, not Builder
-# An agent that is not a brain Voice Desk talks to (Simba, 2026-11-10): agents.toml holds only her voice, ready for
-# whatever makes her speak later; no place on the grid has a switch for her.
+# An agent that is not a brain Voice Desk talks to (Simba, 2026-11-10): agents.toml holds only her voice; no place on
+# the grid has a switch for her. Her own listener (panbear-daily simba.py) uses that voice for her Team_Room voice
+# notes, switched in its simba.yaml (voice_notes.enabled): the Telegram group cell shows that switch, read only.
 VOICE_ONLY_NOTE = "voice only: Voice Desk holds this agent's voice, nothing here makes it speak"
 
 _VOICE_MODE_TO_CELL = {"off": OFF, "voice_only": VOICE_BACK, "all": ALWAYS}
@@ -76,6 +77,7 @@ class Paths:
     repo: Path
     tg_dm_chat: str = "7512954760"
     receiver_port: int = 8765
+    simba_yaml: Optional[Path] = None            # panbear-daily's simba.yaml: her Team_Room voice-note switch
 
     @classmethod
     def default(cls) -> "Paths":
@@ -91,7 +93,8 @@ class Paths:
                 "VOICE_DESK_MIRROR_CONFIG",
                 profiles / "orchestrator/scripts/team_room/state/mirror_config.json")),
             repo=S.REPO, tg_dm_chat=os.environ.get("VOICE_DESK_TG_DM_CHAT", "7512954760"),
-            receiver_port=S.RECEIVER_PORT)
+            receiver_port=S.RECEIVER_PORT,
+            simba_yaml=Path(os.environ.get("VOICE_DESK_SIMBA_YAML", home / "GitHub/panbear-daily/simba.yaml")))
 
     @property
     def voice_mode_file(self) -> Path:           # read ONLY when the gateway starts
@@ -254,8 +257,29 @@ def tg_dm_cell(a: agents.Agent, p: Paths) -> Cell:
     return Cell(UNKNOWN, f"cannot read voice.auto_tts for {a.profile}")
 
 
+def simba_group_cell(p: Paths) -> Cell:
+    """Simba's Team_Room voice notes (2026-11-10): her listener sends her replies and chip-ins there as voice notes
+    in her Voice Desk voice while panbear-daily's simba.yaml says voice_notes.enabled: true. Shown, never switched."""
+    if p.simba_yaml is None:
+        return Cell(NA, VOICE_ONLY_NOTE)
+    try:
+        e = voicecfg.scan(Path(p.simba_yaml).read_text(encoding="utf-8"))
+    except OSError:
+        return Cell(UNKNOWN, f"cannot read {p.simba_yaml} (Simba's own settings, panbear-daily)")
+    on = "voice_notes.enabled" in e and voicecfg.parse_value(e["voice_notes.enabled"].value) is True
+    cap = voicecfg.parse_value(e["voice_notes.max_per_day"].value) if "voice_notes.max_per_day" in e else "?"
+    if on:
+        return Cell(VOICE_BACK, f"simba.yaml voice_notes.enabled: her Team_Room replies and chip-ins also go out as "
+                                f"voice notes from her own bot, in this voice, English only, at most {cap} a day "
+                                "(panbear-daily simba.py; switched there, not here)")
+    return Cell(OFF, "simba.yaml voice_notes.enabled is not true: her Team_Room replies are text only "
+                     "(panbear-daily simba.py; switched there, not here)")
+
+
 def tg_group_cell(a: agents.Agent, p: Paths) -> Cell:
     if kind_of(a) == OTHER:
+        if a.key == "simba":
+            return simba_group_cell(p)
         return Cell(NA, VOICE_ONLY_NOTE)
     if kind_of(a) != HERMES:
         return Cell(NA, "no Telegram for this agent")
@@ -316,7 +340,7 @@ def voice_info(a: agents.Agent, cfg: dict) -> VoiceInfo:
     import voices
     shared = agents.shared(cfg)
     en = a.voice or shared.get("voice", S.TTS_VOICE_EN)
-    zh = a.voice_zh or shared.get("voice_zh") or voices.zh_for(en)
+    zh = "" if a.english_only else a.voice_zh or shared.get("voice_zh") or voices.zh_for(en)
     backup = a.fallback or shared.get("voice", S.TTS_VOICE_EN)
     return VoiceInfo(en, zh, dict(a.voices_extra), a.voice_override, backup,
                      bool(a.voice) and not voices.per_profile_enabled(), a.effect)

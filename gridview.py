@@ -61,7 +61,7 @@ def test_text(results: Optional[list[voicetest.TestResult]], busy: bool) -> Text
 def voice_text(row: E.Row) -> Text:
     v = row.voice
     t = Text()
-    t.append(f"{voice_short(v.en)} · {voice_short(v.zh)}")
+    t.append(f"{voice_short(v.en)} · {voice_short(v.zh) if v.zh else 'English only'}")
     extras = f" +{len(v.extra)}" if v.extra else ""
     effect = f" · {v.effect}" if v.effect else ""
     t.append(f"\nbackup {voice_short(v.backup)}{extras}{effect}", style="#7f8c8d")
@@ -88,7 +88,8 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
     v = row.voice
     t = Text()
     t.append(f"{row.agent.display}", style="bold #9b59b6")
-    t.append(f"  English {v.en}  ·  Mandarin {v.zh}  ·  backup {v.backup}  ·  language: {v.override}")
+    mandarin = f"Mandarin {v.zh}" if v.zh else "English only (a Chinese line stays silent)"
+    t.append(f"  English {v.en}  ·  {mandarin}  ·  backup {v.backup}  ·  language: {v.override}")
     if v.effect:
         import simba_tts
         t.append(f"  ·  effect: {v.effect} = {simba_tts.describe(v.effect)} (F changes it)")
