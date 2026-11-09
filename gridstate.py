@@ -175,8 +175,12 @@ def terminal_cell(a: agents.Agent, p: Paths) -> Cell:
             return Cell(ALWAYS, "voice.auto_enable: the window starts with voice on (per window, in memory)")
         return Cell(OFF, "voice starts off in the window (voice.auto_enable is not true); /voice on turns it on per window")
     if kind == CLAUDE:
-        enabled = (_read_json(p.claude_dir / "settings.json") or {}).get("voice", {})
+        settings = _read_json(p.claude_dir / "settings.json") or {}
+        enabled = settings.get("voice", {})
         enabled = enabled.get("enabled") if isinstance(enabled, dict) else None
+        if enabled in (None, False):                  # the hooks test `(.voice.enabled // .voiceEnabled) == true`, and jq's `//` skips a false
+            legacy = settings.get("voiceEnabled")
+            enabled = legacy if legacy is not None else enabled
         always_on = _conf_value(p.claude_conf, "VOICE_ALWAYS_ON")
         problem = "" if p.claude_hook.exists() else "speak-response.sh hook is missing"
         if enabled is True:
@@ -225,10 +229,11 @@ def tg_group_cell(a: agents.Agent, p: Paths) -> Cell:
 
 
 def mic_cell(a: agents.Agent, p: Paths) -> Cell:
-    from voices import per_profile_enabled
-    own = kind_of(a) == HERMES and per_profile_enabled()
-    shared = "" if own or kind_of(a) != HERMES else " — V key is off, so it speaks with the shared voice"
-    return Cell(VOICE_BACK, "Voice Desk answers aloud when Peter speaks to it" + shared)
+    per_profile = not (p.state / "voices_per_profile").exists()          # exists = everyone uses the shared voice
+    own = kind_of(a) == HERMES and per_profile
+    shared = "" if own or kind_of(a) != HERMES else " — own voices are off, so it speaks with the shared voice"
+    queue = " — speech queue is off (windows play straight)" if (p.speech_dir / "off").exists() else ""
+    return Cell(VOICE_BACK, "Voice Desk answers aloud when Peter speaks to it" + shared + queue)
 
 
 def iphone_cell(a: agents.Agent, p: Paths) -> Cell:

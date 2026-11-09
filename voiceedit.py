@@ -245,6 +245,11 @@ def _short(v: Any) -> str:
 
 def describe(entry: dict) -> str:
     when = _dt.datetime.fromtimestamp(entry["ts"]).strftime("%d %b %H:%M")
+    if str(entry.get("field", "")).startswith("switch:"):                 # an on/off switch (onoff.py)
+        verb = "undo: " if entry.get("kind") == "undo" else ""
+        mark = "" if entry.get("ok", True) else "  (failed, nothing changed)"
+        return (f"{when}  {verb}{entry['display']} {entry['what']}: "
+                f"{entry['old_label']} → {entry['new_label']}{mark}")
     what = {"voice": "English voice", "voice_zh": "Mandarin voice", "voices_extra": "extra languages",
             "voice_override": "language override"}.get(entry["field"], entry["field"])
     verb = "undo: " if entry.get("kind") == "undo" else ""
@@ -261,7 +266,7 @@ def last_undoable(paths: EditPaths) -> Optional[dict]:
     entries = read_history(paths)
     undone = {e.get("undoes") for e in entries if e.get("kind") == "undo" and e.get("ok", True)}
     for e in reversed(entries):
-        if e.get("kind", "change") == "change" and e.get("ok", True) and e.get("id") not in undone:
+        if e.get("kind", "change") in ("change", "switch") and e.get("ok", True) and e.get("id") not in undone:
             return e
     return None
 
@@ -370,12 +375,16 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
                   [f["path"] for f in files])
 
 
-def undo(paths: Optional[EditPaths] = None) -> Result:
-    """Run the last change backwards (same backup, same read-back). One key in the panel."""
+def undo(paths: Optional[EditPaths] = None, grid_paths: Any = None) -> Result:
+    """Run the last change backwards (same backup, same read-back). One key in the panel. A voice change and
+    an on/off switch (onoff.py) share one history, so U undoes whichever was newest."""
     paths = paths or EditPaths.default()
     last = last_undoable(paths)
     if last is None:
         return Result(False, "nothing to undo")
+    if last.get("kind") == "switch":
+        import onoff                                            # imports this module, so only here
+        return onoff.undo(last, paths, grid_paths)
     res = change(last["agent"], last["field"], last["old"], paths, kind="undo", undoes=last["id"])
     if res.ok and res.entry:
         res.message = "Undone: " + res.message

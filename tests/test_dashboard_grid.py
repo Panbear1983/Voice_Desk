@@ -4,6 +4,7 @@ world from gridfix, with the background reading switched off so the test decides
     .venv/bin/python -m unittest tests.test_dashboard_grid -v
 """
 import asyncio
+import json
 import sys
 import time
 import unittest
@@ -23,7 +24,7 @@ import syshealth  # noqa: E402
 import voicecfg  # noqa: E402
 import voiceedit  # noqa: E402
 import voicetest  # noqa: E402
-from textual.widgets import DataTable, Input, Static  # noqa: E402
+from textual.widgets import DataTable, Input, OptionList, Static  # noqa: E402
 
 FAKE_LIGHTS = [syshealth.Light(True, "voice engine OK"), syshealth.Light(True, "Hermes gateway up"),
                syshealth.Light(False, "speech queue off"), syshealth.Light(True, "Hermes fixes present (2/2)"),
@@ -241,6 +242,119 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             self.assertIn("thinking", text_of(app, "#light"))
             self.assertIn("Jarvis", text_of(app, "#who"))
         S.LISTENER_STATUS.unlink(missing_ok=True)
+
+
+class TheOnOffCells(unittest.IsolatedAsyncioTestCase):
+    """Enter on a cell switches it (step 2). Fake world only: no real file, window or speaker is touched."""
+
+    def setUp(self):
+        service.set_muted(False)
+        service.take_orders()
+        self.w = F.make_world()
+        self.w.paths.mirror_config.write_text(json.dumps({"chat_id": "-1", "enabled": True, "voice_notes": {
+            "on": True, "agents": ["orchestrator", "assistant", "tax_angel_esther", "wanna-buffet"]}}, indent=1, sort_keys=True))
+
+    def group_agents(self):
+        return json.loads(self.w.paths.mirror_config.read_text())["voice_notes"]["agents"]
+
+    async def test_enter_on_kylies_group_cell_opens_a_chooser_and_off_switches_her_off_then_u_undoes_it(self):
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("down", "right", "right", "right", "right")      # Kylie, Telegram group column
+            await pilot.pause()
+            self.assertIn("Enter changes it", text_of(app, "#detail"))
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            options = app.screen.query_one(OptionList)
+            self.assertEqual([o.id for o in options._options], ["off", "always"])
+            self.assertEqual(options.highlighted, 1, "the chooser starts on the current value (Always)")
+            await pilot.press("up", "enter")
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            await pilot.pause()
+            self.assertNotIn("assistant", self.group_agents())
+            self.assertIn("orchestrator", self.group_agents())
+            self.assertIn("✓", text_of(app, "#msg"))
+            self.assertIn("Kylie Telegram group voice notes: Always → Off", text_of(app, "#history"))
+            self.assertIsInstance(app.screen, D.GridScreen)
+            await pilot.press("u")
+            self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 2))
+            await pilot.pause()
+            self.assertIn("assistant", self.group_agents())
+            self.assertIn("undo", text_of(app, "#history"))
+
+    async def test_escape_in_the_chooser_changes_nothing(self):
+        app = make_app(self.w)
+        before = self.w.paths.mirror_config.read_text()
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("right", "right", "right", "right", "enter")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.GridScreen)
+        self.assertEqual(self.w.paths.mirror_config.read_text(), before)
+        self.assertEqual(voiceedit.read_history(self.w.edit), [])
+
+    async def test_a_read_only_cell_says_why_and_opens_nothing(self):
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("down", "right", "right", "right", "enter")      # Kylie, Telegram direct chat
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.GridScreen)
+            self.assertIn("step 3", text_of(app, "#msg"))
+            await pilot.press("down", "down", "down", "down", "left", "enter")   # Gemini, terminal window
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.GridScreen)
+            self.assertIn("Gemini", text_of(app, "#msg"))
+
+    async def test_claude_terminal_cell_switches_voice_off_and_the_grid_shows_it(self):
+        self.w.paths.claude_dir.joinpath("settings.json").write_text(
+            json.dumps({"voice": {"enabled": True, "mode": "tap"}, "voiceEnabled": True}, indent=2) + "\n")
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("down", "down", "down", "down", "right", "right", "enter")   # Claude, terminal window
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            await pilot.press("up", "enter")
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            await pilot.pause()
+            self.assertIs(json.loads((self.w.paths.claude_dir / "settings.json").read_text())["voice"]["enabled"], False)
+            self.assertTrue(await wait_for(lambda: True))
+            rows, lights = await asyncio.to_thread(app.collect)
+            self.assertEqual({r.agent.key: r.cells["terminal"].value for r in rows}["claude"], "off")
+
+    async def test_the_mic_cell_offers_the_two_voice_desk_switches(self):
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("right", "right", "right", "right", "right", "enter")   # Jarvis, mic window / phone
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            options = app.screen.query_one(OptionList)
+            self.assertEqual([o.id for o in options._options], ["own_voices:off", "queue:off"])
+            await pilot.press("down", "enter")
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            self.assertTrue((self.w.paths.speech_dir / "off").exists())
+
+    async def test_enter_on_the_voice_column_edits_the_voice_and_on_the_voice_check_column_tests(self):
+        app = make_app(self.w)
+        asked = []
+        with mock.patch.object(voicetest, "run", lambda agent, cfg: asked.append(agent.key) or []), \
+                mock.patch.object(voicetest, "save"), mock.patch.object(voicetest, "load", return_value={}):
+            async with app.run_test(size=(180, 50)) as pilot:
+                await load(app, pilot)
+                await pilot.press("right", "enter")
+                await pilot.pause()
+                self.assertIsInstance(app.screen, D.AskScreen)
+                await pilot.press("escape")
+                await pilot.press("right", "right", "right", "right", "right", "right", "enter")
+                self.assertTrue(await wait_for(lambda: asked))
+                self.assertEqual(asked, ["jarvis"])
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from rich.text import Text
 
 import gridevidence as E
 import gridstate as G
+import onoff
 import syshealth
 import voiceedit
 import voicetest
@@ -105,6 +106,8 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
         t.append(f"{cell.label}", style="bold white")
         t.append(f" — {ev.detail or cell.problem}", style=colour if ev.status in ("bad", "warn") else "default")
         t.append(f"  [{cell.note}]", style="#555555")
+        if onoff.can_switch(row.agent, place):
+            t.append("  ⏎ Enter changes it", style="#9b59b6")
         if row.quiet.get(place):
             t.append(f"  quiet hours {row.quiet[place]} (stored, not enforced yet)", style="#7f8c8d")
     if results:
@@ -120,7 +123,7 @@ def history_text(paths: voiceedit.EditPaths, n: int = 4) -> Text:
     lines = voiceedit.recent(paths, n)
     t = Text()
     t.append("Changes", style="bold #9b59b6")
-    t.append(" (U undoes the newest)  " if lines else "  none yet — E / Z / L / O change a voice, with a backup\n", style="#7f8c8d")
+    t.append(" (U undoes the newest)  " if lines else "  none yet — Enter on a cell switches it; E / Z / L / O change a voice; all with a backup\n", style="#7f8c8d")
     if lines:
         t.append("\n" + "\n".join(lines), style="#bbbbbb")
     return t

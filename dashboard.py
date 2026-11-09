@@ -7,7 +7,12 @@ setting (Off / Voice-back / Always) read from the file where it really lives, an
 logs say really happened (green spoke OK · grey idle, nothing to say · yellow mixed · red mismatch or
 failure). The top strip: voice engine · Hermes gateway · speech queue · Hermes fixes · Mac output.
 It is an overseer, never a lifeline: every voice setting stays where the agents already read it, so
-if this panel closes, voices keep working exactly as last set. On/off cells are read-only in this step.
+if this panel closes, voices keep working exactly as last set.
+
+ON/OFF CELLS (step 2): ← → pick a place, Enter changes it. Live today: the Telegram team group (Off / Always), Claude's terminal
+(Off / Always) and the Voice Desk mic window / phone (own voices vs shared voice, speech queue on / off). Each change backs up the
+files, writes them, reads them back and goes into the history; U undoes. Telegram direct chat, Gemini, Hermes windows and the
+iPhone stay read-only. Enter on the voice column edits the voice; Enter on the Voice check column runs the silent test.
 
   ↑ ↓ pick an agent   T silent voice test (no sound)   A test everyone   C check now
   E English voice   Z Mandarin voice   L extra language   O language override   U undo last change
@@ -31,13 +36,15 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Footer, Input, Static
+from textual.widgets import DataTable, Footer, Input, OptionList, Static
+from textual.widgets.option_list import Option
 
 import agents
 import gridevidence as E
 import gridstate as G
 import gridview as V
 import syshealth
+import onoff
 import voiceedit
 import voicetest
 import service
@@ -100,6 +107,39 @@ class AskScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+class ChoiceScreen(ModalScreen[Optional[str]]):
+    """A short list of choices for one cell; Enter picks, Esc cancels. `options` are (token, label, is_current)."""
+    CSS = """
+    ChoiceScreen { align: center middle; }
+    #choice { width: 96; height: auto; border: round #9b59b6; background: #1b1b1b; padding: 1 2; }
+    #choice-title { text-style: bold; }
+    #choice-hint { color: #888888; }
+    """
+    BINDINGS = [Binding("escape", "cancel", "cancel")]
+
+    def __init__(self, title: str, options: list[onoff.Option]) -> None:
+        super().__init__()
+        self._title, self._options = title, options
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="choice"):
+            yield Static(self._title, id="choice-title")
+            yield Static("Up / Down, then Enter. Esc cancels. The files are backed up and read back; U undoes.", id="choice-hint")
+            yield OptionList(*[Option(("● " if o.current else "  ") + o.label, id=o.token) for o in self._options], id="choice-list")
+
+    def on_mount(self) -> None:
+        lst = self.query_one(OptionList)
+        lst.focus()
+        current = next((i for i, o in enumerate(self._options) if o.current), 0)
+        lst.highlighted = current
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option.id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class GridScreen(Screen):
     CSS = """
     GridScreen { layout: vertical; }
@@ -129,7 +169,7 @@ class GridScreen(Screen):
             yield Static("●  starting", id="light", classes="starting")
             yield Static("", id="who")
         yield Static("reading…", id="health")
-        yield DataTable(id="grid", cursor_type="row", zebra_stripes=False)
+        yield DataTable(id="grid", cursor_type="cell", zebra_stripes=False)
         yield Static("", id="detail")
         yield Static("", id="history")
         yield Static("", id="msg")
@@ -142,8 +182,11 @@ class GridScreen(Screen):
         table.focus()
         self.app.start_grid()          # type: ignore[attr-defined]
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         self.app.show_detail()         # type: ignore[attr-defined]
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        self.app.open_cell(event.coordinate.column)    # type: ignore[attr-defined]
 
     def action_test_row(self) -> None:
         self.app.test_selected()       # type: ignore[attr-defined]
@@ -316,6 +359,7 @@ class Dashboard(App):
             return
         table = screen.query_one(DataTable)
         keep = table.cursor_row if table.row_count else 0
+        keep_col = table.cursor_column if table.row_count else 0
         table.clear()
         for row in self.rows:
             key = row.agent.key
@@ -323,7 +367,7 @@ class Dashboard(App):
                           *[V.cell_text(row.cells[p], row.evidence[p]) for p in G.PLACE_KEYS],
                           V.test_text(self.tests.get(key), key in self.testing), key=key, height=2)
         if self.rows:
-            table.move_cursor(row=min(keep, len(self.rows) - 1))
+            table.move_cursor(row=min(keep, len(self.rows) - 1), column=keep_col)
         self.show_detail()
 
     def restore_grid(self) -> None:
@@ -339,6 +383,14 @@ class Dashboard(App):
             return None
         table = screen.query_one(DataTable)
         return self.rows[table.cursor_row] if 0 <= table.cursor_row < len(self.rows) else None
+
+    def selected_place(self) -> Optional[str]:
+        """The place (column) under the cursor, or None on the Agent / Voice / Voice check columns."""
+        screen = self.screen
+        if not isinstance(screen, GridScreen):
+            return None
+        col = screen.query_one(DataTable).cursor_column - 2
+        return G.PLACE_KEYS[col] if 0 <= col < len(G.PLACE_KEYS) else None
 
     def show_detail(self) -> None:
         screen = self.screen
@@ -382,6 +434,42 @@ class Dashboard(App):
         self.say(f"{agent.display}: voice check " + ("passed — " + ", ".join(r.short() for r in results) if not bad
                                                      else "FAILED — " + "; ".join(f"{r.lang}: {r.detail}" for r in bad)))
         self.fill_table()
+
+    # -- switching a cell on / off (Enter) ---------------------------------------------------------
+    def open_cell(self, column: int) -> None:
+        """Enter on a cell: the voice column edits the voice, the Voice check column tests, a place column switches."""
+        row = self.selected()
+        if not row:
+            return
+        if column == 1:
+            self.ask_edit("voice")
+            return
+        if column == 7:
+            self.test_selected()
+            return
+        place = self.selected_place()
+        if place is None:
+            return
+        cell = row.cells[place]
+        menu = onoff.menu(row.agent, place, cell, self.paths)
+        if not menu.options:
+            self.say(f"{row.agent.display} — {G.PLACE_NAME[place]}: {menu.why_not}")
+            return
+
+        def picked(token: Optional[str]) -> None:
+            if token is not None:
+                self.apply_switch(row.agent.key, place, token)
+
+        self.push_screen(ChoiceScreen(menu.title, menu.options), picked)
+
+    def apply_switch(self, agent_key: str, place: str, token: str) -> None:
+        self.say("switching, with a backup and a read-back…")
+        self._switch_worker(agent_key, place, token)
+
+    @work(thread=True, exclusive=True, group="edit")
+    def _switch_worker(self, agent_key: str, place: str, token: str) -> None:
+        res = onoff.set_cell(agent_key, place, token, self.paths, self.edit_paths)
+        self.call_from_thread(self.edit_done, res)
 
     # -- changing a voice -------------------------------------------------------------------------
     PROMPTS = {
@@ -431,7 +519,7 @@ class Dashboard(App):
 
     @work(thread=True, exclusive=True, group="edit")
     def _undo_worker(self) -> None:
-        res = voiceedit.undo(self.edit_paths)
+        res = voiceedit.undo(self.edit_paths, self.paths)
         self.call_from_thread(self.edit_done, res)
 
     def edit_done(self, res: voiceedit.Result) -> None:

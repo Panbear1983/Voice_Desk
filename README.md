@@ -262,6 +262,9 @@ iPhone). Each cell shows the setting read from the file where it really lives an
 really happened (green spoke OK · grey idle · yellow mixed · red mismatch or failure). <kbd>T</kbd> renders a
 silent test sentence per language for the selected agent and checks it with ffprobe; <kbd>E</kbd> / <kbd>Z</kbd>
 change the English / Mandarin voice through `voicecfg` (backup, read-back), <kbd>U</kbd> undoes the last change.
+Since step 2 (2026-11-09) <kbd>←</kbd> <kbd>→</kbd> + <kbd>Enter</kbd> on a cell switches it live: the Telegram team group
+(Off / Always), Claude's terminal (Off / Always) and the mic window / phone (own voices vs shared voice, speech queue
+on / off), with the same backup, read-back and undo; the other cells say why they are still read-only.
 The listener controls above are on the second screen (<kbd>S</kbd>; <kbd>M</kbd> and <kbd>H</kbd> work on both).
 Every place's file is listed in [`docs/where-every-voice-setting-lives.md`](docs/where-every-voice-setting-lives.md).
 
