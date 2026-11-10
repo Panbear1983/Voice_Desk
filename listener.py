@@ -123,6 +123,8 @@ class Listener:
         self._hand_quiet = 0            # status-bar reads in a row with no voice chat in that window
         self._hand_hold = 0.0           # pending: do not press Ctrl+B again before this
         self._hand_since = 0.0          # pending since (give up after PANE_GIVE_UP_SEC)
+        self._hand_active_at = 0.0      # her last recording / transcribing / reply (voice-idle grace from here)
+        self._hand_off_seen = False     # voice went off (an end phrase) since she was last active
         self._rearm_next = 0.0          # next look at the four windows for an end phrase to undo
         self._pane_cache: dict = {}     # profile -> pane id, refreshed every 30 s
         self._pane_cache_until = 0.0
@@ -439,6 +441,7 @@ class Listener:
             self.speak(f"{name} is listening, say that again after the beep.")
         result = self.panes.start(pane)
         self._hand_state = ""
+        self._hand_active_at, self._hand_off_seen = self.clock(), False
         if result == "started":
             self.handed, self._hand_pending = pane, False
             log(f"switchboard: {name} ({pane}) is listening")
@@ -475,18 +478,32 @@ class Listener:
             result = self.panes.start(pane, wait_sec=1.0)
             if result == "started":
                 self._hand_pending, self._hand_quiet = False, 0
+                self._hand_active_at, self._hand_off_seen = self.clock(), False
                 log(f"switchboard: {pane} is listening")
             elif result in ("gone", "no-voice", "draft"):
                 self._take_back(f"window {result}")
             return                                 # busy: try again in PANE_RETRY_SEC
         st = self.panes.state(pane)
         self._hand_state = st
+        now = self.clock()
         if st in self.panes.ACTIVE:
-            self._hand_quiet = 0
+            self._hand_quiet, self._hand_active_at, self._hand_off_seen = 0, now, False
             return
+        if st == "off":                            # an end phrase switched her voice off (rearm may switch it back on)
+            self._hand_off_seen = True
+        if st == "voice-idle" and not self._hand_off_seen:
+            # Between recordings: keep the chat for PANE_IDLE_GRACE_SEC after her last recording or
+            # reply. A narrow window's bar shows voice-idle even mid-chat, so her spoken reply counts.
+            if self.foreign.playing():
+                self._hand_active_at = now
+            if now - self._hand_active_at < S.PANE_IDLE_GRACE_SEC:
+                self._hand_quiet = 0
+                return
         self._hand_quiet += 1                      # "gone" too: one empty herdr read must not end it
         if self._hand_quiet >= S.PANE_END_POLLS:
-            self._take_back({"voice-idle": "voice chat over", "gone": "window gone"}.get(st, "voice mode off (end phrase)"))
+            why = ("window gone" if st == "gone" else "voice mode off (end phrase)" if self._hand_off_seen or st == "off"
+                   else "voice chat over")
+            self._take_back(why)
 
     def _rearm_windows(self) -> None:
         """Every PANE_REARM_SEC: any of the four windows whose voice an end phrase just switched off
@@ -502,6 +519,8 @@ class Listener:
         for profile, pane in self._pane_cache.items():
             if pane and self.panes.rearm(pane):
                 log(f"switchboard: {S.HERMES_DISPLAY_NAMES[profile]}'s end phrase -> voice back on, waiting ({pane})")
+                if pane == self.handed:            # her voice is back on (idle) at once: the grace must not keep the chat
+                    self._take_back("voice mode off (end phrase)")
 
     def _take_back(self, why: str) -> None:
         log(f"switchboard: back to listening for a name ({why})")

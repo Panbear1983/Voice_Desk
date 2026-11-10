@@ -54,6 +54,9 @@ from audio import Microphone  # noqa: E402
 from brain import Brain, addressed  # noqa: E402
 import listener as L  # noqa: E402
 
+# Under pytest another test module may have imported settings before VOICE_DESK_PANES=0 above was
+# set, leaving the switchboard on and sending "Hello Jarvis" to a (fake, absent) window. Say it here too.
+S.PANE_MODE = False
 ok = True
 
 
@@ -713,7 +716,8 @@ def test_switchboard() -> None:
     import panes as P
     S.PANE_MODE = True
     clock = FakeClock()
-    lst = make_listener(clock=clock)
+    fg = FakeForeign()
+    lst = make_listener(clock=clock, foreign=fg)
     fp = FakePanes()
     lst.panes = fp
     CHIMES.clear()
@@ -741,10 +745,66 @@ def test_switchboard() -> None:
     lst.handle("Hello Kylie")
     fp.bar["wH:pR"] = "conversation"
     lst._watch_hand()
-    fp.bar["wH:pR"] = "voice-idle"          # three silent turns: Hermes left continuous mode by itself
+    fp.bar["wH:pR"] = "voice-idle"          # between recordings, or three silent turns left continuous mode
+    for _ in range(S.PANE_END_POLLS + 2):
+        lst._watch_hand()
+    report("switchboard: voice-idle inside the grace keeps the chat (Peter 2026-11-10: no dead end)",
+           lst.handed == "wH:pR" and lst.deaf(), f"{lst.handed}")
+    clock.advance(S.PANE_IDLE_GRACE_SEC - 5)
+    for _ in range(S.PANE_END_POLLS + 2):
+        lst._watch_hand()
+    report("switchboard: ... still kept just before the grace runs out", lst.handed == "wH:pR")
+    fg.on = True                            # her reply is being read aloud while the narrow bar says voice-idle
+    clock.advance(10)
+    lst._watch_hand()
+    fg.on = False
+    clock.advance(S.PANE_IDLE_GRACE_SEC - 5)
+    for _ in range(S.PANE_END_POLLS + 2):
+        lst._watch_hand()
+    report("switchboard: ... her spoken reply restarts the grace", lst.handed == "wH:pR")
+    n_chimes = len(CHIMES)
+    clock.advance(10)                       # now past the grace since her reply
     for _ in range(S.PANE_END_POLLS):
         lst._watch_hand()
-    report("switchboard: three silent turns in her window also hand back", lst.handed is None)
+    report("switchboard: grace over, still voice-idle -> back to listening for a name, one falling tone",
+           lst.handed is None and CHIMES[n_chimes:] == [S.SOUND_ASLEEP], f"{lst.handed} {CHIMES[n_chimes:]}")
+
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.handle("Hello Kylie")
+    fp.bar["wH:pR"] = "conversation"
+    lst._watch_hand()
+    fp.bar["wH:pR"] = "off"                 # "no further questions" seconds into the chat, well inside the grace
+    for _ in range(S.PANE_END_POLLS):
+        lst._watch_hand()
+    report("switchboard: an end phrase inside the grace still ends it at once", lst.handed is None)
+
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.handle("Hello Kylie")
+    fp.bar["wH:pR"] = "off"                 # end phrase ...
+    lst._watch_hand()
+    fp.bar["wH:pR"] = "voice-idle"          # ... and the rearm already switched her voice back on (seen 2026-11-06 17:54)
+    for _ in range(S.PANE_END_POLLS - 1):
+        lst._watch_hand()
+    report("switchboard: an end phrase whose voice is already back on still ends it (the grace does not apply)",
+           lst.handed is None)
+
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.handle("Hello Kylie")
+    fp.bar["wH:pR"] = "voice-idle"
+    real_rearm = fp.rearm
+    fp.rearm = lambda pane: pane == "wH:pR"  # the rearm undid an end phrase before any read saw "off"
+    lst._rearm_next = lst._pane_cache_until = 0.0
+    lst._rearm_windows()
+    fp.rearm = real_rearm
+    report("switchboard: the rearm finding her end phrase hands back at once", lst.handed is None)
+
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.handle("Hello Kylie")
+    fp.bar["wH:pR"] = "gone"                # her window was closed
+    for _ in range(S.PANE_END_POLLS):
+        lst._watch_hand()
+    report("switchboard: a closed window still ends it at once, grace or not", lst.handed is None)
+
     fp.bar["wH:pR"] = "voice-idle"
     lst.handle("Hello Kylie")
     fp.bar["wH:pR"] = "recording"

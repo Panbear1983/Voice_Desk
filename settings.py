@@ -152,7 +152,8 @@ HERMES_SESSION_DIR = STATE_DIR / "hermes_sessions"      # one session id per pro
 # ---- the switchboard (panes.py) ---------------------------------------------------------------
 # Peter 2026-10-21: "hey Kylie" should press Ctrl+B in Kylie's open herdr window, not start a
 # separate voice thread. On: a Hermes name hands the conversation to that window, and the listener
-# stays deaf until the window's voice chat ends (an end phrase, or three silent turns).
+# stays deaf until the window's voice chat ends (an end phrase, a closed window, or voice-idle for
+# PANE_IDLE_GRACE_SEC).
 # Off (VOICE_DESK_PANES=0): the old behaviour, a one-shot background turn per question.
 PANE_MODE = os.environ.get("VOICE_DESK_PANES", "1") != "0"
 HERDR_BIN = os.environ.get("VOICE_DESK_HERDR_BIN", "/opt/homebrew/bin/herdr")
@@ -161,6 +162,12 @@ PANE_START_SEC = 3.0             # how long Ctrl+B may take to show "● REC" be
 PANE_END_POLLS = 3               # status-bar reads (one per 0.5 s tick) with no voice chat = it is over
 PANE_RETRY_SEC = 2.0             # window busy answering something typed: press Ctrl+B again this often
 PANE_GIVE_UP_SEC = 300           # still busy after this long: stop waiting, listen for a name again
+# Peter 2026-11-10: "Hello Jarvis" after an end phrase felt like a dead end - the window sits
+# "voice-idle" between recordings (a narrow window's bar never says "Continuous"), and three idle
+# reads (1.5 s) ended the chat while he was about to talk. Voice-idle now ends it only once this
+# long has passed since her last recording, transcribing or spoken reply. An end phrase (voice
+# off) and a closed window still end it within PANE_END_POLLS reads, as before.
+PANE_IDLE_GRACE_SEC = 60
 PANE_REARM_SEC = 1.5             # how often the four windows are checked for an end phrase to undo
 BRAIN_FILE = STATE_DIR / "brain"                        # "claude" or "hermes:<profile>", set by voice: "talk to Esther"
 HERMES_VOICE_NOTE = (f"(Voice call with {USER_NAME}: they hear you and are not reading a screen. Answer the way you "
