@@ -125,6 +125,12 @@ def voice_for(target: str) -> Voice:
         return shared_voice()
     if is_edge(a.voice):
         return Voice(a.voice, a.voice_zh or zh_for(a.voice), "agents")
+    if agents.is_kokoro(a.voice) and not a.command:
+        # any agent switched to a Kokoro voice (Claude's default since 2026-11-11): the shared Kokoro script,
+        # its own Edge voice (fallback) if Kokoro fails, else the shared Voice Desk voice
+        fb = a.fallback if is_edge(a.fallback) else shared_voice().en
+        zh = "" if a.english_only else a.voice_zh or zh_for(fb)
+        return Voice(a.voice, zh, "agents", agents.KOKORO_COMMAND, fb)
     if a.command:
         zh = "" if a.english_only else a.voice_zh or zh_for(a.fallback or "")
         return Voice(a.voice, zh, "agents", a.command, a.fallback, a.effect)

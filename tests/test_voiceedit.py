@@ -336,3 +336,62 @@ class TheUndo(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KokoroForAnyAgent(unittest.TestCase):
+    """Peter 2026-11-11: Kokoro (the local voice, no internet) is Claude's default and a choice for any agent.
+    Picking a Kokoro name switches the agent; its old Edge voice stays as the fallback and as what Hermes' own
+    speech (and Claude's / Gemini's own hooks, when they cannot run Kokoro) keep using."""
+
+    def setUp(self):
+        self.w = F.make_world()
+
+    def voice_desk_voice(self, target):
+        import voices
+        with mock.patch.object(agents, "PATH", self.w.toml), mock.patch.object(voices, "per_profile_enabled", return_value=True):
+            return voices.voice_for(target)
+
+    def test_a_kokoro_name_is_a_valid_english_voice_for_any_agent(self):
+        for key in ("kylie", "claude", "gemini", "codex", "jarvis"):
+            self.assertEqual(VE.check_voice("voice", "af_heart", agent_of(self.w, key)), "af_heart", key)
+        with self.assertRaises(VE.EditError):
+            VE.check_voice("voice", "af_nobody", agent_of(self.w, "kylie"))
+
+    def test_kylie_switched_to_kokoro_keeps_ava_as_fallback_and_in_her_hermes_profile(self):
+        yaml = self.w.paths.profiles / "assistant/config.yaml"
+        before = yaml.read_text()
+        res = VE.change("kylie", "voice", "bf_emma", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        k = agent_of(self.w, "kylie")
+        self.assertEqual((k.voice, k.fallback), ("bf_emma", "en-US-AvaNeural"))
+        self.assertEqual(yaml.read_text(), before, "Hermes' own speech keeps its Edge voice, never a Kokoro name")
+        v = self.voice_desk_voice("hermes:assistant")
+        self.assertEqual((v.en, v.command, v.fallback), ("bf_emma", agents.KOKORO_COMMAND, "en-US-AvaNeural"))
+
+    def test_claude_switched_to_kokoro_and_back_sets_the_engine_in_the_voice_defaults_file(self):
+        conf = self.w.edit.claude_conf
+        res = VE.change("claude", "voice", "af_heart", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        text = conf.read_text()
+        for line in ('ENGLISH_ENGINE="kokoro"', 'KOKORO_VOICE_EN="af_heart"', 'NEURAL_VOICE_EN="en-US-JennyNeural"'):
+            self.assertIn(line, text)
+        self.assertIn(conf, [Path(p) for p in res.changed_files])
+        res = VE.change("claude", "voice", "en-US-AriaNeural", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        text = conf.read_text()
+        self.assertIn('ENGLISH_ENGINE="edge"', text)
+        self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', text)
+
+    def test_undo_of_a_kokoro_switch_puts_the_edge_voice_back(self):
+        self.assertTrue(VE.change("claude", "voice", "af_heart", self.w.edit).ok)
+        res = VE.undo(self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertEqual(agent_of(self.w, "claude").voice, "en-US-JennyNeural")
+        self.assertIn('ENGLISH_ENGINE="edge"', self.w.edit.claude_conf.read_text())
+
+    def test_gemini_on_kokoro_keeps_an_edge_voice_in_its_own_hook_file(self):
+        self.assertTrue(VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit).ok)
+        res = VE.change("gemini", "voice", "am_adam", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', self.w.edit.gemini_conf.read_text())
+        self.assertEqual(self.voice_desk_voice("gemini").en, "am_adam")

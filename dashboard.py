@@ -495,7 +495,8 @@ class Dashboard(App):
 
     # -- changing a voice -------------------------------------------------------------------------
     PROMPTS = {
-        "voice": ("English voice", "An Edge voice such as en-US-AvaNeural (Esther: a Kokoro name such as alloy; "
+        "voice": ("English voice", "An Edge voice such as en-US-AvaNeural, or a Kokoro voice (local, no internet) such as af_heart, "
+                  "am_adam, bf_emma (af_/am_ American, bf_/bm_ British) (Esther: a Kokoro name such as alloy; "
                   "Simba: an American Kokoro voice such as am_fenrir or af_nicole). Enter saves, Esc cancels."),
         "voice_zh": ("Mandarin voice", "A Taiwan Mandarin Edge voice such as zh-TW-HsiaoChenNeural (zh-TW only). Enter saves, Esc cancels."),
         "voices_extra": ("Extra languages", "code=voice, comma separated, e.g. ja=ja-JP-NanamiNeural. Empty removes them all."),

@@ -247,11 +247,16 @@ def _yaml_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
     e = scan(text)
     want: list[tuple[str, Any]] = []
     provider = parse_value(e["tts.provider"].value) if "tts.provider" in e else "edge"
-    if a.voice:
+    voice = a.voice
+    if agents.is_kokoro(voice) and not a.command:
+        # A Kokoro voice is spoken by Voice Desk (voices.voice_for). Hermes' own speech (Telegram, its window)
+        # keeps the agent's Edge fallback: a Kokoro name in an Edge provider would break it.
+        voice = a.fallback if _EDGE.match(a.fallback or "") else None
+    if voice:
         vkey = f"tts.providers.{provider}.voice" if f"tts.providers.{provider}" in e else f"tts.{provider}.voice"
-        want.append((vkey, a.voice))
-        if _EDGE.match(a.voice) and "tts.edge" in e and vkey != "tts.edge.voice":
-            want.append(("tts.edge.voice", a.voice))
+        want.append((vkey, voice))
+        if _EDGE.match(voice) and "tts.edge" in e and vkey != "tts.edge.voice":
+            want.append(("tts.edge.voice", voice))
     if a.speed is not None:
         want.append(("tts.edge.speed", a.speed))
     want.append(("voice.stop_phrases", agents.end_phrases(cfg)))
@@ -298,11 +303,9 @@ def _claude_items(a: agents.Agent, path: Path) -> list[Item]:
         return [Item(a.key, label, path, "conf", "(file)", None, None, problem=f"cannot read: {exc.strerror}")]
     found = _conf_scan(text)
     items = []
-    for src, var in _CLAUDE_KEYS:
-        if src not in a.raw:
-            continue
-        v = a.raw[src]
-        want = ("1" if v else "0") if isinstance(v, bool) else str(v)
+    for var, want in claude_wants(a):
+        if var == "ENGLISH_ENGINE" and want == "edge" and var not in found:
+            continue                                   # no ENGLISH_ENGINE line means the Edge voice already
         if var in found:
             items.append(Item(a.key, label, path, "conf", var, found[var][1], want, line=found[var][0]))
         else:
@@ -310,16 +313,38 @@ def _claude_items(a: agents.Agent, path: Path) -> list[Item]:
     return items
 
 
+def claude_wants(a: agents.Agent) -> list[tuple[str, str]]:
+    """(conf variable, value) for Claude's voice-defaults.conf. A Kokoro English voice (Claude's default since
+    2026-11-11) sets ENGLISH_ENGINE="kokoro" + KOKORO_VOICE_EN and keeps the Edge fallback in NEURAL_VOICE_EN;
+    an Edge voice sets ENGLISH_ENGINE="edge" + NEURAL_VOICE_EN."""
+    out = []
+    for src, var in _CLAUDE_KEYS:
+        if src not in a.raw:
+            continue
+        v = a.raw[src]
+        if src == "voice" and agents.is_kokoro(v):
+            out += [("ENGLISH_ENGINE", "kokoro"), ("KOKORO_VOICE_EN", v)]
+            if _EDGE.match(a.fallback or ""):
+                out.append((var, a.fallback))
+            continue
+        if src == "voice":
+            out.append(("ENGLISH_ENGINE", "edge"))
+        out.append((var, ("1" if v else "0") if isinstance(v, bool) else str(v)))
+    return out
+
+
 def gemini_wants(a: agents.Agent, cfg: dict) -> tuple[str, str]:
     """(English, Mandarin) Gemini should speak with: its own voices from agents.toml, else the shared Voice Desk
     voice, by the same rule voices.voice_for uses (a missing Mandarin voice follows the English one)."""
     sh = agents.shared(cfg)
     en = a.voice or sh.get("voice") or "en-US-JennyNeural"
+    if agents.is_kokoro(en):                           # Gemini's own hook speaks Edge only: its Edge fallback
+        en = a.fallback if _EDGE.match(a.fallback or "") else sh.get("voice") or "en-US-JennyNeural"
     if a.voice_zh:
         return en, a.voice_zh
     if a.voice:
         from voices import zh_for                      # voices imports settings; only needed here
-        return en, zh_for(a.voice)
+        return en, zh_for(en)
     return en, sh.get("voice_zh") or "zh-TW-HsiaoChenNeural"
 
 

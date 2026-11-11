@@ -13,6 +13,22 @@ from typing import Any, Optional
 
 PATH = Path(os.environ.get("VOICE_DESK_AGENTS", Path(__file__).resolve().parent / "agents.toml"))
 
+# Kokoro, the local voice (no internet; Peter 2026-11-11: Claude's default, and a choice for any agent).
+# The 28 English voices in kokoro-v1.0: af_/am_ American female/male, bf_/bm_ British female/male.
+KOKORO_VOICES = (
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river",
+    "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx",
+    "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george",
+    "bm_lewis")
+# The shared script that speaks any of them: <python> <script> <text file> <out file> <voice>
+KOKORO_COMMAND = (os.path.expanduser(os.environ.get("VOICE_DESK_KOKORO_PY", "~/.local/share/claude-voice/venv/bin/python")),
+                  os.path.expanduser(os.environ.get("VOICE_DESK_KOKORO_SCRIPT", "~/.claude/hooks/kokoro_say.py")))
+
+
+def is_kokoro(voice: Optional[str]) -> bool:
+    return bool(voice) and voice in KOKORO_VOICES
+
+
 KNOBS = ("auto_tts", "silence_duration", "silence_threshold", "barge_in", "barge_in_grace_seconds")
 
 

@@ -653,7 +653,10 @@ class ThePanelChangesHerVoice(unittest.TestCase):
         self.assertEqual(self.w.toml.read_text(), self.start)
 
     def test_others_keep_their_rules(self):
-        self.assertFalse(VE.change("kylie", "voice", "af_kore", self.w.edit).ok, "Kylie still needs an Edge voice")
+        # Peter 2026-11-11: any agent may pick a Kokoro voice now (Kylie keeps Ava as her fallback); Simba's own
+        # rules (American only, an effect, a voice no one else has) still apply only to Simba
+        self.assertTrue(VE.change("kylie", "voice", "af_kore", self.w.edit).ok, "Kylie may pick a Kokoro voice")
+        self.assertFalse(VE.change("kylie", "voice", "kore", self.w.edit).ok, "but only by its full Kokoro name")
         self.assertTrue(VE.change("esther", "voice", "bella", self.w.edit).ok, "Esther's Kokoro names are hers to pick")
 
     def test_peters_pick_is_two_changes_and_two_undos_put_everything_back_byte_for_byte(self):

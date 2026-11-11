@@ -86,11 +86,14 @@ def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
                 raise EditError(f"A Mandarin voice looks like zh-TW-HsiaoChenNeural (zh-… Neural); got {v!r}.")
             if not v.startswith("zh-TW-"):                # Peter 2026-11-09: Taiwan Mandarin only, no Mainland accent
                 raise EditError(f"Mandarin voices are Taiwan Mandarin only (zh-TW-…, e.g. zh-TW-HsiaoYuNeural); got {v!r}.")
+        elif field_name == "voice" and agents.is_kokoro(v):
+            return v                                   # Kokoro, the local voice (2026-11-11): any agent may use it
         elif m:
             if m.group(1) != "en":
                 raise EditError(f"The English voice must start with en- (for example en-US-AvaNeural); got {v!r}.")
         elif not (agent.command and _BARE.match(v)):
-            raise EditError(f"{agent.display} needs an Edge voice like en-US-AvaNeural; got {v!r}.")
+            raise EditError(f"{agent.display} needs an Edge voice like en-US-AvaNeural or a Kokoro voice like "
+                            f"af_heart (af_/am_ American, bf_/bm_ British); got {v!r}.")
         return v
     if field_name == "voice_override":
         v = str(value or "").strip().lower()
@@ -319,7 +322,8 @@ class Result:
     changed_files: list[str] = field(default_factory=list)
 
 
-_WANTED_KEYS = {"voice": lambda i: i.key.endswith(".voice") or i.key == "NEURAL_VOICE_EN",
+_WANTED_KEYS = {"voice": lambda i: i.key.endswith(".voice") or i.key in ("NEURAL_VOICE_EN", "ENGLISH_ENGINE",
+                                                                          "KOKORO_VOICE_EN"),
                 "voice_zh": lambda i: i.key == "NEURAL_VOICE_ZH"}
 _APPLIED_AS = re.compile(r"^(.*)  \(backup: (.*)\)$")
 
@@ -374,6 +378,10 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
         if old == new or (field_name == "voice_override" and old is None and new == "auto"):
             return Result(True, f"{agent.display}: already {_short(new)}, nothing to change")
         new_text = set_field(old_text, agent_key, field_name, new)
+        if (field_name == "voice" and agents.is_kokoro(new) and not agent.command and not agent.fallback
+                and isinstance(old, str) and _EDGE.match(old)):
+            # switching to Kokoro: the Edge voice it had stays as its fallback (and Hermes' / Claude's Edge voice)
+            new_text = set_field(new_text, agent_key, "fallback", old)
     except (EditError, OSError, tomllib.TOMLDecodeError) as exc:
         return Result(False, str(exc))
 
