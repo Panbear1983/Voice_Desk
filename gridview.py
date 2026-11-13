@@ -160,7 +160,7 @@ def history_text(paths: voiceedit.EditPaths, n: int = 4, watcher_lines: Optional
     lines = voiceedit.recent(paths, n)
     t = Text()
     t.append("Changes", style="bold #9b59b6")
-    t.append(" (U undoes the newest)  " if lines else "  none yet — Enter on a cell switches it; E / Z / L / O change a voice; all with a backup\n", style="#7f8c8d")
+    t.append(" (U undoes the newest)  " if lines else "  none yet — Enter on a cell switches it; E / Z change a voice; A / D / X / P change the grid; all with a backup (? explains the colours)\n", style="#7f8c8d")
     if lines:
         t.append("\n" + "\n".join(lines), style="#bbbbbb")
     if watcher_lines:

@@ -210,22 +210,22 @@ class GridScreen(Screen):
     #msg { height: 1; color: #bbbbbb; padding: 0 1; }
     """ + _LIGHT_CSS
     BINDINGS = [
-        Binding("t", "test_row", "voice test (silent)"),
+        Binding("t", "test_row", "test"),
         Binding("T", "test_all", "test all"),
-        Binding("c", "check_now", "check now"),
-        Binding("e", "edit_en", "English voice"),
-        Binding("z", "edit_zh", "Mandarin voice"),
-        Binding("f", "edit_effect", "voice effect"),
+        Binding("c", "check_now", "check"),
+        Binding("e", "edit_en", "English"),
+        Binding("z", "edit_zh", "Mandarin"),
+        Binding("f", "edit_effect", "effect"),
         # Part 5 (Peter 2026-11-11): L and O are stored only, nothing enforces them: hidden, the keys still work
         Binding("l", "edit_extra", "extra language", show=False),
         Binding("o", "edit_override", "language override", show=False),
-        Binding("a", "add_agent", "add agent"),
-        Binding("d", "remove_agent", "remove from grid"),
-        Binding("x", "toggle_here", "here / not here"),
-        Binding("p", "edit_phrase", "activation phrase"),
+        Binding("a", "add_agent", "add"),
+        Binding("d", "remove_agent", "remove"),
+        Binding("x", "toggle_here", "here / not"),
+        Binding("p", "edit_phrase", "phrase"),
         Binding("u", "undo", "undo"),
-        Binding("w", "watcher", "pause / resume watcher"),
-        Binding("s", "listener", "listener screen"),
+        Binding("w", "watcher", "watcher"),
+        Binding("s", "listener", "listener"),
         Binding("question_mark", "help", "colours", key_display="?"),
     ]
     # The footer shows only the keys that apply to the selected row or cell (Part 5)
