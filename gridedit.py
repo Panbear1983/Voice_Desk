@@ -63,6 +63,18 @@ def _span(lines: list[str], key: str) -> Optional[tuple[int, int]]:
     return s, e
 
 
+def _start(lines: list[str], key: str) -> Optional[int]:
+    """Where a block put back in front of this agent goes: its header with the comment lines right above it, but
+    never the blank lines above those. (_span's start differs for the last block, which takes the blank lines
+    above it: a block put back there would land on the wrong side of the blank line.)"""
+    h = _header_index(lines, key)
+    if h is None:
+        return None
+    while h > 0 and lines[h - 1].lstrip().startswith("#"):
+        h -= 1
+    return h
+
+
 def block_text(text: str, key: str) -> Optional[str]:
     lines = text.splitlines(keepends=True)
     sp = _span(lines, key)
@@ -89,9 +101,9 @@ def put_block(text: str, key: str, block: Optional[str], anchor: Optional[str] =
         return "".join(lines[:sp[0]]) + (block or "") + "".join(lines[sp[1]:])
     if block is None:
         return text
-    at = _span(lines, anchor) if anchor else None
-    if at:
-        return "".join(lines[:at[0]]) + block + "".join(lines[at[0]:])
+    at = _start(lines, anchor) if anchor else None
+    if at is not None:
+        return "".join(lines[:at]) + block + "".join(lines[at:])
     if text and not text.endswith("\n"):
         text += "\n"
     return text + block
@@ -390,6 +402,8 @@ def undo(last: dict, paths: VE.EditPaths) -> VE.Result:
 
     res = _write(paths, key, last["display"], last["field"], last.get("what", ""), last.get("new_label", ""),
                  last.get("old_label", ""), text, new_text, check, kind="undo", undoes=last["id"])
+    if not res.ok:                      # name the copy, as the "changed since" refusal above does
+        res.message = f"{res.message}. The copy from before the change is {last.get('toml_backup')}"
     if res.ok:
         res.message = f"Undone: {last['display']} {last.get('what', '')}: {last.get('new_label')} → {last.get('old_label')}"
     return res

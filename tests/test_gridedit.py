@@ -6,6 +6,7 @@ Only agents.toml is written, a copy is kept first, the result is read back, U un
 """
 import shutil
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -187,6 +188,49 @@ class RemovingAnAgent(unittest.TestCase):
         self.assertEqual(w.toml.read_text(), F.AGENTS_TOML.split("\n[agents.wanna_buffet]")[0])
         self.assertTrue(VE.undo(w.edit).ok)
         self.assertEqual(w.toml.read_text(), F.AGENTS_TOML)
+
+    def test_d_then_u_is_byte_identical_for_every_block_of_the_real_agents_toml(self):
+        # Review 2026-11-13: the block just before the last one (Esther) did not come back, because the last
+        # block's span takes the blank line above it and the undo put her on the wrong side of that blank line.
+        real = (REPO / "agents.toml").read_text()
+        self.assertGreaterEqual(len(tomllib.loads(real)["agents"]), 8)
+        for name, texts in (("real", real), ("fixture", F.AGENTS_TOML)):
+            for key in tomllib.loads(texts)["agents"]:
+                with self.subTest(key=key, file=name):
+                    w = F.make_world()
+                    w.toml.write_text(texts)
+                    res = GE.remove_agent(w.edit, key)
+                    self.assertTrue(res.ok, res.message)
+                    self.assertNotIn(f"[agents.{key}]", w.toml.read_text())
+                    u = VE.undo(w.edit)
+                    self.assertTrue(u.ok, u.message)
+                    self.assertEqual(w.toml.read_bytes(), texts.encode())
+
+    def test_two_removals_in_a_row_come_back_with_u_u(self):
+        real = (REPO / "agents.toml").read_text()
+        w = F.make_world()
+        w.toml.write_text(real)
+        self.assertTrue(GE.remove_agent(w.edit, "esther").ok)
+        self.assertTrue(GE.remove_agent(w.edit, "wanna_buffet").ok)
+        self.assertTrue(VE.undo(w.edit).ok)
+        self.assertTrue(VE.undo(w.edit).ok)
+        self.assertEqual(w.toml.read_text(), real)
+
+    def test_an_undo_whose_read_back_refuses_names_the_backup(self):
+        from unittest import mock
+        w = F.make_world()
+        res = GE.remove_agent(w.edit, "kylie")
+        self.assertTrue(res.ok, res.message)
+        assert res.entry
+        removed = w.toml.read_text()
+        real_put = GE.put_block
+        with mock.patch.object(GE, "put_block", lambda t, k, b, a=None: real_put(t, k, b and b.replace(
+                "\n", "\n# hand-made\n", 1), a)):
+            u = VE.undo(w.edit)
+        self.assertFalse(u.ok)
+        self.assertIn("did not come back as it was", u.message)
+        self.assertIn(res.entry["toml_backup"], u.message)
+        self.assertEqual(w.toml.read_text(), removed, "nothing written")
 
     def test_an_undo_refuses_when_the_block_was_edited_by_hand_since(self):
         w = F.make_world()
