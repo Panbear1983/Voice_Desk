@@ -41,12 +41,13 @@ class TheRows(unittest.TestCase):
         self.assertFalse(info["kylie"].silent)
         self.assertFalse(hasattr(info["kylie"], "backup"), "no backup voice is shown any more")
 
-    def test_rows_are_the_agents_in_peters_order_and_not_builder(self):
+    def test_rows_are_the_agents_in_peters_order_and_builder_only_once_added(self):
+        # 2026-11-13: the rows are exactly the [agents.*] blocks; Builder has none until Peter adds him (A)
         w = F.make_world()
         order = [a.key for a in G.grid_agents(agents.load(w.toml))]
         self.assertEqual(order, ["jarvis", "kylie", "esther", "wanna_buffet", "claude", "gemini", "codex"])
         w.toml.write_text(F.AGENTS_TOML + '\n[agents.builder]\nprofile = "builder"\ndisplay = "Builder"\nnames = ["builder"]\n')
-        self.assertNotIn("builder", [a.key for a in G.grid_agents(agents.load(w.toml))])
+        self.assertIn("builder", [a.key for a in G.grid_agents(agents.load(w.toml))])
 
     def test_a_new_agent_in_agents_toml_becomes_a_row_by_itself(self):
         w = F.make_world()

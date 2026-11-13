@@ -43,7 +43,8 @@ PLACE_NAME = dict(PLACES)
 
 HERMES, CLAUDE, GEMINI, CODEX, OTHER = "hermes", "claude", "gemini", "codex", "other"
 _ORDER = {HERMES: 0, CLAUDE: 1, GEMINI: 2, CODEX: 3, OTHER: 4}
-SKIP_PROFILES = {"builder"}                      # Peter: the grid is for the voices he talks to, not Builder
+SKIP_PROFILES: set[str] = set()   # 2026-11-13: the rows are exactly the [agents.*] blocks. Builder had been left off
+#                                   by name; he has no block, so he is not on the grid until Peter adds him (A key).
 # An agent that is not a brain Voice Desk talks to (Simba, 2026-11-10): agents.toml holds only her voice; no place on
 # the grid has a switch for her. Her own listener (panbear-daily simba.py) uses that voice for her Team_Room voice
 # notes, switched in its simba.yaml (voice_notes.enabled): the Telegram group cell shows that switch, read only.

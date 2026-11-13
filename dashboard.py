@@ -16,8 +16,10 @@ W pauses / resumes the watcher (watcher.py puts drifted settings back; the top s
 Each change backs up the files, writes them, reads them back and goes into the history; U undoes. Hermes windows and the
 iPhone stay read-only. Enter on the voice column edits the voice; Enter on the Voice check column runs the silent test.
 
-  ↑ ↓ pick an agent   T silent voice test (no sound)   A test everyone   C check now
-  E English voice   Z Mandarin voice   L extra language   O language override   U undo last change
+  ↑ ↓ pick an agent   T silent voice test (no sound)   Shift-T test everyone   C check now
+  E English voice   Z Mandarin voice (pick-lists: arrows + Enter, last line "other, type it")   U undo last change
+  A add an agent (a Hermes profile on this Mac, or another CLI agent)   D remove the agent from the grid (its
+  agents.toml block only: the profile and every file stay; U puts it back)
   M mute / unmute · H hush · S listener screen · Q close (the listener keeps running)
 
 SECOND SCREEN, the listener (it never opens the microphone): who is on the line, what was heard and
@@ -43,6 +45,7 @@ from textual.widgets import DataTable, Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import agents
+import gridedit
 import gridevidence as E
 import gridstate as G
 import gridview as V
@@ -161,13 +164,15 @@ class GridScreen(Screen):
     """ + _LIGHT_CSS
     BINDINGS = [
         Binding("t", "test_row", "voice test (silent)"),
-        Binding("a", "test_all", "test all"),
+        Binding("T", "test_all", "test all"),
         Binding("c", "check_now", "check now"),
         Binding("e", "edit_en", "English voice"),
         Binding("z", "edit_zh", "Mandarin voice"),
         Binding("l", "edit_extra", "extra language"),
         Binding("o", "edit_override", "language override"),
         Binding("f", "edit_effect", "voice effect"),
+        Binding("a", "add_agent", "add agent"),
+        Binding("d", "remove_agent", "remove from grid"),
         Binding("u", "undo", "undo"),
         Binding("w", "watcher", "pause / resume watcher"),
         Binding("s", "listener", "listener screen"),
@@ -220,6 +225,12 @@ class GridScreen(Screen):
 
     def action_edit_effect(self) -> None:
         self.app.ask_edit("effect")    # type: ignore[attr-defined]
+
+    def action_add_agent(self) -> None:
+        self.app.ask_add()             # type: ignore[attr-defined]
+
+    def action_remove_agent(self) -> None:
+        self.app.ask_remove()          # type: ignore[attr-defined]
 
     def action_undo(self) -> None:
         self.app.undo_last()           # type: ignore[attr-defined]
@@ -559,6 +570,95 @@ class Dashboard(App):
     @work(thread=True, exclusive=True, group="edit")
     def _edit_worker(self, agent_key: str, field_name: str, value) -> None:
         res = voiceedit.change(agent_key, field_name, value, self.edit_paths)
+        self.call_from_thread(self.edit_done, res)
+
+    # -- adding / removing an agent (A / D, Part 3) --------------------------------------------------
+    CLI = "::cli"
+
+    def ask_add(self) -> None:
+        """A: which agent: a Hermes profile on this Mac not on the grid yet, or another CLI agent. Then its display
+        name, its spoken name(s), and a voice from the pick-list (or silent). Telegram chat ids are not asked for."""
+        cfg = self.cfg_loader()
+        profiles = gridedit.addable_profiles(cfg, self.edit_paths.profiles)
+        options = [onoff.Option(p, f"{brain_mod.hermes_display_name(p)} — Hermes profile “{p}” (it knows its own "
+                                   f"Telegram bot)") for p in profiles]
+        options.append(onoff.Option(self.CLI, "other CLI agent (a program like Claude, Gemini or Codex) …"))
+        hint = ("Up / Down, then Enter. Esc cancels. Only agents.toml gets a new block (backed up, read back; U takes "
+                "it off again). No profile or other file is changed.")
+
+        def picked(token: Optional[str]) -> None:
+            if token is not None:
+                self._ask_add_name(None if token == self.CLI else token)
+
+        self.push_screen(ChoiceScreen("Add an agent to the grid", options, hint), picked)
+
+    def _ask_add_name(self, profile: Optional[str]) -> None:
+        start = brain_mod.hermes_display_name(profile) if profile else ""
+
+        def named(display: Optional[str]) -> None:
+            if display is None:
+                return
+            if not display:
+                self.say("✗ the new agent needs a display name; nothing written")
+                return
+            self._ask_add_spoken(profile, display)
+
+        self.push_screen(AskScreen("New agent — display name", "The name shown on the grid and spoken back, e.g. "
+                                   "Builder. Enter goes on, Esc cancels.", start), named)
+
+    def _ask_add_spoken(self, profile: Optional[str], display: str) -> None:
+        def spoken(text: Optional[str]) -> None:
+            if text is not None:
+                self._ask_add_voice(profile, display, text)
+
+        self.push_screen(AskScreen(f"{display} — spoken name(s)", "Every way the listener may hear the name, comma "
+                                   "separated (the display name is always one). Enter goes on, Esc cancels.",
+                                   display.lower()), spoken)
+
+    def _ask_add_voice(self, profile: Optional[str], display: str, names: str) -> None:
+        key = gridedit.key_for(profile or display)
+        a = gridedit.draft(key, display, profile=profile)
+        options = voicepick.english(a, self.cfg_loader())
+
+        def picked(token: Optional[str]) -> None:
+            if token is None:
+                return
+            if token == voicepick.OTHER:
+                def typed(text: Optional[str]) -> None:
+                    if text is not None:
+                        self._add_worker(profile, display, names, text or None)
+                self.push_screen(AskScreen(f"{display} — English voice", self.PROMPTS["voice"][1]), typed)
+                return
+            self._add_worker(profile, display, names, None if token == voicepick.SILENT else token)
+
+        self.push_screen(ChoiceScreen(f"{display} — English voice (one voice, no backup; Z adds Mandarin later)",
+                                      options), picked)
+
+    @work(thread=True, exclusive=True, group="edit")
+    def _add_worker(self, profile: Optional[str], display: str, names: str, voice: Optional[str]) -> None:
+        res = gridedit.add_agent(self.edit_paths, display, names, voice, profile=profile)
+        self.call_from_thread(self.edit_done, res)
+
+    def ask_remove(self) -> None:
+        """D: take the selected agent off the grid (its agents.toml block only), after a yes."""
+        row = self.selected()
+        if not row:
+            return
+        a = row.agent
+        keeps = f"its Hermes profile “{a.profile}” and every file stay" if a.profile else "every file stays"
+        options = [onoff.Option("keep", f"keep {a.display} on the grid", True),
+                   onoff.Option("remove", f"remove {a.display} from the grid — {keeps}; U puts it back")]
+
+        def picked(token: Optional[str]) -> None:
+            if token == "remove":
+                self._remove_worker(a.key)
+
+        self.push_screen(ChoiceScreen(f"Remove {a.display} from the grid?", options,
+                                      "Only its block in agents.toml goes (a copy is kept). Esc cancels."), picked)
+
+    @work(thread=True, exclusive=True, group="edit")
+    def _remove_worker(self, agent_key: str) -> None:
+        res = gridedit.remove_agent(self.edit_paths, agent_key)
         self.call_from_thread(self.edit_done, res)
 
     def undo_last(self) -> None:

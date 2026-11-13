@@ -313,7 +313,8 @@ def _short(v: Any) -> str:
 
 def describe(entry: dict) -> str:
     when = _dt.datetime.fromtimestamp(entry["ts"]).strftime("%d %b %H:%M")
-    if str(entry.get("field", "")).startswith("switch:"):                 # an on/off switch (onoff.py)
+    if str(entry.get("field", "")).startswith(("switch:", "grid:")):      # an on/off switch (onoff.py), a grid edit
+        #                                                                   (gridedit.py: add / remove / here / phrase)
         verb = "undo: " if entry.get("kind") == "undo" else ""
         mark = "" if entry.get("ok", True) else "  (failed, nothing changed)"
         return (f"{when}  {verb}{entry['display']} {entry['what']}: "
@@ -341,7 +342,7 @@ def last_undoable(paths: EditPaths) -> Optional[dict]:
     return None
 
 
-UNDOABLE_KINDS = ("change", "switch")
+UNDOABLE_KINDS = ("change", "switch", "grid")
 
 
 # ---- making a change ------------------------------------------------------------------------------
@@ -481,6 +482,9 @@ def undo(paths: Optional[EditPaths] = None, grid_paths: Any = None) -> Result:
     if last.get("kind") == "switch":
         import onoff                                            # imports this module, so only here
         return onoff.undo(last, paths, grid_paths)
+    if last.get("kind") == "grid":
+        import gridedit                                         # imports this module, so only here
+        return gridedit.undo(last, paths)
     res = change(last["agent"], last["field"], last["old"], paths, kind="undo", undoes=last["id"],
                  restore=tuple(last["removed"]) if isinstance(last.get("removed"), list) and len(last["removed"]) == 2
                  else None)
