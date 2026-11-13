@@ -728,12 +728,13 @@ class TheGridShowsHer(unittest.TestCase):
 
 
 class TheGridKeys(unittest.IsolatedAsyncioTestCase):
-    """E and F on Simba's row, then U U, in the headless dashboard against the fake world."""
+    """E and F on Simba's row (pick-lists since 2026-11-13), then U U, in the headless dashboard against the fake world."""
 
     async def test_e_and_f_on_simbas_row_then_u_u(self):
         import dashboard as D
-        from textual.widgets import Input
-        from tests.test_dashboard_grid import load, make_app, text_of, wait_for
+        import voicepick
+        from textual.widgets import Input, OptionList
+        from tests.test_dashboard_grid import load, make_app, pick, text_of, wait_for
         w = simba_world()
         start = w.toml.read_text()
         app = make_app(w)
@@ -741,6 +742,11 @@ class TheGridKeys(unittest.IsolatedAsyncioTestCase):
             await load(app, pilot)
             await pilot.press(*["down"] * 7, "f")                               # Simba is the 8th row
             await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            ids = [o.id for o in app.screen.query_one(OptionList)._options]
+            self.assertEqual(ids[-1], voicepick.OTHER, "the last line is 'other, type it'")
+            self.assertIn("23", ids)
+            await pick(app, pilot, voicepick.OTHER)                              # the old typing box
             self.assertIsInstance(app.screen, D.AskScreen)
             field = app.screen.query_one(Input)
             self.assertEqual(field.value, "fenrir16", "the box starts with today's effect")
@@ -751,10 +757,15 @@ class TheGridKeys(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Simba voice effect: fenrir16 → 23 but slower and breathier", text_of(app, "#history"))
             await pilot.press("e")
             await pilot.pause()
-            field = app.screen.query_one(Input)
-            self.assertEqual(field.value, "am_fenrir")
-            field.value = "jessica"
-            await pilot.press("enter")
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            lst = app.screen.query_one(OptionList)
+            ids = [o.id for o in lst._options]
+            voices_on_list = [i for i in ids if not i.startswith("::")]
+            self.assertTrue(voices_on_list and all(v[:3] in ("af_", "am_") for v in voices_on_list),
+                            "American Kokoro voices only")
+            self.assertNotIn("af_alloy", ids, "Esther's voice is hers")
+            self.assertEqual(ids[lst.highlighted], "am_fenrir", "the list starts on her current voice")
+            await pick(app, pilot, "af_jessica")
             self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 2))
             await pilot.pause()
             self.assertEqual(agent_of(w.toml, "simba").voice, "af_jessica")

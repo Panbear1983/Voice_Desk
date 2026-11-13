@@ -49,6 +49,7 @@ import gridview as V
 import syshealth
 import onoff
 import voiceedit
+import voicepick
 import voicetest
 import service
 import voicecfg
@@ -118,17 +119,19 @@ class ChoiceScreen(ModalScreen[Optional[str]]):
     #choice { width: 96; height: auto; border: round #9b59b6; background: #1b1b1b; padding: 1 2; }
     #choice-title { text-style: bold; }
     #choice-hint { color: #888888; }
+    #choice-list { height: auto; max-height: 24; }
     """
     BINDINGS = [Binding("escape", "cancel", "cancel")]
 
-    def __init__(self, title: str, options: list[onoff.Option]) -> None:
+    def __init__(self, title: str, options: list[onoff.Option], hint: Optional[str] = None) -> None:
         super().__init__()
         self._title, self._options = title, options
+        self._hint = hint or "Up / Down, then Enter (● = now). Esc cancels. The files are backed up and read back; U undoes."
 
     def compose(self) -> ComposeResult:
         with Vertical(id="choice"):
             yield Static(self._title, id="choice-title")
-            yield Static("Up / Down, then Enter. Esc cancels. The files are backed up and read back; U undoes.", id="choice-hint")
+            yield Static(self._hint, id="choice-hint")
             yield OptionList(*[Option(("● " if o.current else "  ") + o.label, id=o.token) for o in self._options], id="choice-list")
 
     def on_mount(self) -> None:
@@ -515,6 +518,27 @@ class Dashboard(App):
         if field_name == "effect" and not voiceedit.uses_simba_script(row.agent):
             self.say(f"{row.agent.display} has no voice effect (only Simba's Kokoro voice has one)")
             return
+        if field_name in ("voice", "voice_zh", "effect"):
+            # Part 2 (Peter 2026-11-11): a pick-list, current one marked; its last line opens the typing box
+            title, options, why_not = voicepick.menu(row.agent, field_name, self.cfg_loader())
+            if why_not:
+                self.say(why_not)
+                return
+
+            def picked(token: Optional[str]) -> None:
+                if token == voicepick.OTHER:
+                    self.ask_typed(row, field_name)
+                elif token == voicepick.SILENT:
+                    self.apply_edit(row.agent.key, field_name, None)
+                elif token is not None:
+                    self.apply_edit(row.agent.key, field_name, token)
+
+            self.push_screen(ChoiceScreen(title, options), picked)
+            return
+        self.ask_typed(row, field_name)
+
+    def ask_typed(self, row: E.Row, field_name: str) -> None:
+        """The typing box: L and O, and the "other, type it" line of the pick-list."""
         title, hint = self.PROMPTS[field_name]
 
         def answered(text: Optional[str]) -> None:
@@ -523,9 +547,9 @@ class Dashboard(App):
 
         self.push_screen(AskScreen(f"{row.agent.display} — {title}", hint, self.current_value(row, field_name)), answered)
 
-    def apply_edit(self, agent_key: str, field_name: str, text: str) -> None:
+    def apply_edit(self, agent_key: str, field_name: str, text: Optional[str]) -> None:
         try:
-            value = voiceedit.parse_extra(text) if field_name == "voices_extra" else text
+            value = voiceedit.parse_extra(text or "") if field_name == "voices_extra" else (text or None)
         except voiceedit.EditError as exc:
             self.say(str(exc))
             return

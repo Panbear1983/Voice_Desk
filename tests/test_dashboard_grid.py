@@ -57,6 +57,17 @@ async def wait_for(pred, timeout=10.0):
     return False
 
 
+async def pick(app, pilot, token):
+    """In an open ChoiceScreen, move to the line `token` with the arrow keys and press Enter, as Peter would."""
+    lst = app.screen.query_one(OptionList)
+    ids = [o.id for o in lst._options]
+    target = ids.index(token)
+    while lst.highlighted != target:
+        await pilot.press("down" if (lst.highlighted or 0) < target else "up")
+    await pilot.press("enter")
+    await pilot.pause()
+
+
 class TheGridScreen(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         service.set_muted(False)
@@ -168,6 +179,8 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("FAILED", text_of(app, "#detail"))
 
     async def test_editing_a_voice_with_e_then_undo_with_u(self):
+        # Part 2: E opens a pick-list of voices with the current one marked; arrows + Enter choose
+        import voicepick
         app = make_app(self.w)
         profile = self.w.paths.profiles / "assistant/config.yaml"
         before = profile.read_text()
@@ -175,11 +188,15 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             await load(app, pilot)
             await pilot.press("down", "e")
             await pilot.pause()
-            self.assertIsInstance(app.screen, D.AskScreen)
-            field = app.screen.query_one(Input)
-            self.assertEqual(field.value, "en-US-AvaNeural", "the box starts with the current voice")
-            field.value = "en-US-AriaNeural"
-            await pilot.press("enter")
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            lst = app.screen.query_one(OptionList)
+            ids = [o.id for o in lst._options]
+            self.assertEqual(ids[lst.highlighted], "en-US-AvaNeural", "the list starts on the current voice")
+            self.assertTrue(str(lst._options[lst.highlighted].prompt).startswith("●"), "the current voice is marked")
+            self.assertEqual(ids[-2:], [voicepick.SILENT, voicepick.OTHER], "silent, then 'other, type it' last")
+            self.assertIn("af_heart", ids, "Kokoro voices are on the list")
+            self.assertNotIn("en-US-JennyNeural", ids, "no Jenny on the list")
+            await pick(app, pilot, "en-US-AriaNeural")
             self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
             await pilot.pause()
             self.assertEqual(next(a for a in agents.agents(agents.load(self.w.toml)) if a.key == "kylie").voice, "en-US-AriaNeural")
@@ -193,20 +210,43 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(profile.read_text(), before)
             self.assertIn("undo", text_of(app, "#history"))
 
-    async def test_a_bad_voice_name_is_refused_with_a_sentence_and_changes_nothing(self):
+    async def test_z_lists_taiwan_voices_and_other_type_it_still_refuses_a_bad_name(self):
+        import voicepick
         app = make_app(self.w)
         async with app.run_test(size=(180, 50)) as pilot:
             await load(app, pilot)
             await pilot.press("down", "z")
             await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            ids = [o.id for o in app.screen.query_one(OptionList)._options]
+            self.assertEqual(ids, ["zh-TW-HsiaoChenNeural", "zh-TW-HsiaoYuNeural", "zh-TW-YunJheNeural",
+                                   voicepick.SILENT, voicepick.OTHER], "Taiwan Mandarin only")
+            await pick(app, pilot, voicepick.OTHER)
+            self.assertIsInstance(app.screen, D.AskScreen)
             app.screen.query_one(Input).value = "en-US-AvaNeural"            # an English voice in the Mandarin box
             await pilot.press("enter")
             self.assertTrue(await wait_for(lambda: "✗" in text_of(app, "#msg")))
             self.assertIn("Mandarin voice looks like", text_of(app, "#msg"))
             self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
 
+    async def test_silent_on_the_list_removes_the_voice_and_u_puts_it_back(self):
+        import voicepick
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("down", "z")
+            await pilot.pause()
+            await pick(app, pilot, voicepick.SILENT)
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            await pilot.pause()
+            self.assertIsNone(next(a for a in agents.agents(agents.load(self.w.toml)) if a.key == "kylie").voice_zh)
+            await pilot.press("u")
+            self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 2))
+            self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML, "the line is back exactly, comment and place")
+
     async def test_gemini_and_codex_voices_are_edited_on_the_grid_too_and_undone_with_u(self):
-        # step 5: E on Gemini's row opens the box; Gemini has no voice in this fixture, so it starts empty (silent)
+        # Gemini has no voice in this fixture (silent): its list is Edge voices only (its own hook speaks Edge only)
+        import voicepick
         app = make_app(self.w)
         conf = self.w.edit.gemini_conf
         before = conf.read_text()
@@ -214,19 +254,19 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             await load(app, pilot)
             await pilot.press("down", "down", "down", "down", "down", "e")     # Gemini is the 6th row
             await pilot.pause()
-            self.assertIsInstance(app.screen, D.AskScreen)
-            field = app.screen.query_one(Input)
-            self.assertEqual(field.value, "", "no shared Jenny any more: no voice is no voice")
-            field.value = "en-US-AriaNeural"
-            await pilot.press("enter")
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            lst = app.screen.query_one(OptionList)
+            ids = [o.id for o in lst._options]
+            self.assertFalse([i for i in ids if not i.startswith("::") and not i.endswith("Neural")], "Edge only")
+            self.assertEqual(ids[lst.highlighted], voicepick.SILENT, "no voice today: 'silent' is the marked line")
+            await pick(app, pilot, "en-US-AriaNeural")
             self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
             await pilot.pause()
             self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', conf.read_text())
             self.assertIn("Gemini English voice: not set → Aria", text_of(app, "#history"))
             await pilot.press("down", "e")                                      # Codex, the 7th row
             await pilot.pause()
-            app.screen.query_one(Input).value = "en-GB-RyanNeural"
-            await pilot.press("enter")
+            await pick(app, pilot, "en-GB-RyanNeural")
             self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 2))
             await pilot.pause()
             self.assertEqual(next(a for a in agents.agents(agents.load(self.w.toml)) if a.key == "codex").voice, "en-GB-RyanNeural")
@@ -405,7 +445,7 @@ class TheOnOffCells(unittest.IsolatedAsyncioTestCase):
                 await load(app, pilot)
                 await pilot.press("right", "enter")
                 await pilot.pause()
-                self.assertIsInstance(app.screen, D.AskScreen)
+                self.assertIsInstance(app.screen, D.ChoiceScreen, "Enter on the voice column opens the pick-list")
                 await pilot.press("escape")
                 await pilot.press("right", "right", "right", "right", "right", "right", "enter")
                 self.assertTrue(await wait_for(lambda: asked))
