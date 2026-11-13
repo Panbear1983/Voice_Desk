@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 *.shortcut
 *.unsigned.shortcut
+# hand-made dated backups and sed -E leftovers (2026-11-13)
+*.bak-*
+*-E
