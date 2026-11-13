@@ -318,9 +318,11 @@ class TheLooks(unittest.TestCase):
         self.assertIn("text only", t.plain)
         self.assertIn(V.COLOUR["bad"], {str(s.style) for s in t.spans})
 
-    def test_not_applicable_is_a_dash(self):
+    def test_not_applicable_and_not_here_is_a_blank_cell(self):
+        # Part 4 (Peter 2026-11-11): not here = a blank cell (it was a dash)
         r = rows_by_key(F.make_world())["codex"]
-        self.assertEqual(V.cell_text(r.cells["tg_dm"], r.evidence["tg_dm"]).plain, "—")
+        self.assertEqual(V.cell_text(r.cells["tg_dm"], r.evidence["tg_dm"]).plain, "")
+        self.assertEqual(V.cell_text(r.cells["tg_dm"], r.evidence["tg_dm"], r.is_here("tg_dm"), "tg_dm").plain, "")
 
 
 if __name__ == "__main__":

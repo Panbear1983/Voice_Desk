@@ -158,7 +158,7 @@ def _write(paths: VE.EditPaths, agent_key: str, display: str, field_name: str, w
            now: Optional[_dt.datetime] = None, extra: Optional[dict] = None) -> VE.Result:
     """Backup, write, read back (check(cfg) -> error or ""), history line. agents.toml is put back on any failure."""
     now = _now(now)
-    stamp = now.strftime("%Y%m%d-%H%M%S")
+    stamp = now.strftime("%Y%m%d-%H%M%S-%f")          # to the microsecond: two edits in one second stay two
     try:
         cfg = tomllib.loads(new_text)
     except tomllib.TOMLDecodeError as exc:
@@ -269,29 +269,15 @@ def remove_agent(paths: VE.EditPaths, agent_key: str, now: Optional[_dt.datetime
 
 
 def here_map(a: agents.Agent, cells: dict[str, G.Cell]) -> dict[str, bool]:
-    """place -> is the agent here? From `here = [...]` when the block has it, else every place that is wired."""
-    raw = a.raw.get("here")
-    if isinstance(raw, list):
-        return {p: p in raw for p in G.PLACE_KEYS}
-    return {p: cells[p].value != G.NA for p in G.PLACE_KEYS}
+    return G.here_map(a, cells)
 
 
 def default_phrase(a: agents.Agent, place: str) -> str:
-    """What wakes the agent at a place today, when no phrase is stored: the real wake words and file names."""
-    if place == "mic" and G.kind_of(a) != G.OTHER:
-        return f"hello {a.display}"
-    if place == "iphone" and G.kind_of(a) != G.OTHER:
-        return f"Talk to {a.display}"                  # the Siri shortcut's name (make_shortcut.py)
-    if place == "tg_dm" and a.profile:
-        return "its own Telegram bot (the profile's)"
-    if place == "tg_group" and a.profile:
-        return "Team_Room group"
-    return ""
+    return G.default_phrase(a, place)
 
 
 def phrase_map(a: agents.Agent) -> dict[str, str]:
-    raw = a.raw.get("phrases")
-    return {p: str(raw[p]) for p in G.PLACE_KEYS if isinstance(raw, dict) and isinstance(raw.get(p), str)}
+    return G.phrase_map(a)
 
 
 def set_here(paths: VE.EditPaths, agent_key: str, place: str, here: bool, cells: dict[str, G.Cell],
@@ -323,27 +309,19 @@ def set_here(paths: VE.EditPaths, agent_key: str, place: str, here: bool, cells:
     res = _write(paths, agent_key, a.display, "grid:here", f"at {name}", "not here" if here else "here",
                  "here" if here else "not here", old_text, new_text, check, now=now)
     if res.ok:
-        wired = cells[place].value not in (G.NA, G.UNKNOWN)
-        res.message = (f"{a.display} is {'here' if here else 'not here'} at {name}"
-                       + ("" if not here else "." if wired else
-                          f", but it is not wired there yet, so the cell shows as unfinished: {wiring_hint(a, place)}")
-                       + (". The voice switch there is unchanged (Enter changes it)" if not here else "")
-                       + ". U undoes.")
+        wired = not G.unwired(cells[place], place)
+        if not here:
+            tail = "; the voice switch there is unchanged (Enter changes it)"
+        elif wired:
+            tail = ""
+        else:
+            tail = f", but it is not wired there yet, so the cell shows as unfinished: {wiring_hint(a, place)}"
+        res.message = f"{a.display} is {'here' if here else 'not here'} at {name}{tail}. U undoes."
     return res
 
 
 def wiring_hint(a: agents.Agent, place: str) -> str:
-    """What a "here" that is not wired needs: a toggle cannot create wiring."""
-    if place == "iphone":
-        return (f"a Siri shortcut \"Talk to {a.display}\" has to be imported on the iPhone by Peter "
-                f"(python3 make_shortcut.py makes the file)")
-    if G.kind_of(a) == G.OTHER:
-        return "Voice Desk does not talk to this agent there; it holds only its voice"
-    if place in ("tg_dm", "tg_group"):
-        return "only a Hermes agent's own Telegram bot can speak there"
-    if place == "terminal":
-        return "this agent has no window hook that speaks"
-    return "nothing speaks for it there yet"
+    return G.wiring_hint(a, place)
 
 
 def set_phrase(paths: VE.EditPaths, agent_key: str, place: str, phrase: Optional[str],

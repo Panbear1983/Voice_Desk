@@ -342,6 +342,17 @@ class Row:
     evidence: dict[str, Evidence]
     voice: G.VoiceInfo
     quiet: dict[str, str] = field(default_factory=dict)
+    here: dict[str, bool] = field(default_factory=dict)        # Part 4: is the agent at that place (X toggles)
+    phrases: dict[str, str] = field(default_factory=dict)      # Part 4: the stored activation phrases (P edits)
+
+    def is_here(self, place: str) -> bool:
+        return self.here.get(place, self.cells[place].value != G.NA)
+
+    def phrase(self, place: str) -> tuple[str, bool]:
+        """(the activation phrase, is it stored) — the default (today's wake words) when none is stored."""
+        if place in self.phrases:
+            return self.phrases[place], True
+        return G.default_phrase(self.agent, place), False
 
 
 def build(cfg: dict, paths: G.Paths, reader: LogReader, now: Optional[float] = None) -> list[Row]:
@@ -383,5 +394,5 @@ def build(cfg: dict, paths: G.Paths, reader: LogReader, now: Optional[float] = N
                                           "Voice Desk only holds the voice, so it sees no evidence of them.")
         ev["mic"] = judge_mic(a, cells["mic"], listener, now, info.en)
         ev["iphone"] = judge_iphone(cells["iphone"], receiver_up, last_req, now)
-        rows.append(Row(a, kind, cells, ev, info, G.quiet_hours(a)))
+        rows.append(Row(a, kind, cells, ev, info, G.quiet_hours(a), G.here_map(a, cells), G.phrase_map(a)))
     return rows

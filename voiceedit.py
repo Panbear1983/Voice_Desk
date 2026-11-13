@@ -146,6 +146,8 @@ def _toml_value(v: Any) -> str:
         return "{ " + ", ".join(f"{key(k)} = {_toml_value(x)}" for k, x in v.items()) + " }" if v else "{}"
     if isinstance(v, bool):
         return "true" if v else "false"
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
     if isinstance(v, (int, float)):
         return repr(v)
     return json.dumps(str(v), ensure_ascii=False)

@@ -15,10 +15,12 @@ import syshealth
 import voiceedit
 import voicetest
 
-COLOUR = {"ok": "#2ecc71", "idle": "#7f8c8d", "warn": "#f1c40f", "bad": "#e74c3c", "na": "#444444"}
+COLOUR = {"ok": "#2ecc71", "idle": "#7f8c8d", "warn": "#f1c40f", "bad": "#e74c3c", "na": "#444444",
+          "unfinished": "#e67e22"}
 MEANING = {"ok": "green: spoke recently and it worked", "idle": "grey: idle, nothing to say lately (not a failure)",
            "warn": "yellow: worked last time, but some recent replies were text only",
-           "bad": "red: mismatch or failure"}
+           "bad": "red: mismatch or failure",
+           "unfinished": "orange: switched here, but nothing is wired there yet (never green)"}
 COLUMN_WIDTH = 17
 
 
@@ -31,10 +33,19 @@ def _clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def cell_text(cell: G.Cell, ev: E.Evidence) -> Text:
-    """Two lines: the setting (Off / Voice-back / Always) and what the evidence says, in the evidence's colour."""
-    if cell.value == G.NA:
-        return Text("—", style=COLOUR["na"], justify="center")
+def cell_text(cell: G.Cell, ev: E.Evidence, here: Optional[bool] = None, place: str = "") -> Text:
+    """Part 4, the wiring matrix: not here = a blank cell. Here = two lines, the setting (Off / Voice-back / Always)
+    and what the evidence says, in the evidence's colour; here but not wired = "not wired yet" in orange, never
+    green. here=None: the default (here wherever something is wired)."""
+    here = cell.value != G.NA if here is None else here
+    if not here:
+        return Text("")
+    if G.unwired(cell, place) if place else cell.value == G.NA:
+        t = Text()
+        t.append("here", style="bold white")
+        t.append("\n")
+        t.append("◌ not wired yet", style=COLOUR["unfinished"])
+        return t
     status = "bad" if cell.problem else ev.status
     head = _clip(ev.headline or cell.problem, COLUMN_WIDTH - 2)
     t = Text()
@@ -111,15 +122,27 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
                  "Mandarin setting is kept for Voice Desk and Claude.", style="#7f8c8d")
     for place, name in G.PLACES:
         cell, ev = row.cells[place], row.evidence[place]
-        if cell.value == G.NA:
+        t.append("\n")
+        if not row.is_here(place):
+            t.append("  ", style="default")
+            t.append(f"{name}: not here", style="#7f8c8d")
+            t.append(f"  (X puts {row.agent.display} here)", style="#555555")
+            continue
+        phrase, stored = row.phrase(place)
+        wake = (f"  wakes with “{phrase}”" + ("" if stored else " (today's)") if phrase else "  no activation phrase")
+        if G.unwired(cell, place):
+            t.append("◌ ", style=COLOUR["unfinished"])
+            t.append(f"{name}: ", style="bold")
+            t.append(f"here, not wired yet — {G.wiring_hint(row.agent, place)}", style=COLOUR["unfinished"])
+            t.append(wake, style="#9b59b6")
             continue
         colour = COLOUR["bad" if cell.problem else ev.status]
-        t.append("\n")
         t.append("● ", style=colour)
         t.append(f"{name}: ", style="bold")
         t.append(f"{cell.label}", style="bold white")
         t.append(f" — {ev.detail or cell.problem}", style=colour if ev.status in ("bad", "warn") else "default")
         t.append(f"  [{cell.note}]", style="#555555")
+        t.append(wake, style="#9b59b6")
         if onoff.can_switch(row.agent, place):
             t.append("  ⏎ Enter changes it", style="#9b59b6")
         if row.quiet.get(place):

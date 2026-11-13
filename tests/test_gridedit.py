@@ -133,6 +133,87 @@ class RemovingAnAgent(unittest.TestCase):
         self.assertIn('display = "Aider!"', w.toml.read_text(), "nothing overwritten")
 
 
+class TheWiringMatrix(unittest.TestCase):
+    """Part 4: here / not here per cell (separate from the voice switch), unfinished never green, phrases."""
+
+    def rows(self, w):
+        import gridevidence as E
+        return {r.agent.key: r for r in E.build(agents.load(w.toml), w.paths, E.LogReader(w.paths.profiles))}
+
+    def test_not_here_is_a_blank_cell_and_here_but_unwired_is_orange_never_green(self):
+        import gridevidence as E
+        import gridview as V
+        na = G.Cell(G.NA, "nothing speaks there")
+        self.assertEqual(V.cell_text(na, E.NA_EVIDENCE, False, "tg_dm").plain, "")
+        t = V.cell_text(na, E.NA_EVIDENCE, True, "tg_dm")
+        self.assertEqual(t.plain, "here\n◌ not wired yet")
+        self.assertNotIn(V.COLOUR["ok"], {str(s.style) for s in t.spans})
+        ok = E.Evidence("ok", "spoke 2m ago")
+        t = V.cell_text(G.Cell(G.UNKNOWN, "no Siri shortcut"), ok, True, "iphone")
+        self.assertIn("not wired", t.plain, "an iPhone with no shortcut is unfinished even when the door is open")
+        self.assertEqual(V.cell_text(G.Cell(G.ALWAYS), E.Evidence("ok", "spoke 2m ago"), False, "tg_group").plain, "",
+                         "not here hides even a working cell")
+
+    def test_by_default_an_agent_is_here_where_it_is_wired(self):
+        w = F.make_world()
+        r = self.rows(w)
+        self.assertFalse(r["codex"].is_here("tg_dm"), "Codex has no Telegram bot")
+        self.assertTrue(r["codex"].is_here("mic"))
+        self.assertTrue(r["kylie"].is_here("tg_dm"))
+        self.assertEqual(r["kylie"].phrase("mic"), ("hello Kylie", False))
+
+    def test_x_puts_codex_here_on_telegram_unfinished_and_u_takes_it_back(self):
+        w = F.make_world()
+        cells = self.rows(w)["codex"].cells
+        res = GE.set_here(w.edit, "codex", "tg_dm", True, cells)
+        self.assertTrue(res.ok, res.message)
+        self.assertIn("not wired there yet", res.message)
+        r = self.rows(w)["codex"]
+        self.assertTrue(r.is_here("tg_dm"))
+        self.assertTrue(G.unwired(r.cells["tg_dm"], "tg_dm"))
+        self.assertIn("Codex at Telegram direct: not here → here", VE.recent(w.edit, 1)[0])
+        self.assertTrue(VE.undo(w.edit).ok)
+        self.assertEqual(w.toml.read_text(), F.AGENTS_TOML)
+
+    def test_x_takes_kylie_off_a_place_without_touching_her_voice_switch(self):
+        w = F.make_world()
+        before = files_under(w.root)
+        r = self.rows(w)["kylie"]
+        res = GE.set_here(w.edit, "kylie", "tg_dm", False, r.cells)
+        self.assertTrue(res.ok, res.message)
+        self.assertIn("voice switch there is unchanged", res.message)
+        after = files_under(w.root)
+        changed = {k for k in set(before) | set(after) if before.get(k) != after.get(k)}
+        self.assertTrue(all(k.endswith("agents.toml") or "voice_history" in k for k in changed), changed)
+        raw = agents.load(w.toml)["agents"]["kylie"]["here"]
+        self.assertNotIn("tg_dm", raw)
+        self.assertIn("mic", raw)
+        self.assertTrue(VE.undo(w.edit).ok)
+        self.assertEqual(w.toml.read_text(), F.AGENTS_TOML)
+
+    def test_p_stores_phrases_per_place_empty_goes_back_to_default_and_u_undoes_each(self):
+        w = F.make_world()
+        self.assertTrue(GE.set_phrase(w.edit, "jarvis", "mic", "  hello   Jarvis  ").ok)
+        self.assertTrue(GE.set_phrase(w.edit, "jarvis", "iphone", "Talk to Jarvis now").ok)
+        self.assertEqual(agents.load(w.toml)["agents"]["jarvis"]["phrases"],
+                         {"mic": "hello Jarvis", "iphone": "Talk to Jarvis now"})
+        self.assertIn("Jarvis phrase at iPhone (Siri): “default (Talk to Jarvis)” → “Talk to Jarvis now”",
+                      VE.recent(w.edit, 1)[0])
+        self.assertTrue(GE.set_phrase(w.edit, "jarvis", "mic", "").ok)
+        self.assertEqual(agents.load(w.toml)["agents"]["jarvis"]["phrases"], {"iphone": "Talk to Jarvis now"})
+        for _ in range(3):
+            self.assertTrue(VE.undo(w.edit).ok)
+        self.assertEqual(w.toml.read_text(), F.AGENTS_TOML)
+
+    def test_the_flags_survive_a_restart_because_they_live_in_agents_toml(self):
+        w = F.make_world()
+        GE.set_here(w.edit, "codex", "iphone", False, self.rows(w)["codex"].cells)
+        GE.set_phrase(w.edit, "codex", "mic", "hello Codex")
+        a = next(x for x in agents.agents(agents.load(w.toml)) if x.key == "codex")
+        self.assertEqual(G.phrase_map(a), {"mic": "hello Codex"})
+        self.assertFalse(G.here_map(a, self.rows(w)["codex"].cells)["iphone"])
+
+
 class TheKeys(unittest.IsolatedAsyncioTestCase):
     """A, D and Shift-T in the headless dashboard against the fake world (nothing played, nothing sent)."""
 
@@ -167,6 +248,40 @@ class TheKeys(unittest.IsolatedAsyncioTestCase):
             self.assertIn("builder", [r.agent.key for r in app.rows], "a row of his own")
             await pilot.press("u")
             self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 2))
+            self.assertEqual(w.toml.read_text(), F.AGENTS_TOML)
+
+    async def test_x_and_p_on_a_cell_then_u_u(self):
+        import dashboard as D
+        from textual.widgets import DataTable, Input
+        from tests.test_dashboard_grid import load, make_app, text_of, wait_for
+        w = F.make_world()
+        app = make_app(w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press(*["down"] * 6, "right", "right", "right")          # Codex, Telegram direct
+            self.assertEqual((app.selected().agent.key, app.selected_place()), ("codex", "tg_dm"))
+            table = app.screen.query_one(DataTable)
+            self.assertEqual(table.get_cell_at(table.cursor_coordinate).plain, "", "not here: a blank cell")
+            await pilot.press("p")
+            await pilot.pause()
+            self.assertIn("not here at Telegram direct: X puts it here first", text_of(app, "#msg"))
+            await pilot.press("x")
+            self.assertTrue(await wait_for(lambda: VE.read_history(w.edit)))
+            await load(app, pilot)
+            table = app.screen.query_one(DataTable)
+            self.assertEqual(table.get_cell_at(table.cursor_coordinate).plain, "here\n◌ not wired yet")
+            await pilot.press("right", "right", "p")                             # Codex, mic
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.AskScreen)
+            app.screen.query_one(Input).value = "hello Codex"
+            await pilot.press("enter")
+            self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 2))
+            await load(app, pilot)
+            self.assertIn("wakes with “hello Codex”", text_of(app, "#detail"))
+            await pilot.press("u")
+            self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 3))
+            await pilot.press("u")
+            self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 4))
             self.assertEqual(w.toml.read_text(), F.AGENTS_TOML)
 
     async def test_d_asks_first_then_removes_only_the_block_and_u_puts_it_back(self):

@@ -721,8 +721,7 @@ class TheGridShowsHer(unittest.TestCase):
                                                                                  self.cfg))).plain)
         import gridevidence as GE
         cells = G.cells_for(self.simba, self.w.paths)
-        detail = V.detail_text(mock.Mock(voice=info, agent=self.simba, kind=G.OTHER, cells=cells,
-                                         evidence=dict.fromkeys(cells, GE.Evidence("idle", "", "")), quiet={}),
+        detail = V.detail_text(GE.Row(self.simba, G.OTHER, cells, dict.fromkeys(cells, GE.Evidence("idle", "", "")), info),
                                None).plain
         self.assertIn("effect: fenrir16 = speed 0.95 · pitch 1.08 · tempo 1", detail)
 

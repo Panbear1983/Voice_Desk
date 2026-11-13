@@ -329,6 +329,57 @@ def cells_for(a: agents.Agent, p: Paths) -> dict[str, Cell]:
     return {place: fn(a, p) for place, fn in CELL_FUNCS.items()}
 
 
+# -- the wiring matrix (Part 4, 2026-11-13): is the agent HERE at a place, and what wakes it there ---------
+# Separate from the voice on/off switch. Stored per agent in agents.toml (`here`, `phrases`); the gridedit keys
+# X / P write them. Not set = the places that are wired today, and the wake words / file names in use today.
+def here_map(a: agents.Agent, cells: dict[str, Cell]) -> dict[str, bool]:
+    """place -> is the agent here? From `here = [...]` when its block has it, else every place that is wired."""
+    raw = a.raw.get("here")
+    if isinstance(raw, list):
+        return {p: p in raw for p in PLACE_KEYS}
+    return {p: cells[p].value != NA for p in PLACE_KEYS}
+
+
+def unwired(cell: Cell, place: str) -> bool:
+    """A "here" cell that nothing makes speak yet: shown as unfinished, never green. A toggle cannot wire it."""
+    return cell.value == NA or (place == "iphone" and cell.value == UNKNOWN)
+
+
+def wiring_hint(a: agents.Agent, place: str) -> str:
+    """What a "here" that is not wired would need, in plain words."""
+    if kind_of(a) == OTHER:
+        return "Voice Desk does not talk to this agent; it holds only its voice"
+    if place == "iphone":
+        return (f"a Siri shortcut \"Talk to {a.display}\" has to be imported on the iPhone by Peter "
+                f"(python3 make_shortcut.py makes the file)")
+    if place in ("tg_dm", "tg_group"):
+        return "only a Hermes agent's own Telegram bot speaks there"
+    if place == "terminal":
+        return "this agent has no window hook that speaks"
+    return "nothing speaks for it there yet"
+
+
+def default_phrase(a: agents.Agent, place: str) -> str:
+    """What wakes the agent at a place today when no phrase is stored: the real wake words and file names."""
+    if kind_of(a) == OTHER:
+        return ""
+    if place == "mic":
+        return f"hello {a.display}"
+    if place == "iphone":
+        return f"Talk to {a.display}"                  # the Siri shortcut's name (make_shortcut.py)
+    if place == "tg_dm" and a.profile:
+        return "its own Telegram bot"
+    if place == "tg_group" and a.profile:
+        return "the Team_Room group"
+    return ""
+
+
+def phrase_map(a: agents.Agent) -> dict[str, str]:
+    """place -> the activation phrase stored in agents.toml (`phrases = { mic = "hello Jarvis" }`)."""
+    raw = a.raw.get("phrases")
+    return {p: str(raw[p]) for p in PLACE_KEYS if isinstance(raw, dict) and isinstance(raw.get(p), str)}
+
+
 # -- voices and the optional per-place fields stored in agents.toml --------------------------------
 @dataclass(frozen=True)
 class VoiceInfo:

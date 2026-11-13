@@ -173,6 +173,8 @@ class GridScreen(Screen):
         Binding("f", "edit_effect", "voice effect"),
         Binding("a", "add_agent", "add agent"),
         Binding("d", "remove_agent", "remove from grid"),
+        Binding("x", "toggle_here", "here / not here"),
+        Binding("p", "edit_phrase", "activation phrase"),
         Binding("u", "undo", "undo"),
         Binding("w", "watcher", "pause / resume watcher"),
         Binding("s", "listener", "listener screen"),
@@ -231,6 +233,12 @@ class GridScreen(Screen):
 
     def action_remove_agent(self) -> None:
         self.app.ask_remove()          # type: ignore[attr-defined]
+
+    def action_toggle_here(self) -> None:
+        self.app.toggle_here()         # type: ignore[attr-defined]
+
+    def action_edit_phrase(self) -> None:
+        self.app.ask_phrase()          # type: ignore[attr-defined]
 
     def action_undo(self) -> None:
         self.app.undo_last()           # type: ignore[attr-defined]
@@ -382,7 +390,7 @@ class Dashboard(App):
         for row in self.rows:
             key = row.agent.key
             table.add_row(Text(row.agent.display, style="bold"), V.voice_text(row),
-                          *[V.cell_text(row.cells[p], row.evidence[p]) for p in G.PLACE_KEYS],
+                          *[V.cell_text(row.cells[p], row.evidence[p], row.is_here(p), p) for p in G.PLACE_KEYS],
                           V.test_text(self.tests.get(key), key in self.testing, row.voice.silent), key=key, height=2)
         if self.rows:
             table.move_cursor(row=min(keep, len(self.rows) - 1), column=keep_col)
@@ -659,6 +667,66 @@ class Dashboard(App):
     @work(thread=True, exclusive=True, group="edit")
     def _remove_worker(self, agent_key: str) -> None:
         res = gridedit.remove_agent(self.edit_paths, agent_key)
+        self.call_from_thread(self.edit_done, res)
+
+    # -- the wiring matrix: here / not here (X) and the activation phrase (P), Part 4 -------------------
+    PHRASE_HINT = {
+        "terminal": "What starts it in its window, e.g. the command name. ",
+        "tg_dm": "The bot Peter writes to, e.g. @JarvisBot. ",
+        "tg_group": "The group, e.g. Team_Room. ",
+        "mic": "The words that wake it at the Mac's microphone, e.g. hello Jarvis. ",
+        "iphone": "The Siri shortcut's name, e.g. Talk to Jarvis. ",
+    }
+
+    def _cell_or_say(self, what: str) -> Optional[tuple[E.Row, str]]:
+        row, place = self.selected(), self.selected_place()
+        if not row:
+            return None
+        if place is None:
+            self.say(f"{what} works on a place: ← → to a place column first")
+            return None
+        return row, place
+
+    def toggle_here(self) -> None:
+        """X: the agent is here at this place, or not (a blank cell). The voice on/off switch is separate."""
+        got = self._cell_or_say("X (here / not here)")
+        if got:
+            row, place = got
+            self.say("saving, with a backup and a read-back…")
+            self._here_worker(row.agent.key, place, not row.is_here(place), row.cells)
+
+    @work(thread=True, exclusive=True, group="edit")
+    def _here_worker(self, agent_key: str, place: str, here: bool, cells: dict) -> None:
+        res = gridedit.set_here(self.edit_paths, agent_key, place, here, cells)
+        self.call_from_thread(self.edit_done, res)
+
+    def ask_phrase(self) -> None:
+        """P: the activation phrase of the selected cell. Stored and shown; it renames nothing."""
+        got = self._cell_or_say("P (activation phrase)")
+        if not got:
+            return
+        row, place = got
+        name = G.PLACE_NAME[place]
+        if not row.is_here(place):
+            self.say(f"{row.agent.display} is not here at {name}: X puts it here first")
+            return
+        phrase, stored = row.phrase(place)
+        default = G.default_phrase(row.agent, place)
+        hint = (self.PHRASE_HINT[place] + (f"Empty = today's: {default}. " if default else "Empty = none. ")
+                + "Stored and shown only: it does not rename a Siri shortcut or change the wake words yet. "
+                  "Enter saves, Esc cancels.")
+
+        def answered(text: Optional[str]) -> None:
+            if text is not None:
+                self.say("saving, with a backup and a read-back…")
+                self._phrase_worker(row.agent.key, place, text)
+
+        self.push_screen(AskScreen(f"{row.agent.display} at {name} — activation phrase", hint,
+                                   phrase if stored else ""), answered)
+
+    @work(thread=True, exclusive=True, group="edit")
+    def _phrase_worker(self, agent_key: str, place: str, text: str) -> None:
+        res = gridedit.set_phrase(self.edit_paths, agent_key, place, text)
         self.call_from_thread(self.edit_done, res)
 
     def undo_last(self) -> None:
