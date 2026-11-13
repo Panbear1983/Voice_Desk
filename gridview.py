@@ -100,7 +100,27 @@ def health_text(lights: list[syshealth.Light]) -> Text:
     return t
 
 
-def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: Optional[float] = None) -> Text:
+def can_text(row: E.Row, place: str, paths: G.Paths) -> Text:
+    """What the place under the cursor can really do for this agent (command-center brief, stage 1): which voice
+    really speaks there, whether E / Z reach it, and what Enter does (or why it is view only)."""
+    import gridcan
+    t = Text()
+    name = G.PLACE_NAME[place]
+    if not row.is_here(place):
+        t.append(f"{name}: ", style="bold #9b59b6")
+        t.append(f"{row.agent.display} is not here (X puts {row.agent.display} here)", style="#7f8c8d")
+        return t
+    c = gridcan.can(row.agent, place, row.cells[place], paths)
+    t.append(f"What {name} can do for {row.agent.display}: ", style="bold #9b59b6")
+    t.append(f"speaks: {c.speaks}" if c.speaks else "nothing speaks here", style="white")
+    if c.voice:
+        t.append(f"  ·  {c.voice}", style="#bbbbbb")
+    t.append(f"  ·  {c.change}", style="#9b59b6" if c.change.startswith("Enter") else "#7f8c8d")
+    return t
+
+
+def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: Optional[float] = None,
+                place: Optional[str] = None, paths: Optional[G.Paths] = None) -> Text:
     now = now or time.time()
     v = row.voice
     t = Text()
@@ -117,7 +137,10 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
         t.append(f"  ·  effect: {v.effect} = {simba_tts.describe(v.effect)} (F changes it)")
     if v.extra:
         t.append("  ·  also " + ", ".join(f"{k}: {x}" for k, x in v.extra.items()))
-    if row.kind == G.HERMES:
+    if place and paths is not None:
+        t.append("\n")
+        t.append_text(can_text(row, place, paths))
+    if row.kind == G.HERMES and v.zh:
         t.append("\nMandarin lines go through Hermes' voice script, which picks its own Mandarin voice; this agent's "
                  "Mandarin setting is kept for Voice Desk and Claude.", style="#7f8c8d")
     for place, name in G.PLACES:

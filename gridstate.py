@@ -45,10 +45,15 @@ HERMES, CLAUDE, GEMINI, CODEX, OTHER = "hermes", "claude", "gemini", "codex", "o
 _ORDER = {HERMES: 0, CLAUDE: 1, GEMINI: 2, CODEX: 3, OTHER: 4}
 SKIP_PROFILES: set[str] = set()   # 2026-11-13: the rows are exactly the [agents.*] blocks. Builder had been left off
 #                                   by name; he has no block, so he is not on the grid until Peter adds him (A key).
-# An agent that is not a brain Voice Desk talks to (Simba, 2026-11-10): agents.toml holds only her voice; no place on
-# the grid has a switch for her. Her own listener (panbear-daily simba.py) uses that voice for her Team_Room voice
-# notes, switched in its simba.yaml (voice_notes.enabled): the Telegram group cell shows that switch, read only.
+# An agent that is not a brain Voice Desk talks to: agents.toml holds only its voice; no place on the grid has a switch
+# for it. (Simba was one until 2026-11-13; her row now points at her Hermes profile, see TELEGRAM_HANDS_OFF.)
 VOICE_ONLY_NOTE = "voice only: Voice Desk holds this agent's voice, nothing here makes it speak"
+# Agents whose Telegram bot the grid shows but never moves or switches (command-center brief 2026-11-13, decision 8:
+# Simba's row reads like any Hermes agent's, "her Telegram bot is NOT moved by this job"). key -> the plain note.
+TELEGRAM_HANDS_OFF = {
+    "simba": "her Telegram bot is her own (her Hermes gateway behind simba-guard, and panbear-daily simba.py for "
+             "Team_Room voice notes); Voice Desk shows it and does not move or switch it",
+}
 
 _VOICE_MODE_TO_CELL = {"off": OFF, "voice_only": VOICE_BACK, "all": ALWAYS}
 CELL_TO_VOICE_MODE = {v: k for k, v in _VOICE_MODE_TO_CELL.items()}
@@ -241,11 +246,21 @@ def terminal_cell(a: agents.Agent, p: Paths) -> Cell:
     return Cell(UNKNOWN, "unknown kind of agent")
 
 
+def _hands_off(a: agents.Agent, cell: Cell) -> Cell:
+    """The same reading, with the plain note that Voice Desk does not touch this agent's Telegram bot."""
+    note = TELEGRAM_HANDS_OFF.get(a.key)
+    return Cell(cell.value, f"{cell.note}; {note}", cell.problem) if note else cell
+
+
 def tg_dm_cell(a: agents.Agent, p: Paths) -> Cell:
     if kind_of(a) == OTHER:
         return Cell(NA, VOICE_ONLY_NOTE)
     if kind_of(a) != HERMES:
         return Cell(NA, "no Telegram for this agent")
+    return _hands_off(a, _tg_dm_reading(a, p))
+
+
+def _tg_dm_reading(a: agents.Agent, p: Paths) -> Cell:
     key = f"{a.profile}:telegram:{p.tg_dm_chat}"
     modes = _read_json(p.voice_mode_file) or {}
     mode = modes.get(key)
@@ -261,6 +276,9 @@ def tg_dm_cell(a: agents.Agent, p: Paths) -> Cell:
         return Cell(ALWAYS, "no saved chat mode, so voice.auto_tts: true decides (a chat mode, once set, wins)")
     if ok:
         return Cell(OFF, "no saved chat mode and voice.auto_tts is not true")
+    if (Path(p.profiles) / a.profile / "config.yaml").exists():
+        # Hermes' own default (gateway/run_voice.py: voice.auto_tts defaults to false)
+        return Cell(OFF, "no saved chat mode and no voice.auto_tts in the profile, so Hermes' default decides: text only")
     return Cell(UNKNOWN, f"cannot read voice.auto_tts for {a.profile}")
 
 
@@ -284,9 +302,10 @@ def simba_group_cell(p: Paths) -> Cell:
 
 
 def tg_group_cell(a: agents.Agent, p: Paths) -> Cell:
+    if a.key == "simba" and kind_of(a) in (HERMES, OTHER):
+        # her Team_Room voice notes come from her own listener (simba.yaml), not from the team-room mirror
+        return _hands_off(a, simba_group_cell(p))
     if kind_of(a) == OTHER:
-        if a.key == "simba":
-            return simba_group_cell(p)
         return Cell(NA, VOICE_ONLY_NOTE)
     if kind_of(a) != HERMES:
         return Cell(NA, "no Telegram for this agent")

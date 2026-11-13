@@ -25,6 +25,8 @@ import onoff
 
 def can_switch(agent: agents.Agent, place: str) -> bool:
     kind = G.kind_of(agent)
+    if place == "tg_dm" and agent.key in G.TELEGRAM_HANDS_OFF:
+        return False                                       # Simba's own bot: shown, never switched (2026-11-13)
     return (place == "tg_dm" and kind == G.HERMES) or (place == "terminal" and kind == G.GEMINI)
 
 

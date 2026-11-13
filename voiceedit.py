@@ -403,11 +403,8 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
             #                                             voice set to silent: Peter 2026-11-11, empty = silent)
         else:
             new = check_voice(field_name, new, agent)
-        if field_name == "voice" and uses_simba_script(agent) and new is not None:
-            taken = next((a.display for a in agents.agents(cfg)
-                          if a.key != agent_key and _kokoro_name(a.voice) == _kokoro_name(new)), None)
-            if taken:                                   # Peter: a voice of her own, not one he already hears
-                raise EditError(f"{new} is already {taken}'s voice; {agent.display} needs one of her own.")
+        # (Simba's "a voice of her own" rule was lifted on 2026-11-13, brief decision 14: she may take any voice her
+        # script can make, also one another agent has.)
         old = {"voice": agent.voice, "voice_zh": agent.voice_zh, "voices_extra": agent.voices_extra or None,
                "voice_override": agent.raw.get("voice_override"), "effect": agent.effect}[field_name]
         if old == new or (field_name == "voice_override" and old is None and new == "auto"):

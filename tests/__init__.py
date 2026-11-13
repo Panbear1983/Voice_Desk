@@ -18,3 +18,26 @@ os.environ["VOICE_DESK_HERDR_BIN"] = str(_herdr)
 os.environ["VOICE_DESK_CLAUDE_PROJECTS"] = str(_tmp / "projects")
 os.environ["VOICE_DESK_GEMINI_BRAIN"] = str(_tmp / "gemini-brain")
 os.environ["VOICE_DESK_CODEX_SESSIONS"] = str(_tmp / "codex-sessions")
+
+# A small fake voice bank (voicebank.py), so the pick-list tests never depend on what this Mac has installed.
+# FAKE_KOKORO / FAKE_EDGE name what is in it.
+import json  # noqa: E402
+import zipfile  # noqa: E402
+
+FAKE_KOKORO = ("af_alloy", "af_heart", "af_kore", "af_nicole", "am_fenrir", "am_onyx", "am_puck", "am_santa",
+               "bf_emma", "bm_george", "jf_alpha", "zf_xiaobei")
+FAKE_EDGE = (("en-US-AvaNeural", "en-US", "Female"), ("en-US-AriaNeural", "en-US", "Female"),
+             ("en-US-JennyNeural", "en-US", "Female"), ("en-US-AndrewMultilingualNeural", "en-US", "Male"),
+             ("en-US-EmmaNeural", "en-US", "Female"), ("en-GB-RyanNeural", "en-GB", "Male"),
+             ("en-AU-NatashaNeural", "en-AU", "Female"), ("zh-TW-HsiaoChenNeural", "zh-TW", "Female"),
+             ("zh-TW-HsiaoYuNeural", "zh-TW", "Female"), ("zh-TW-YunJheNeural", "zh-TW", "Male"),
+             ("zh-CN-XiaoxiaoNeural", "zh-CN", "Female"), ("ja-JP-NanamiNeural", "ja-JP", "Female"))
+_bank = _tmp / "voice-bank"
+_bank.mkdir()
+with zipfile.ZipFile(_bank / "voices-v1.0.bin", "w") as _z:
+    for _n in FAKE_KOKORO:
+        _z.writestr(f"{_n}.npy", b"\x00")
+(_bank / "edge_voices.json").write_text(json.dumps({"fetched_at": "test", "voices": [
+    {"ShortName": n, "Locale": loc, "Gender": g} for n, loc, g in FAKE_EDGE]}))
+os.environ.setdefault("VOICE_DESK_KOKORO_BANKS", str(_bank))
+os.environ.setdefault("VOICE_DESK_EDGE_LIST", str(_bank / "edge_voices.json"))

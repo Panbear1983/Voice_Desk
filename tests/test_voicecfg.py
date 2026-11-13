@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("VOICE_DESK_STATE", tempfile.mkdtemp(prefix="vd-cfg-test-"))
 # a fake Hermes profiles dir with the four profile names, so routing does not depend on this Mac
 _profiles = Path(tempfile.mkdtemp(prefix="vd-cfg-profiles-"))
-for _p in ("assistant", "orchestrator", "tax_angel_esther", "wanna-buffet"):
+for _p in ("assistant", "orchestrator", "tax_angel_esther", "wanna-buffet", "simba"):
     (_profiles / _p).mkdir()
     (_profiles / _p / "config.yaml").write_text("model: x\n")
 os.environ["HERMES_PROFILES_DIR"] = str(_profiles)
@@ -30,13 +30,13 @@ def report(name: str, passed: bool, detail: str = "") -> None:
     print(f"[{'PASS' if passed else 'FAIL'}] {name}" + (f"  {detail}" if detail and not passed else ""))
 
 
-# Original agents and settings, plus the optional Codex entry added 2026-10-24 and Simba's voice-only entry
-# (2026-11-10, step 6: a name for the record, not a wake word; brain.name_aliases skips targets that are no brain).
+# Original agents and settings, plus the optional Codex entry added 2026-10-24 and Simba's entry (2026-11-10, a voice
+# only; since 2026-11-13 her row is her Hermes profile "simba", command-center brief decision 8).
 DAY_ONE_NAMES = {
     "claude": ("Claude", ("claude", "claud", "clod", "claude code", "克勞德", "克劳德")),
     "gemini": ("Gemini", ("gemini", "jemini", "google gemini")),
     "codex": ("Codex", ("codex", "code x", "openai codex")),
-    "simba": ("Simba", ("simba",)),
+    "hermes:simba": ("Simba", ("simba",)),
     "hermes:orchestrator": ("Jarvis", ("jarvis", "javis", "jaarvis", "javas", "jervis", "jarvas", "orchestrator")),
     "hermes:assistant": ("Kylie", ("kylie", "kiley", "kylee", "kyley", "kailey", "kaylee", "kayley", "kaley",
                                    "kyli", "kylie's", "assistant")),
@@ -46,6 +46,7 @@ DAY_ONE_NAMES = {
 }
 DAY_ONE_GREETINGS = ["hello", "hallo", "hullo", "helo"]   # Peter 2026-11-02: only hello wakes an agent
 DAY_ONE_VOICES = {   # target -> the voice agents.toml gives it today (Peter 2026-11-11: Jarvis Puck, Wanna Buffet Santa)
+    "hermes:simba": "am_fenrir",
     "hermes:orchestrator": "am_puck",
     "hermes:assistant": "en-US-AvaNeural",
     "hermes:tax_angel_esther": "alloy",
@@ -114,9 +115,9 @@ def test_voices_from_agents_toml() -> None:
     import agents
     import voices
     tbl = {name: v for name, v in voices.table()}
-    want = {"Jarvis": ("am_puck", ""), "Kylie": ("en-US-AvaNeural", "zh-TW-HsiaoChenNeural"),
+    want = {"Simba": ("am_fenrir", ""), "Jarvis": ("am_puck", ""), "Kylie": ("en-US-AvaNeural", "zh-TW-HsiaoChenNeural"),
             "Esther": ("alloy", "zh-TW-HsiaoYuNeural"), "Wanna Buffet": ("am_santa", "zh-TW-YunJheNeural")}
-    report("voices: table() gives today's four voices, read from agents.toml (Jarvis English only)",
+    report("voices: table() gives today's five Hermes voices, read from agents.toml (Simba, Jarvis English only)",
            {n: (v.en, v.zh) for n, v in tbl.items()} == want and all(v.source == "agents" for v in tbl.values()),
            str(tbl))
     report("voices: the profile config.yaml no longer decides (fake profiles here carry no voice)",
@@ -329,6 +330,21 @@ voice:
 command_allowlist:
   - delete in root path
 """,
+    # Simba (2026-11-13, her row is her Hermes profile): no `voice:` block, her own command provider, a telegram block
+    "simba": """model:
+  provider: openrouter
+telegram:
+  require_mention: true
+tts:
+  # 2026-11-13 Peter: Simba speaks in her own Voice Desk voice
+  provider: simba_local
+  providers:
+    simba_local:
+      type: command
+      command: /x/tts_simba.sh {input_path} {output_path} {voice}
+      voice: am_fenrir
+      timeout: 60
+""",
 }
 CLAUDE_CONF = """# Peter's spoken-reply defaults (chosen by ear 2026-09-17). THE place to change voices.
 ENGLISH_ENGINE="kokoro"                    # English: Kokoro, local (2026-11-11)
@@ -369,6 +385,9 @@ def test_check() -> None:
             ("claude", "VOICE_MODE")} <= keys and ("claude", "NEURAL_VOICE_EN") not in keys,
            str(sorted(keys)))
     report("check: today's shapes -> zero drift", V.drift(items) == [], str(V.drift(items)))
+    report("check: Simba's profile (no voice: block) gets only her voice line, no invented end phrases",
+           sorted(k for w, k in keys if w == "simba") == ["tts.providers.simba_local.voice"],
+           str(sorted(k for w, k in keys if w == "simba")))
     wb = next(i for i in items if (i.where, i.key) == ("wanna_buffet", "voice.silence_threshold"))
     report("check: reads a key that sits after a column-0 comment inside its block (as Hermes does)",
            wb.have == 500 and wb.line is not None, str(wb))
@@ -475,7 +494,7 @@ def test_sync() -> None:
     if LIVE_PROFILES.is_dir():
         # copies of today's live config.yaml files, in a temp dir; the live files are only read
         d = Path(tempfile.mkdtemp(prefix="vd-live-copy-"))
-        for p in ("orchestrator", "assistant", "tax_angel_esther", "wanna-buffet"):
+        for p in ("orchestrator", "assistant", "tax_angel_esther", "wanna-buffet", "simba"):
             (d / "profiles" / p).mkdir(parents=True)
             shutil.copy2(LIVE_PROFILES / p / "config.yaml", d / "profiles" / p / "config.yaml")
         shutil.copy2(LIVE_CLAUDE_CONF, d / "voice-defaults.conf")
@@ -503,11 +522,14 @@ def test_sync() -> None:
     toml = _edited_copy(lambda t: t.replace('"no further question"]', '"no further question", "over and out"]'))
     rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
                     "--backup-dir", tempfile.mkdtemp(prefix="vd-bak-")])
-    got = [V.parse_value(V.scan((profiles / p / "config.yaml").read_text())["voice.stop_phrases"].value) for p in FIXTURES]
+    voiced = [p for p in FIXTURES if p != "simba"]                 # Simba's profile has no voice: block: left alone
+    got = [V.parse_value(V.scan((profiles / p / "config.yaml").read_text())["voice.stop_phrases"].value) for p in voiced]
     report("sync: a new end phrase reaches all four profiles (73 phrases, with lead-ins)",
            rc == 0 and all(len(g) == 73 and "thanks, over and out" in g for g in got), out[-300:])
     report("sync: ... one line per profile", all(len(_changed_lines(FIXTURES[p], (profiles / p / "config.yaml").read_text())) == 1
-                                                  for p in FIXTURES))
+                                                  for p in voiced))
+    report("sync: ... and Simba's profile, with no voice: block, is not given one",
+           (profiles / "simba" / "config.yaml").read_text() == FIXTURES["simba"])
 
     # a written file that does not read back right is put back at once
     profiles, conf = make_fixtures()

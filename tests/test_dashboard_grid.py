@@ -195,7 +195,7 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(str(lst._options[lst.highlighted].prompt).startswith("●"), "the current voice is marked")
             self.assertEqual(ids[-2:], [voicepick.SILENT, voicepick.OTHER], "silent, then 'other, type it' last")
             self.assertIn("af_heart", ids, "Kokoro voices are on the list")
-            self.assertNotIn("en-US-JennyNeural", ids, "no Jenny on the list")
+            self.assertIn("en-US-JennyNeural", ids, "decision 14: the whole bank, Jenny included (not anyone's default)")
             await pick(app, pilot, "en-US-AriaNeural")
             self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
             await pilot.pause()

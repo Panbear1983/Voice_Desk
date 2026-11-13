@@ -65,7 +65,7 @@ class TheFooter(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.selected().agent.key, "simba")
             keys = footer_keys(app)
             self.assertIn("f", keys, "F only on Simba's row")
-            self.assertNotIn("z", keys, "Simba speaks English only")
+            self.assertIn("z", keys, "decision 14: everyone sees the Mandarin list (hers is greyed out: English only)")
             self.assertNotIn("p", keys, "Simba is not here at the terminal")
             self.assertIn("x", keys)
 

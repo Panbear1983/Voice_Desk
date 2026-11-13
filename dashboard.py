@@ -124,7 +124,7 @@ class ChoiceScreen(ModalScreen[Optional[str]]):
     """A short list of choices for one cell; Enter picks, Esc cancels. `options` are (token, label, is_current)."""
     CSS = """
     ChoiceScreen { align: center middle; }
-    #choice { width: 96; height: auto; border: round #9b59b6; background: #1b1b1b; padding: 1 2; }
+    #choice { width: 124; max-width: 96%; height: auto; border: round #9b59b6; background: #1b1b1b; padding: 1 2; }
     #choice-title { text-style: bold; }
     #choice-hint { color: #888888; }
     #choice-list { height: auto; max-height: 24; }
@@ -140,7 +140,8 @@ class ChoiceScreen(ModalScreen[Optional[str]]):
         with Vertical(id="choice"):
             yield Static(self._title, id="choice-title")
             yield Static(self._hint, id="choice-hint")
-            yield OptionList(*[Option(("● " if o.current else "  ") + o.label, id=o.token) for o in self._options], id="choice-list")
+            yield OptionList(*[Option(("● " if o.current else "◌ " if o.disabled else "  ") + o.label, id=o.token,
+                                      disabled=o.disabled) for o in self._options], id="choice-list")
 
     def on_mount(self) -> None:
         lst = self.query_one(OptionList)
@@ -244,7 +245,7 @@ class GridScreen(Screen):
             if action in ("edit_en", "edit_zh", "edit_extra", "edit_override") and not voiceedit.editable(a):
                 return False
             if action == "edit_zh":
-                return not a.english_only               # Simba / Jarvis: English only, no Mandarin voice
+                return True                             # decision 14: everyone sees the list (English-only: ◌ lines)
             if action == "edit_effect":
                 return voiceedit.uses_simba_script(a)   # F only on Simba's row
             if action in self.CELL_ACTIONS:
@@ -506,7 +507,8 @@ class Dashboard(App):
             return
         row = self.selected()
         screen.query_one("#detail", Static).update(
-            V.detail_text(row, self.tests.get(row.agent.key)) if row else "reading the settings and the logs…")
+            V.detail_text(row, self.tests.get(row.agent.key), place=self.selected_place(), paths=self.paths)
+            if row else "reading the settings and the logs…")
         screen.query_one("#history", Static).update(V.history_text(self.edit_paths, watcher_lines=watcher.history_lines(self.paths, 3)))
 
     def toggle_watcher(self) -> None:
@@ -627,14 +629,17 @@ class Dashboard(App):
                 return
 
             def picked(token: Optional[str]) -> None:
-                if token == voicepick.OTHER:
+                if token and token.startswith(voicepick.NOT_YET):
+                    self.say(f"{row.agent.display}: {token[len(voicepick.NOT_YET):]} is not available yet, nothing changed")
+                elif token == voicepick.OTHER:
                     self.ask_typed(row, field_name)
                 elif token == voicepick.SILENT:
                     self.apply_edit(row.agent.key, field_name, None)
                 elif token is not None:
                     self.apply_edit(row.agent.key, field_name, token)
 
-            self.push_screen(ChoiceScreen(title, options), picked)
+            self.push_screen(ChoiceScreen(title, options,
+                                          voicepick.HINT if any(o.disabled for o in options) else None), picked)
             return
         self.ask_typed(row, field_name)
 
@@ -711,7 +716,7 @@ class Dashboard(App):
         options = voicepick.english(a, self.cfg_loader())
 
         def picked(token: Optional[str]) -> None:
-            if token is None:
+            if token is None or token.startswith(voicepick.NOT_YET):
                 return
             if token == voicepick.OTHER:
                 def typed(text: Optional[str]) -> None:
@@ -722,7 +727,7 @@ class Dashboard(App):
             self._add_worker(profile, display, names, None if token == voicepick.SILENT else token)
 
         self.push_screen(ChoiceScreen(f"{display} — English voice (one voice, no backup; Z adds Mandarin later)",
-                                      options), picked)
+                                      options, voicepick.HINT if any(o.disabled for o in options) else None), picked)
 
     @work(thread=True, exclusive=True, group="edit")
     def _add_worker(self, profile: Optional[str], display: str, names: str, voice: Optional[str]) -> None:

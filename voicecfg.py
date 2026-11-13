@@ -260,7 +260,11 @@ def _yaml_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
             want.append(("tts.edge.voice", voice))
     if a.speed is not None:
         want.append(("tts.edge.speed", a.speed))
-    want.append(("voice.stop_phrases", agents.end_phrases(cfg)))
+    if "voice" in e or a.knobs:
+        # A profile with no `voice:` block of its own (Simba, 2026-11-13: a Telegram bot that never had terminal voice
+        # mode) keeps Hermes' defaults: no block is invented just to hold the end phrases. Knobs set in agents.toml
+        # still count, and still say so when there is no block to put them in.
+        want.append(("voice.stop_phrases", agents.end_phrases(cfg)))
     want += [(f"voice.{k}", v) for k, v in a.knobs.items()]
     items = []
     for key, value in want:

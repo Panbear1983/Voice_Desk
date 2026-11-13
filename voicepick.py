@@ -1,17 +1,27 @@
 """The voice pick-list behind the grid's E, Z and F keys (Peter 2026-11-11: "I have to actually manually type the name
 of the voice in order to switch").
 
-A short list of the voices the agent's own speaker can really make, the current one marked, arrows + Enter (the
-dashboard shows it with the same ChoiceScreen the on/off switches use). The last line is always "other, type it",
-which opens the old typing box. Picking a line goes through voiceedit.change like every other edit: one agents.toml
-line, the agent's own files, a backup, a read-back, a history line, and U undoes it.
+A list of voices with the current one marked, arrows + Enter (the dashboard shows it with the same ChoiceScreen the
+on/off switches use). The last line is always "other, type it", which opens the old typing box. Picking a line goes
+through voiceedit.change like every other edit: one agents.toml line, the agent's own files, a backup, a read-back, a
+history line, and U undoes it.
 
-    E  English voice   Kokoro voices (local, no internet) then Microsoft Edge voices; Gemini: Edge only (its own
-                       hook speaks Edge only); Esther and Jarvis: Kokoro only (their own Kokoro scripts); Simba:
-                       American Kokoro voices only, none that another agent already has (her english_only rule)
-    Z  Mandarin voice  the Taiwan Mandarin voices only (zh-TW); refused for an English-only agent
-    F  voice effect    Simba only: Jarvis's numbered samples and the named starting points
+Since 2026-11-13 (command-center brief, decisions 2 and 14) the lines come from the voice bank (voicebank.py): what is
+really installed, read from the Kokoro voice files and Microsoft's own list, not a list written here. EVERY agent sees
+the whole bank for the language, Simba included: local Kokoro voices first, Microsoft below, then "silent", then
+"other, type it". Nothing changes by itself: the current voice stays marked and stays until Peter picks another.
 
+A line the agent's own speaker cannot make today is still shown, marked ◌ and not pickable, with the reason (decision
+14: "verify her script can actually play any bank voice before offering it"). Today that is:
+
+    Gemini          its own hook speaks Microsoft voices only            -> Kokoro lines ◌ until stage 2
+    Esther, Jarvis  their own Kokoro scripts                              -> Microsoft lines ◌ until stage 2
+    Simba           simba_tts.py: American Kokoro only (it refuses the rest) -> British Kokoro and Microsoft lines ◌
+                    until stage 2; on a Microsoft line the note also says her sound effect would not apply to it
+    English only    (Simba, Jarvis) Z shows the Taiwan voices ◌: a Chinese line stays silent for them today
+    everyone else   the whole list is pickable
+
+Voices other agents already use are no longer hidden from Simba (decision 14 lifts that limit from the list).
 "silent" is a line of its own (Peter 2026-11-11: an agent with no voice is silent; there is no shared voice).
 This module only builds the lists; it writes nothing.
 """
@@ -21,66 +31,80 @@ from typing import Optional
 
 import agents
 import onoff
+import voicebank
 import voiceedit
 
 OTHER = "::other"          # "other, type it": the old typing box
 SILENT = "::silent"        # no voice for this language
-
-# Microsoft Edge English voices offered on the list (Peter 2026-11-11: no Jenny). Any other Edge name can still be
-# typed on the "other" line.
-EDGE_EN = (
-    ("en-US-AvaNeural", "Ava, American female"), ("en-US-EmmaNeural", "Emma, American female"),
-    ("en-US-AriaNeural", "Aria, American female"), ("en-US-MichelleNeural", "Michelle, American female"),
-    ("en-US-AndrewNeural", "Andrew, American male"), ("en-US-BrianNeural", "Brian, American male"),
-    ("en-US-GuyNeural", "Guy, American male"), ("en-US-ChristopherNeural", "Christopher, American male"),
-    ("en-US-EricNeural", "Eric, American male"), ("en-GB-RyanNeural", "Ryan, British male"),
-    ("en-GB-SoniaNeural", "Sonia, British female"),
-)
-# Taiwan Mandarin (Peter 2026-11-09: Taiwan accent only): the three zh-TW voices Edge has.
-TAIWAN = (("zh-TW-HsiaoChenNeural", "HsiaoChen 曉臻, female"), ("zh-TW-HsiaoYuNeural", "HsiaoYu 曉雨, female"),
-          ("zh-TW-YunJheNeural", "YunJhe 雲哲, male"))
-_KOKORO_KIND = {"af": "American female", "am": "American male", "bf": "British female", "bm": "British male"}
+NOT_YET = "::not-yet:"     # token prefix of a ◌ line (disabled: it cannot be picked)
 
 
 def kokoro_label(name: str) -> str:
-    kind, _, who = name.partition("_")
-    return f"{who.capitalize()}, {_KOKORO_KIND.get(kind, kind)} · Kokoro, local"
+    """'Heart, American female · Kokoro, local' for any Kokoro name (also one not in the bank)."""
+    v = voicebank._kokoro_voice(name)
+    return v.label if v else f"{name} · Kokoro, local"
 
 
 def _same_voice(a: Optional[str], b: Optional[str]) -> bool:
     return bool(a) and bool(b) and voiceedit._kokoro_name(a) == voiceedit._kokoro_name(b)
 
 
-def _finish(rows: list[tuple[str, str]], current: Optional[str], silent_label: str) -> list[onoff.Option]:
-    """Rows -> options with the current one marked (put on top, marked, if it is not on the list), then the
-    silent line, then "other, type it" last."""
-    out = [onoff.Option(token, label, _same_voice(token, current)) for token, label in rows]
+def not_yet(agent: agents.Agent, field_name: str, v: voicebank.BankVoice) -> str:
+    """Why this agent's own speaker cannot make this bank voice today ("" = it can, the line is pickable)."""
+    if field_name == "voice_zh":
+        if agent.english_only:
+            return f"{agent.display} is English only today"
+    elif voiceedit.uses_simba_script(agent):
+        import simba_tts
+        if v.engine == "edge":
+            return "her script: Kokoro only (stage 2); her effect would not apply"
+        if simba_tts.voice_problem(v.name):
+            return "her script: American Kokoro only (stage 2)"
+    elif agent.target == "gemini" and v.engine != "edge":
+        return "Gemini's hook: Microsoft voices only (stage 2)"
+    elif agent.command and v.engine != "kokoro":
+        return f"{agent.display}'s script: Kokoro only (stage 2)"
+    try:
+        voiceedit.check_voice(field_name, v.name, agent)       # the same check a typed name gets
+    except voiceedit.EditError as exc:
+        return str(exc)
+    return ""
+
+
+def _rows(agent: agents.Agent, field_name: str, bank: list[voicebank.BankVoice]) -> list[onoff.Option]:
+    current = agent.voice if field_name == "voice" else agent.voice_zh
+    out = []
+    for v in bank:
+        if _same_voice(v.name, current):
+            note = ("   (stored, but silent today: English only)" if field_name == "voice_zh" and agent.english_only
+                    else "")
+            out.append(onoff.Option(v.name, v.label + note, True))     # today's voice: always shown as it is
+            continue
+        why = not_yet(agent, field_name, v)
+        out.append(onoff.Option(NOT_YET + v.name, f"{v.label} — not yet: {why}", False, True) if why
+                   else onoff.Option(v.name, v.label))
+    return out
+
+
+def _finish(out: list[onoff.Option], current: Optional[str], silent_label: str) -> list[onoff.Option]:
+    """Options with the current one marked (put on top, marked, if it is not in the bank), then the silent line,
+    then "other, type it" last."""
     if current and not any(o.current for o in out):
-        out.insert(0, onoff.Option(current, f"{current}   (now; not on this list)", True))
+        out.insert(0, onoff.Option(current, f"{current}   (now; not in the voice bank)", True))
     out.append(onoff.Option(SILENT, silent_label, not current))
     out.append(onoff.Option(OTHER, "other, type it…"))
     return out
 
 
 def english(agent: agents.Agent, cfg: dict) -> list[onoff.Option]:
-    if voiceedit.uses_simba_script(agent):
-        import simba_tts
-        taken = {voiceedit._kokoro_name(a.voice): a.display for a in agents.agents(cfg) if a.key != agent.key and a.voice}
-        rows = [(v, kokoro_label(v)) for v in simba_tts.VOICES if voiceedit._kokoro_name(v) not in taken]
-        return _finish(rows, agent.voice, "silent — no voice: her lines are not spoken")
-    kokoro = [(v, kokoro_label(v)) for v in agents.KOKORO_VOICES]
-    edge = [(v, f"{label} · Microsoft Edge, online") for v, label in EDGE_EN]
-    if agent.target == "gemini":
-        rows = edge                                   # Gemini's own hook speaks Edge voices only
-    elif agent.command:
-        rows = kokoro                                 # Esther / Jarvis: their own Kokoro script
-    else:
-        rows = kokoro + edge
-    return _finish(rows, agent.voice, "silent — no English voice: English lines are not spoken")
+    silent = ("silent — no voice: her lines are not spoken" if voiceedit.uses_simba_script(agent)
+              else "silent — no English voice: English lines are not spoken")
+    return _finish(_rows(agent, "voice", voicebank.english()), agent.voice, silent)
 
 
 def mandarin(agent: agents.Agent) -> list[onoff.Option]:
-    return _finish(list(TAIWAN), agent.voice_zh, "silent — no Mandarin voice: Chinese lines are not spoken")
+    return _finish(_rows(agent, "voice_zh", voicebank.mandarin_taiwan()), agent.voice_zh,
+                   "silent — no Mandarin voice: Chinese lines are not spoken")
 
 
 def effect(agent: agents.Agent) -> list[onoff.Option]:
@@ -100,12 +124,17 @@ def menu(agent: agents.Agent, field_name: str, cfg: dict) -> tuple[str, list[ono
     if field_name == "voice":
         return f"{agent.display} — English voice (one voice, no backup)", english(agent, cfg), ""
     if field_name == "voice_zh":
+        title = f"{agent.display} — Mandarin voice (Taiwan, one voice, no backup)"
         if agent.english_only:
-            return "", [], (f"{agent.display} speaks English only (english_only in agents.toml): no Mandarin voice, "
-                            "a Chinese line stays silent")
-        return f"{agent.display} — Mandarin voice (Taiwan, one voice, no backup)", mandarin(agent), ""
+            title += f" — {agent.display} is English only today: a Chinese line stays silent"
+        return title, mandarin(agent), ""
     if field_name == "effect":
         if not voiceedit.uses_simba_script(agent):
             return "", [], f"{agent.display} has no voice effect (only Simba's Kokoro voice has one)"
         return f"{agent.display} — voice effect on {agent.voice}", effect(agent), ""
     return "", [], f"{field_name} has no pick-list"
+
+
+HINT = ("Up / Down, then Enter (● = now; ◌ = in the voice bank, but this agent's own speaker cannot make it yet: "
+        "stage 2 moves its script onto Voice Desk's shared speaker; Simba's sound effect works on Kokoro voices only). "
+        "Esc cancels. The files are backed up and read back; U undoes.")

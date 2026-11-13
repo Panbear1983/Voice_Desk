@@ -104,9 +104,11 @@ voice_zh = "zh-TW-YunJheNeural"
 # Simba (Peter 2026-11-10): a girl cat with a scratchy, smoky witch voice, American accent only, made by Kokoro.
 # English ONLY (Peter 2026-11-10): no Mandarin voice; a line with any Chinese in it stays silent, and the panel
 # refuses a Mandarin or other-language voice for her (english_only below).
-# Not a brain Voice Desk talks to ("hello Simba" wakes nothing, so she is not in whisper_prompt). Her own listener
-# (~/GitHub/panbear-daily, simba_voice.py) reads this block before every voice note she sends in the Team_Room
-# Telegram group, so a change here is heard there from her next note.
+# Since 2026-11-13 (command-center brief, decision 8) her row points at her Hermes profile "simba", so the grid reads
+# her places like any other Hermes agent's. Her Telegram bot is NOT moved by Voice Desk: her Telegram cells are shown,
+# never switched, from here. She is still not in whisper_prompt. Her Hermes voice script
+# (~/.hermes/profiles/simba/scripts/tts_simba.sh) and her old listener (~/GitHub/panbear-daily, simba_voice.py) read
+# voice and effect from this block before every line, so a change here is heard there from her next note.
 # voice  = an American Kokoro voice (af_... female, am_... male; no British), E key.
 # effect = a recipe, F key: a sample number 1-30 or fenrir16 / smoky / raspy / plain, then changes if wanted,
 #          e.g. "23 but slower and breathier", "23 26", "16 pitch=1.1 tremolo=0.15" (simba_tts.py explains).
@@ -115,7 +117,7 @@ voice_zh = "zh-TW-YunJheNeural"
 # 21-30 = variations of 16 (fenrir). A number sets the effect only: set the voice with E (simba_tts.SAMPLES).
 # Peter's pick (panel, 2026-11-10 07:18): am_fenrir with "16 pitch=1.4" (his sample #33).
 [agents.simba]
-target = "simba"
+profile = "simba"                    # was target = "simba" (a voice only) until 2026-11-13
 display = "Simba"
 names = ["simba"]
 voice = "am_fenrir"

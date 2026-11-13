@@ -565,11 +565,10 @@ class SimbaIsAVoiceNotABrain(unittest.TestCase):
         self.assertIsNone(simba.voice_zh, "no Mandarin voice in her entry")
         self.assertEqual(Path(simba.command[-1]).resolve(), SCRIPT.resolve(), "agents.toml runs this repo's script")
         self.assertTrue(VE.uses_simba_script(simba))
-        others = {VE._kokoro_name(a.voice) for a in agents.agents(cfg) if a.key != "simba"}
-        self.assertNotIn(VE._kokoro_name(simba.voice), others, "a voice of her own")
         self.assertNotIn("fallback", simba.raw, "one voice, no backup (Peter 2026-11-11)")
         self.assertNotIn("simba", agents.whisper_prompt(cfg).lower())
-        self.assertEqual(G.kind_of(simba), G.OTHER)
+        # 2026-11-13 (command-center brief, decision 8): her row is her Hermes profile, so it reads like the others
+        self.assertEqual((simba.target, simba.profile, G.kind_of(simba)), ("hermes:simba", "simba", G.HERMES))
 
 
 # ---- the panel ------------------------------------------------------------------------------------------------
@@ -602,6 +601,14 @@ class ThePanelChangesHerVoice(unittest.TestCase):
         self.assertTrue(res.ok, res.message)
         self.assertEqual(self.simba().voice, "am_onyx")
 
+    def test_e_may_give_her_a_voice_another_agent_has_now(self):
+        """Decision 14 (2026-11-13) lifts "a voice of her own": Esther's alloy is hers to pick too."""
+        res = VE.change("simba", "voice", "af_alloy", self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertEqual(self.simba().voice, "af_alloy")
+        self.assertTrue(VE.undo(self.w.edit).ok)
+        self.assertEqual(self.w.toml.read_text(), self.start)
+
     def test_f_takes_peters_words_as_one_setting(self):
         res = VE.change("simba", "effect", "  23 But Slower and  Breathier ", self.w.edit)
         self.assertTrue(res.ok, res.message)
@@ -628,7 +635,6 @@ class ThePanelChangesHerVoice(unittest.TestCase):
     def test_what_she_may_not_have_is_refused_and_nothing_is_written(self):
         for field, value, words in ((("voice", "bf_emma", "American Kokoro")), ("voice", "bm_george", "American"),
                                     ("voice", "en-US-AvaNeural", "American Kokoro"),
-                                    ("voice", "alloy", "Esther's voice"), ("voice", "af_alloy", "Esther's voice"),
                                     ("effect", "spooky", "sample number"), ("effect", "16 pitch=3", "between"),
                                     ("effect", "16 louder", "not a change"), ("effect", "", "empty"),
                                     ("voice_zh", "zh-CN-XiaoxiaoNeural", "English only"),
@@ -759,15 +765,18 @@ class TheGridKeys(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, D.ChoiceScreen)
             lst = app.screen.query_one(OptionList)
             ids = [o.id for o in lst._options]
-            voices_on_list = [i for i in ids if not i.startswith("::")]
-            self.assertTrue(voices_on_list and all(v[:3] in ("af_", "am_") for v in voices_on_list),
-                            "American Kokoro voices only")
-            self.assertNotIn("af_alloy", ids, "Esther's voice is hers")
+            pickable = [o.id for o in lst._options if not o.disabled and not o.id.startswith("::")]
+            greyed = [o.id for o in lst._options if o.disabled]
+            self.assertTrue(pickable and all(v[:3] in ("af_", "am_") for v in pickable),
+                            "her script makes American Kokoro voices only: those are pickable")
+            self.assertIn("af_alloy", pickable, "decision 14: Esther's voice may be hers too")
+            self.assertIn(voicepick.NOT_YET + "bf_emma", greyed, "the rest of the bank is shown, greyed out")
+            self.assertIn(voicepick.NOT_YET + "en-US-AvaNeural", greyed)
             self.assertEqual(ids[lst.highlighted], "am_fenrir", "the list starts on her current voice")
-            await pick(app, pilot, "af_jessica")
+            await pick(app, pilot, "af_kore")
             self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 2))
             await pilot.pause()
-            self.assertEqual(agent_of(w.toml, "simba").voice, "af_jessica")
+            self.assertEqual(agent_of(w.toml, "simba").voice, "af_kore")
             await pilot.press("u")
             self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 3))
             await pilot.press("u")

@@ -58,6 +58,7 @@ class Option:
     token: str
     label: str
     current: bool = False
+    disabled: bool = False         # shown on the list, cannot be picked (the label says why)
 
 
 @dataclass
@@ -74,6 +75,8 @@ def _later(step: str) -> str:
 def can_switch(agent: agents.Agent, place: str) -> bool:
     """Pure look at the kind of agent and place: is there a switch behind this cell at all?"""
     kind = G.kind_of(agent)
+    if place in ("tg_dm", "tg_group") and agent.key in G.TELEGRAM_HANDS_OFF:
+        return False                                       # shown, never switched (Simba's own bot, 2026-11-13)
     if place == "tg_group":
         return kind == G.HERMES and agent.profile in TEAM_VOICED
     if place == "terminal" and kind == G.CLAUDE:
@@ -91,6 +94,8 @@ def menu(agent: agents.Agent, place: str, cell: G.Cell, p: G.Paths) -> Menu:
     kind = G.kind_of(agent)
     if cell.value == G.NA:
         return Menu(title, why_not=f"{agent.display} has nothing in {name}")
+    if place in ("tg_dm", "tg_group") and agent.key in G.TELEGRAM_HANDS_OFF:
+        return Menu(title, why_not=G.TELEGRAM_HANDS_OFF[agent.key][:1].upper() + G.TELEGRAM_HANDS_OFF[agent.key][1:])
     import onoff_hermes
     if onoff_hermes.can_switch(agent, place):
         return (onoff_hermes.menu_tg_dm if place == "tg_dm" else onoff_hermes.menu_gemini)(agent, cell, p)
