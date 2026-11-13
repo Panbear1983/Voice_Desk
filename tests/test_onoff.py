@@ -65,7 +65,7 @@ class TheMenus(Base):
         m = onoff.menu(agent_of(self.w, "claude"), "terminal", self.cell("claude", "terminal"), p)
         self.assertEqual([o.token for o in m.options], ["off", "always"], "terminals: Off / Always only")
         m = onoff.menu(agent_of(self.w, "jarvis"), "mic", self.cell("jarvis", "mic"), p)
-        self.assertEqual([o.token for o in m.options], ["own_voices:off", "queue:off"])
+        self.assertEqual([o.token for o in m.options], ["queue:off"], "the shared-voice switch is gone")
 
     def test_the_read_only_cells_say_why(self):
         p = self.w.paths
@@ -280,19 +280,18 @@ class TheClaudeTerminal(Base):
 
 
 class TheMicWindow(Base):
-    def test_own_voices_switch_writes_the_marker_voice_desk_reads_and_undo_removes_it(self):
-        marker = self.w.paths.state / "voices_per_profile"
-        self.assertFalse(marker.exists())
-        res = self.switch("jarvis", "mic", "own_voices:off")
-        self.assertTrue(res.ok, res.message)
-        self.assertTrue(marker.exists())
-        self.assertIn("shared voice", self.cell("kylie", "mic").note)
-        self.assertEqual(VE.recent(self.w.edit, 1)[0].split("  ", 1)[1],
-                         "Voice Desk (all agents) Voice Desk switch: Each agent speaks with its own voice → Everyone speaks with the shared voice")
-        m = onoff.menu(agent_of(self.w, "jarvis"), "mic", self.cell("jarvis", "mic"), self.w.paths)
-        self.assertEqual(m.options[0].token, "own_voices:on", "the chooser now offers the way back")
-        self.assertTrue(VE.undo(self.w.edit, self.w.paths).ok)
-        self.assertFalse(marker.exists())
+    def test_the_shared_voice_switch_is_gone_and_an_old_history_line_for_it_is_not_undone(self):
+        # Peter 2026-11-11: no shared voice, so the "own voices / shared voice" switch (V) is gone everywhere
+        self.assertFalse(self.switch("jarvis", "mic", "own_voices:off").ok)
+        self.assertFalse((self.w.paths.state / "voices_per_profile").exists())
+        self.assertNotIn("shared voice", self.cell("kylie", "mic").note)
+        VE._append_history(self.w.edit, {"id": "old-1", "ts": 1.0, "kind": "switch", "agent": "jarvis",
+                                         "display": "Voice Desk (all agents)", "field": "switch:mic",
+                                         "what": "Voice Desk switch", "old": "own_voices:off", "new": "own_voices:on",
+                                         "old_label": "x", "new_label": "y", "ok": True, "changes": []})
+        self.assertIsNone(VE.last_undoable(self.w.edit), "U never acts on the retired switch")
+        import watcher
+        self.assertEqual(watcher.intents(VE.read_history(self.w.edit)), {}, "the watcher does not try to keep it")
 
     def test_the_speech_queue_off_file(self):
         off = self.w.paths.speech_dir / "off"

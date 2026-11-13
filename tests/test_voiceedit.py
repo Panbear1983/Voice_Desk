@@ -192,7 +192,9 @@ class TheChange(unittest.TestCase):
                       self.w.toml.read_text(), "one line added at the end of Gemini's block")
         text = conf.read_text()
         self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', text)
-        self.assertIn('NEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"', text, "no Mandarin voice set: it follows Aria, as Voice Desk does")
+        self.assertIn('NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"', text,
+                      "no Mandarin voice in agents.toml: that line is not managed, so it is left exactly as it was")
+        self.assertEqual(text.replace("en-US-AriaNeural", "en-US-EmmaNeural"), before, "only the English line changed")
         self.assertEqual(res.changed_files, [str(conf)])
         self.assertEqual(Path(res.entry["files"][0]["backup"]).read_text(), before)
         self.assertEqual(VE.recent(self.w.edit, 1)[0].split("  ", 1)[1], "Gemini English voice: not set → Aria")
@@ -215,7 +217,8 @@ class TheChange(unittest.TestCase):
         self.assertTrue(res.ok, res.message)
         text = self.w.edit.gemini_conf.read_text()
         self.assertTrue(text.startswith("# Gemini's spoken-reply voices."), text)
-        self.assertLess(text.index("NEURAL_VOICE_EN"), text.index("NEURAL_VOICE_ZH"))
+        self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', text)
+        self.assertNotIn("NEURAL_VOICE_ZH", text, "no Mandarin voice in agents.toml: no line is invented for it")
         self.assertEqual(res.entry["files"][0]["backup"], voicecfg.NEW_FILE)
 
     def test_a_codex_voice_lives_in_agents_toml_only_and_voice_desk_speaks_with_it(self):
@@ -225,9 +228,20 @@ class TheChange(unittest.TestCase):
         self.assertEqual(res.changed_files, [])
         self.assertIn("Voice Desk reads it", res.message)
         self.assertTrue(VE.change("codex", "voice_zh", "zh-TW-YunJheNeural", self.w.edit).ok)
-        with mock.patch.object(agents, "PATH", self.w.toml), mock.patch.object(voices, "per_profile_enabled", return_value=True):
+        with mock.patch.object(agents, "PATH", self.w.toml):
             v = voices.voice_for("codex")
         self.assertEqual((v.en, v.zh, v.source), ("en-GB-RyanNeural", "zh-TW-YunJheNeural", "agents"))
+
+    def test_a_voice_set_to_silent_is_removed_and_undone(self):
+        import voices
+        res = VE.change("kylie", "voice_zh", None, self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertIsNone(agent_of(self.w, "kylie").voice_zh)
+        self.assertIn("silent", res.message)
+        with mock.patch.object(agents, "PATH", self.w.toml):
+            self.assertEqual(voices.voice_for("hermes:assistant").zh, "", "no Mandarin voice: Chinese stays silent")
+        self.assertTrue(VE.undo(self.w.edit).ok)
+        self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
 
     def test_gemini_and_codex_refuse_what_is_not_an_edge_voice_of_the_right_language(self):
         for key, field, bad in (("gemini", "voice", "alloy"), ("codex", "voice", "zh-TW-YunJheNeural"),
@@ -324,7 +338,8 @@ class TheUndo(unittest.TestCase):
             res = VE.undo(self.w.edit)
             self.assertTrue(res.ok, res.message)
         self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML, "the added voice lines are gone again")
-        self.assertEqual(self.w.edit.gemini_conf.read_text(), conf_before, "Gemini's hook speaks with the shared voice again")
+        self.assertEqual(self.w.edit.gemini_conf.read_text(), conf_before,
+                         "the lines the change wrote into Gemini's hook file are put back from its backup")
         self.assertIn("undo: Gemini English voice: Aria → not set", VE.recent(self.w.edit, 1)[0])
 
     def test_history_survives_a_garbage_line(self):
@@ -340,15 +355,15 @@ if __name__ == "__main__":
 
 class KokoroForAnyAgent(unittest.TestCase):
     """Peter 2026-11-11: Kokoro (the local voice, no internet) is Claude's default and a choice for any agent.
-    Picking a Kokoro name switches the agent; its old Edge voice stays as the fallback and as what Hermes' own
-    speech (and Claude's / Gemini's own hooks, when they cannot run Kokoro) keep using."""
+    Picking a Kokoro name switches the agent to exactly that voice. No Edge voice is kept as a fallback any more
+    (one voice, no fallback): the agent's Hermes profile line is simply not managed while its voice is Kokoro."""
 
     def setUp(self):
         self.w = F.make_world()
 
     def voice_desk_voice(self, target):
         import voices
-        with mock.patch.object(agents, "PATH", self.w.toml), mock.patch.object(voices, "per_profile_enabled", return_value=True):
+        with mock.patch.object(agents, "PATH", self.w.toml):
             return voices.voice_for(target)
 
     def test_a_kokoro_name_is_a_valid_english_voice_for_any_agent(self):
@@ -357,23 +372,24 @@ class KokoroForAnyAgent(unittest.TestCase):
         with self.assertRaises(VE.EditError):
             VE.check_voice("voice", "af_nobody", agent_of(self.w, "kylie"))
 
-    def test_kylie_switched_to_kokoro_keeps_ava_as_fallback_and_in_her_hermes_profile(self):
+    def test_kylie_switched_to_kokoro_gets_no_fallback_and_her_hermes_profile_is_left_alone(self):
         yaml = self.w.paths.profiles / "assistant/config.yaml"
         before = yaml.read_text()
         res = VE.change("kylie", "voice", "bf_emma", self.w.edit)
         self.assertTrue(res.ok, res.message)
         k = agent_of(self.w, "kylie")
-        self.assertEqual((k.voice, k.fallback), ("bf_emma", "en-US-AvaNeural"))
-        self.assertEqual(yaml.read_text(), before, "Hermes' own speech keeps its Edge voice, never a Kokoro name")
+        self.assertEqual(k.voice, "bf_emma")
+        self.assertNotIn("fallback", k.raw, "no fallback line is written any more")
+        self.assertEqual(yaml.read_text(), before, "Hermes' own config never gets a Kokoro name")
         v = self.voice_desk_voice("hermes:assistant")
-        self.assertEqual((v.en, v.command, v.fallback), ("bf_emma", agents.KOKORO_COMMAND, "en-US-AvaNeural"))
+        self.assertEqual((v.en, v.command), ("bf_emma", agents.KOKORO_COMMAND))
 
     def test_claude_switched_to_kokoro_and_back_sets_the_engine_in_the_voice_defaults_file(self):
         conf = self.w.edit.claude_conf
         res = VE.change("claude", "voice", "af_heart", self.w.edit)
         self.assertTrue(res.ok, res.message)
         text = conf.read_text()
-        for line in ('ENGLISH_ENGINE="kokoro"', 'KOKORO_VOICE_EN="af_heart"', 'NEURAL_VOICE_EN="en-US-JennyNeural"'):
+        for line in ('ENGLISH_ENGINE="kokoro"', 'KOKORO_VOICE_EN="af_heart"'):
             self.assertIn(line, text)
         self.assertIn(conf, [Path(p) for p in res.changed_files])
         res = VE.change("claude", "voice", "en-US-AriaNeural", self.w.edit)
@@ -389,9 +405,9 @@ class KokoroForAnyAgent(unittest.TestCase):
         self.assertEqual(agent_of(self.w, "claude").voice, "en-US-JennyNeural")
         self.assertIn('ENGLISH_ENGINE="edge"', self.w.edit.claude_conf.read_text())
 
-    def test_gemini_on_kokoro_keeps_an_edge_voice_in_its_own_hook_file(self):
+    def test_gemini_on_kokoro_writes_nothing_to_its_edge_only_hook_file(self):
         self.assertTrue(VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit).ok)
         res = VE.change("gemini", "voice", "am_adam", self.w.edit)
         self.assertTrue(res.ok, res.message)
-        self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', self.w.edit.gemini_conf.read_text())
+        self.assertNotIn("am_adam", self.w.edit.gemini_conf.read_text(), "its hook speaks Edge only")
         self.assertEqual(self.voice_desk_voice("gemini").en, "am_adam")

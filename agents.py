@@ -41,8 +41,7 @@ class Agent:
     voice: Optional[str] = None
     voice_zh: Optional[str] = None
     speed: Optional[float] = None
-    command: tuple[str, ...] = ()    # a non-Edge voice is spoken through this script
-    fallback: Optional[str] = None   # Edge voice used if that script fails
+    command: tuple[str, ...] = ()    # a non-Edge voice is spoken through this script, and only by it
     effect: Optional[str] = None     # the script's sound effect, passed after the voice (Simba: a recipe such as "16")
     knobs: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
@@ -50,7 +49,9 @@ class Agent:
     voice_override: str = "auto"     # "auto" = follow the reply's language; "en", "zh" or an extra code pins it
     quiet_hours: dict = field(default_factory=dict)     # place -> "22:00-07:00" (stored and shown only)
     english_only: bool = False       # speaks English only: no Mandarin voice, a Chinese line stays silent (Simba)
-    no_fallback: bool = False        # Peter 2026-11-11: its own voice only. If that script fails the line stays silent: no Edge fallback, no Mac voice
+    # Peter 2026-11-11: its own voice only, silent if it fails. Since the dashboard iteration of 2026-11-13 this is
+    # how EVERY agent speaks (there is no fallback voice anywhere); the flag is still read so old lines stay valid.
+    no_fallback: bool = False
 
     @property
     def profile(self) -> Optional[str]:
@@ -67,7 +68,7 @@ def _agent(key: str, raw: dict) -> Agent:
     return Agent(
         key=key, target=target, display=raw["display"], names=tuple(raw.get("names", ())),
         voice=raw.get("voice"), voice_zh=raw.get("voice_zh"), speed=raw.get("speed"),
-        command=tuple(os.path.expanduser(c) for c in raw.get("command", ())), fallback=raw.get("fallback"),
+        command=tuple(os.path.expanduser(c) for c in raw.get("command", ())),
         effect=raw.get("effect"),
         knobs={k: raw[k] for k in KNOBS if k in raw}, raw=raw,
         voices_extra=dict(raw.get("voices_extra") or {}), voice_override=str(raw.get("voice_override") or "auto"),

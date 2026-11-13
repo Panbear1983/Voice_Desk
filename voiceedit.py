@@ -236,6 +236,32 @@ def set_field(text: str, agent_key: str, key: str, value: Any) -> str:
     return out
 
 
+def put_back_line(text: str, agent_key: str, key: str, value: Any, raw: str, at: int) -> str:
+    """Undo of a removal: the removed statement goes back verbatim (its comment too), `at` lines into the block,
+    when that still fits; otherwise it is set the ordinary way."""
+    lines = text.splitlines(keepends=True)
+    start, end = _block(lines, agent_key)
+    if key not in _statements(lines, start, end) and 0 <= at and start + at <= end:
+        out = "".join(lines[:start + at] + [raw if raw.endswith("\n") else raw + "\n"] + lines[start + at:])
+        try:
+            if tomllib.loads(out)["agents"][agent_key].get(key) == value:
+                return out
+        except (tomllib.TOMLDecodeError, KeyError):
+            pass
+    return set_field(text, agent_key, key, value)
+
+
+def _removed_line(text: str, agent_key: str, key: str) -> Optional[tuple[str, int]]:
+    """(the statement's own text, its line offset in the block) before it is removed, for the undo."""
+    lines = text.splitlines(keepends=True)
+    start, end = _block(lines, agent_key)
+    stmts = _statements(lines, start, end)
+    if key not in stmts:
+        return None
+    a, b = stmts[key]
+    return "".join(lines[a:b + 1]), a - start
+
+
 # ---- the change history -------------------------------------------------------------------------
 @dataclass
 class EditPaths:
@@ -308,9 +334,14 @@ def last_undoable(paths: EditPaths) -> Optional[dict]:
     entries = read_history(paths)
     undone = {e.get("undoes") for e in entries if e.get("kind") == "undo" and e.get("ok", True)}
     for e in reversed(entries):
-        if e.get("kind", "change") in ("change", "switch") and e.get("ok", True) and e.get("id") not in undone:
+        if e.get("field") == "switch:mic" and str(e.get("new", "")).startswith("own_voices"):
+            continue                                    # the retired shared-voice switch: nothing to undo any more
+        if e.get("kind", "change") in UNDOABLE_KINDS and e.get("ok", True) and e.get("id") not in undone:
             return e
     return None
+
+
+UNDOABLE_KINDS = ("change", "switch")
 
 
 # ---- making a change ------------------------------------------------------------------------------
@@ -349,7 +380,8 @@ def _find_agent(cfg: dict, key: str) -> agents.Agent:
 
 
 def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths] = None, *,
-           kind: str = "change", undoes: Optional[str] = None, now: Optional[_dt.datetime] = None) -> Result:
+           kind: str = "change", undoes: Optional[str] = None, now: Optional[_dt.datetime] = None,
+           restore: Optional[tuple[str, int]] = None) -> Result:
     """Set one voice field for one agent. Returns a Result; never raises for a refused or failed edit."""
     paths = paths or EditPaths.default()
     now = now or _dt.datetime.now()
@@ -361,11 +393,11 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
         cfg = tomllib.loads(old_text)
         agent = _find_agent(cfg, agent_key)
         if not editable(agent):
-            raise EditError(f"{agent.display} has no voice setting the panel can change: it speaks with the shared "
-                            "Voice Desk voice.")
+            raise EditError(f"{agent.display} has no voice setting the panel can change.")
         removing = new is None or (new == {} and field_name == "voices_extra")
-        if removing and (kind == "undo" or field_name in ("voices_extra", "voice_override")):
-            new = None                                  # taking a setting away again (undo, or clearing the extras)
+        if removing and (kind == "undo" or field_name in ("voice", "voice_zh", "voices_extra", "voice_override")):
+            new = None                                  # taking a setting away (undo, clearing the extras, or a
+            #                                             voice set to silent: Peter 2026-11-11, empty = silent)
         else:
             new = check_voice(field_name, new, agent)
         if field_name == "voice" and uses_simba_script(agent) and new is not None:
@@ -377,16 +409,16 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
                "voice_override": agent.raw.get("voice_override"), "effect": agent.effect}[field_name]
         if old == new or (field_name == "voice_override" and old is None and new == "auto"):
             return Result(True, f"{agent.display}: already {_short(new)}, nothing to change")
-        new_text = set_field(old_text, agent_key, field_name, new)
-        if (field_name == "voice" and agents.is_kokoro(new) and not agent.command and not agent.fallback
-                and isinstance(old, str) and _EDGE.match(old)):
-            # switching to Kokoro: the Edge voice it had stays as its fallback (and Hermes' / Claude's Edge voice)
-            new_text = set_field(new_text, agent_key, "fallback", old)
+        removed = _removed_line(old_text, agent_key, field_name) if new is None else None
+        new_text = (put_back_line(old_text, agent_key, field_name, new, *restore) if restore and new is not None
+                    else set_field(old_text, agent_key, field_name, new))
     except (EditError, OSError, tomllib.TOMLDecodeError) as exc:
         return Result(False, str(exc))
 
     entry = {"id": stamp + "-" + agent_key + "-" + field_name, "ts": now.timestamp(), "kind": kind, "agent": agent_key,
              "display": agent.display, "field": field_name, "old": old, "new": new, "ok": False}
+    if removed:
+        entry["removed"] = list(removed)                # the line's own text and place, so U puts it back verbatim
     if undoes:
         entry["undoes"] = undoes
     Path(paths.toml_backups).mkdir(parents=True, exist_ok=True)
@@ -399,12 +431,8 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
         _atomic_write(paths.toml, new_text)
         new_cfg = agents.load(paths.toml)
         keep = _WANTED_KEYS.get(field_name)
-        new_agent = _find_agent(new_cfg, agent_key)
-        # Gemini's file holds a Mandarin voice even when agents.toml names none: it then follows the English voice
-        # (voices.zh_for), so a change of the English voice carries that line along.
-        follows = (field_name == "voice" and not new_agent.voice_zh)
         items = [i for i in voicecfg.collect(new_cfg, paths.profiles, paths.claude_conf, paths.gemini_conf)
-                 if keep and i.where == agent_key and (keep(i) or (follows and i.key == "NEURAL_VOICE_ZH"))]
+                 if keep and i.where == agent_key and keep(i)]
         done, errors = voicecfg.apply(items, Path(paths.hermes_backups) / f"{stamp}-voice-panel")
     except Exception as exc:                                    # put agents.toml back, whatever happened
         _atomic_write(paths.toml, old_text)
@@ -429,7 +457,10 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
              else f"saved in agents.toml, where Voice Desk reads it ({agent.display}'s lines are made by simba_tts.py)"
              if uses_simba_script(agent) else "saved in agents.toml (no Hermes or Claude file holds this setting)")
     tail = (" Voice Desk speaks it from the next line; Hermes agents use it from their next session."
-            if field_name in ("voice", "voice_zh") else " Voice Desk uses it from the next line."
+            if field_name in ("voice", "voice_zh") and new is not None else
+            " Voice Desk keeps that language silent from the next line. Its own window / Telegram settings are not "
+            "changed by this: switch those cells Off to silence it there." if field_name in ("voice", "voice_zh")
+            else " Voice Desk uses it from the next line."
             if field_name == "effect" else " Stored for later: nothing enforces it yet.")
     if field_name == "effect" and new is not None:
         import simba_tts
@@ -450,7 +481,64 @@ def undo(paths: Optional[EditPaths] = None, grid_paths: Any = None) -> Result:
     if last.get("kind") == "switch":
         import onoff                                            # imports this module, so only here
         return onoff.undo(last, paths, grid_paths)
-    res = change(last["agent"], last["field"], last["old"], paths, kind="undo", undoes=last["id"])
+    res = change(last["agent"], last["field"], last["old"], paths, kind="undo", undoes=last["id"],
+                 restore=tuple(last["removed"]) if isinstance(last.get("removed"), list) and len(last["removed"]) == 2
+                 else None)
+    if res.ok and res.entry and last["old"] is None and last.get("field") in _WANTED_KEYS:
+        # The change gave a voice where there was none. With no voice in agents.toml nothing is written anywhere (no
+        # shared voice), so the lines the change wrote are put back from that change's own backups instead.
+        restored, errors = _restore_lines(last, paths)
+        res.entry.setdefault("files", []).extend(restored)
+        if errors:
+            res = Result(False, f"{res.message} BUT: {'; '.join(errors)}", res.entry, res.changed_files)
+        else:
+            res.changed_files += [f["path"] for f in restored]
     if res.ok and res.entry:
         res.message = "Undone: " + res.message
     return res
+
+
+def _restore_lines(last: dict, paths: EditPaths) -> tuple[list[dict], list[str]]:
+    """Put back, from the backups the change `last` made, exactly the voice lines it changed (nothing else in those
+    files: a hand edit made since stays). A file the change created is removed again if it holds nothing else."""
+    keep = _WANTED_KEYS[last["field"]]
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    done: list[dict] = []
+    errors: list[str] = []
+    for f in last.get("files") or []:
+        path, backup = Path(f["path"]), f.get("backup") or ""
+        if not path.exists():
+            continue
+        current = path.read_text(encoding="utf-8")
+        if backup == voicecfg.NEW_FILE:
+            lines = [ln for ln in current.splitlines() if ln.strip() and not ln.startswith("#")]
+            if all(re.match(r"^(NEURAL_VOICE_EN|NEURAL_VOICE_ZH)=", ln) for ln in lines):
+                path.unlink()
+                done.append({"path": str(path), "backup": "(made by the change: removed again)"})
+            continue
+        try:
+            before = Path(backup).read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"{path.name}: the change's backup cannot be read ({exc.strerror})")
+            continue
+        items: list[voicecfg.Item] = []
+        if path.suffix in (".yaml", ".yml"):
+            old_e, cur_e = voicecfg.scan(before), voicecfg.scan(current)
+            for key, entry in old_e.items():
+                probe = voicecfg.Item(last["agent"], "", path, "yaml", key, None, None)
+                if keep(probe) and key in cur_e and cur_e[key].value != entry.value:
+                    items.append(voicecfg.Item(last["agent"], last["display"], path, "yaml", key,
+                                               voicecfg.parse_value(cur_e[key].value),
+                                               voicecfg.parse_value(entry.value), line=cur_e[key].line))
+        else:
+            old_c, cur_c = voicecfg._conf_scan(before), voicecfg._conf_scan(current)
+            for var, (_, value, _, _) in old_c.items():
+                probe = voicecfg.Item(last["agent"], "", path, "conf", var, None, None)
+                if keep(probe) and var in cur_c and cur_c[var][1] != value:
+                    items.append(voicecfg.Item(last["agent"], last["display"], path, "conf", var, cur_c[var][1], value,
+                                               line=cur_c[var][0]))
+        if items:
+            ok, bad = voicecfg.apply(items, Path(paths.hermes_backups) / f"{stamp}-voice-panel-undo")
+            done += [{"path": m.group(1).strip(), "backup": m.group(2)} for d in ok if (m := _APPLIED_AS.match(d))]
+            errors += bad
+    return done, errors

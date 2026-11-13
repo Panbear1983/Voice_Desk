@@ -235,8 +235,8 @@ class Listener:
         a second caller waits; `only_if` is checked again once it is its turn."""
         if not text:
             return
-        # Speak as whoever is on the line: each Hermes profile's own voice (voices.py), unless
-        # the dashboard switched per-profile voices off. Test stubs take one argument.
+        # Speak as whoever is on the line, with that agent's own voice from agents.toml (voices.py) and nothing
+        # else: no voice, or a failed voice, is a silent line (Peter 2026-11-11). Test stubs take one argument.
         try:
             voice = voices.voice_for(self.brain.target())
             path = self.synth(text, voice)
@@ -244,9 +244,12 @@ class Listener:
             voice = None
             path = self.synth(text)
         if voice is not None:
-            self.status.update(voice=voices.short(voice), voice_source=voice.source)
+            self.status.update(voice=voices.short(voice), voice_source=voice.source, voice_failed=None)
         if not path:
-            self.status.update(note="no voice available")
+            silent_by_design = voice is not None and not voice.en and not voice.zh
+            self.status.update(note="silent: no voice is set for this agent" if silent_by_design else
+                               "silent: this agent's voice failed and no other voice is used",
+                               voice_failed=None if silent_by_design else time.time())
             return
         try:
             with self._speak_lock, self._on_air():

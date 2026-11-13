@@ -1,5 +1,6 @@
-"""Text to speech + playback. Reuses Hermes' voice chain (Jenny -> Piper -> Mac voice) for
-English and the Mac's Meijia voice for Mandarin. Playback is afplay so it can be killed
+"""Text to speech + playback. Each agent speaks with exactly ONE voice per language, the one agents.toml names
+(voices.py): its own script for a Kokoro voice, Edge for exactly the named Microsoft voice. If that voice fails the
+line stays silent; no second voice is ever tried (Peter 2026-11-11). Playback is afplay so it can be killed
 mid-sentence when Peter talks over it."""
 from __future__ import annotations
 
@@ -32,22 +33,48 @@ def is_mandarin(text: str) -> bool:
     return len(_CJK.findall(text)) > len(re.findall(r"[A-Za-z]", text))
 
 
-def _chain(txt: Path, out: Path, voice: str) -> Optional[Path]:
-    """Hermes' voice chain with one named Edge voice. Edge is tried twice first, every time:
-    the shared script benches Edge for 10 minutes after one failure and falls back to Gemini's
-    female voice, which turned Wanna Buffet into a woman mid-conversation (Peter 2026-10-21).
-    Only after two fresh Edge misses does the rest of the chain speak."""
-    if not S.TTS_CHAIN.exists():
-        return None
+_EDGE_PYTHONS = ("/Library/Frameworks/Python.framework/Versions/3.11/bin/python3", "/usr/local/bin/python3")
+_edge_python: Optional[str] = None
+NEWHOST = Path.home() / ".local/bin/edge_tts_newhost.py"      # Edge through Microsoft's current address
+
+
+def edge_python() -> Optional[str]:
+    """A Python that has edge-tts (the same search Hermes' own voice script does), found once."""
+    global _edge_python
+    if _edge_python is None:
+        import glob
+        found = ""
+        for c in [*_EDGE_PYTHONS, *sorted(glob.glob(str(Path.home() / ".hermes/installs/*/environments/*/venv/bin/python")),
+                                          key=lambda f: -Path(f).stat().st_mtime)]:
+            if Path(c).exists() and subprocess.run([c, "-c", "import edge_tts"], capture_output=True).returncode == 0:
+                found = c
+                break
+        _edge_python = found
+    return _edge_python or None
+
+
+def edge_exact(txt: Path, out: Path, voice: str) -> bool:
+    """Ask Edge for exactly this voice and nothing else: no Google, no Mac voice. Two tries (one Edge hiccup is
+    retried with Edge, never handed to another voice)."""
+    py = edge_python()
+    if not voice or not py or not NEWHOST.exists():
+        return False
     for _ in range(2):
-        (S.TTS_FALLBACK_STATE / "edge.down").unlink(missing_ok=True)
-        r = subprocess.run([str(S.TTS_CHAIN), str(txt), str(out), voice, "edge"],
-                           capture_output=True, timeout=60)
+        try:
+            r = subprocess.run([py, str(NEWHOST), "--voice", voice, "--file", str(txt), "--write-media", str(out)],
+                               capture_output=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
         if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
-            return out
-    r = subprocess.run([str(S.TTS_CHAIN), str(txt), str(out), voice, S.TTS_ORDER],
-                       capture_output=True, timeout=120)
-    return out if r.returncode == 0 and out.exists() and out.stat().st_size > 0 else None
+            return True
+    return False
+
+
+def _chain(txt: Path, out: Path, voice: str) -> Optional[Path]:
+    """The one named Edge voice, or None. Peter 2026-11-11: no second voice, ever. Hermes' shared chain
+    (tts_natural.sh) is NOT used here any more: after Edge it tries Google and the Mac voice, and for mostly-Chinese
+    text it picks its own Mandarin voice, both of which would put a different voice on the line."""
+    return out if edge_exact(txt, out, voice) else None
 
 
 def _script(cmd: tuple[str, ...], txt: Path, out: Path, voice: str, timeout: float = 120,
@@ -63,44 +90,28 @@ def _script(cmd: tuple[str, ...], txt: Path, out: Path, voice: str, timeout: flo
 
 
 def synthesize(text: str, voice: Optional[voices.Voice] = None) -> Optional[Path]:
-    """Return a playable audio file for text, or None if every voice failed.
-    `voice` is the speaker's (voices.voice_for(target)); None = the shared Voice Desk voice."""
-    v = voice or voices.shared_voice()
+    """Return a playable audio file for text, or None: the line stays silent.
+
+    ONE voice per language, no fallback (Peter 2026-11-11): the English line is made with `voice.en` only (through
+    the agent's own script when it has one, else Edge for exactly that name), the Mandarin line with `voice.zh`
+    only. If that one voice fails, or the agent has no voice for the language, the result is None and nothing else
+    is tried: no second Edge voice, no Piper, no Mac voice. `voice` is the speaker's (voices.voice_for(target));
+    None means nobody's voice, so silence."""
+    v = voice or voices.SILENT
+    if is_mandarin(text) or (_CJK.search(text) and not v.zh):
+        # a mostly-Chinese line needs the Mandarin voice; any Chinese in a line for an agent without one (Simba,
+        # Jarvis: English only) stays silent too: an English voice would mangle it
+        want, command = v.zh, ()
+    else:
+        want, command = v.en, v.command
+    if not want:
+        return None
     tmp = Path(tempfile.mkdtemp(prefix="cv-tts-"))
     txt = tmp / "say.txt"
     txt.write_text(text, encoding="utf-8")
-    out = tmp / "say.wav"
-    if not v.zh and _CJK.search(text):
-        # an English-only voice (Simba, Peter 2026-11-10: English ONLY) never speaks Chinese: it has no Mandarin
-        # voice and Kokoro's American rules would mangle it, so the line stays silent
-        return None
-    if is_mandarin(text):
-        got = _chain(txt, out, v.zh)
-        if got:
-            return got
-        aiff = tmp / "say.aiff"
-        r = subprocess.run(["/usr/bin/say", "-v", S.TTS_VOICE_ZH_MAC, "-f", str(txt), "-o", str(aiff)],
-                           capture_output=True)
-        if r.returncode == 0 and aiff.exists():
-            subprocess.run([S.FFMPEG, "-loglevel", "error", "-y", "-i", str(aiff), str(out)], capture_output=True)
-            return out if out.exists() else None
-        return None
-    if v.command:                    # Esther / Simba: their own Kokoro voice, Edge only if it fails
-        got = _script(v.command, txt, out, v.en, effect=v.effect)
-        if got:
-            return got
-        if v.no_fallback:            # Peter 2026-11-11: its own voice only; a failed script means a silent line
-            return None
-    got = _chain(txt, out, v.fallback if v.command and v.fallback else v.en)
-    if got:
-        return got
-    # last resort: the plain Mac voice, so the loop never goes silent
-    aiff = tmp / "say.aiff"
-    r = subprocess.run(["/usr/bin/say", "-r", "185", "-f", str(txt), "-o", str(aiff)], capture_output=True)
-    if r.returncode == 0 and aiff.exists():
-        subprocess.run([S.FFMPEG, "-loglevel", "error", "-y", "-i", str(aiff), str(out)], capture_output=True)
-        return out if out.exists() else None
-    return None
+    if command:                      # Esther / Jarvis / Simba / any Kokoro voice: that script, and only that script
+        return _script(command, txt, tmp / "say.wav", want, effect=v.effect)
+    return _chain(txt, tmp / "say.mp3", want)
 
 
 class Player:
@@ -130,9 +141,9 @@ class Player:
             self._proc = None
 
 
-def say_now(text: str, player: Player) -> None:
-    """Synthesize and play, blocking until done (used for short status lines)."""
-    path = synthesize(text)
+def say_now(text: str, player: Player, voice: Optional[voices.Voice] = None) -> None:
+    """Synthesize and play, blocking until done (used for short status lines). No voice = silent."""
+    path = synthesize(text, voice)
     if path:
         player.play(path)
         player.wait()

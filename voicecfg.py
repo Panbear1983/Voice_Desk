@@ -14,8 +14,8 @@ Claude: [agents.claude] goes into ~/.claude/voice-defaults.conf (NEURAL_VOICE_EN
 VOICE_ALWAYS_ON, VOICE_MODE), which ~/.claude/hooks/speak-response.sh already reads.
 Gemini (2026-11-09, step 5): [agents.gemini] voice / voice_zh go into ~/.gemini/config/hooks/voice-defaults.conf
 (NEURAL_VOICE_EN, NEURAL_VOICE_ZH), which Gemini's own Stop hook (speak-response.py) reads before every reply.
-With no voice in agents.toml it holds the shared Voice Desk voice, the same one Voice Desk uses for Gemini then.
-The file is created on the first sync if it is missing. Only callers that pass gemini_conf manage it (the
+Only Gemini's own Edge voices are written; with none in agents.toml nothing is written (there is no shared voice
+since 2026-11-11). The file is created on the first sync if it is missing. Only callers that pass gemini_conf manage it (the
 command, the panel and the watcher do; a test that passes only a Claude file never touches Peter's Gemini file).
 Codex has no hook of its own: Voice Desk is the only thing that speaks for it and reads its voice straight
 from agents.toml, so there is nothing to sync.
@@ -249,9 +249,10 @@ def _yaml_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
     provider = parse_value(e["tts.provider"].value) if "tts.provider" in e else "edge"
     voice = a.voice
     if agents.is_kokoro(voice) and not a.command:
-        # A Kokoro voice is spoken by Voice Desk (voices.voice_for). Hermes' own speech (Telegram, its window)
-        # keeps the agent's Edge fallback: a Kokoro name in an Edge provider would break it.
-        voice = a.fallback if _EDGE.match(a.fallback or "") else None
+        # A Kokoro voice is spoken by Voice Desk (voices.voice_for) through the shared Kokoro script. A Kokoro name in
+        # Hermes' Edge provider would break its own speech, and there is no Edge fallback voice any more (Peter
+        # 2026-11-11), so the profile's voice line is left as it is: not managed.
+        voice = None
     if voice:
         vkey = f"tts.providers.{provider}.voice" if f"tts.providers.{provider}" in e else f"tts.{provider}.voice"
         want.append((vkey, voice))
@@ -315,8 +316,8 @@ def _claude_items(a: agents.Agent, path: Path) -> list[Item]:
 
 def claude_wants(a: agents.Agent) -> list[tuple[str, str]]:
     """(conf variable, value) for Claude's voice-defaults.conf. A Kokoro English voice (Claude's default since
-    2026-11-11) sets ENGLISH_ENGINE="kokoro" + KOKORO_VOICE_EN and keeps the Edge fallback in NEURAL_VOICE_EN;
-    an Edge voice sets ENGLISH_ENGINE="edge" + NEURAL_VOICE_EN."""
+    2026-11-11) sets ENGLISH_ENGINE="kokoro" + KOKORO_VOICE_EN; an Edge voice sets ENGLISH_ENGINE="edge" +
+    NEURAL_VOICE_EN. No fallback voice is written (Peter 2026-11-11): with Kokoro, NEURAL_VOICE_EN is not managed."""
     out = []
     for src, var in _CLAUDE_KEYS:
         if src not in a.raw:
@@ -324,8 +325,6 @@ def claude_wants(a: agents.Agent) -> list[tuple[str, str]]:
         v = a.raw[src]
         if src == "voice" and agents.is_kokoro(v):
             out += [("ENGLISH_ENGINE", "kokoro"), ("KOKORO_VOICE_EN", v)]
-            if _EDGE.match(a.fallback or ""):
-                out.append((var, a.fallback))
             continue
         if src == "voice":
             out.append(("ENGLISH_ENGINE", "edge"))
@@ -333,19 +332,14 @@ def claude_wants(a: agents.Agent) -> list[tuple[str, str]]:
     return out
 
 
-def gemini_wants(a: agents.Agent, cfg: dict) -> tuple[str, str]:
-    """(English, Mandarin) Gemini should speak with: its own voices from agents.toml, else the shared Voice Desk
-    voice, by the same rule voices.voice_for uses (a missing Mandarin voice follows the English one)."""
-    sh = agents.shared(cfg)
-    en = a.voice or sh.get("voice") or "en-US-JennyNeural"
-    if agents.is_kokoro(en):                           # Gemini's own hook speaks Edge only: its Edge fallback
-        en = a.fallback if _EDGE.match(a.fallback or "") else sh.get("voice") or "en-US-JennyNeural"
-    if a.voice_zh:
-        return en, a.voice_zh
-    if a.voice:
-        from voices import zh_for                      # voices imports settings; only needed here
-        return en, zh_for(en)
-    return en, sh.get("voice_zh") or "zh-TW-HsiaoChenNeural"
+def gemini_wants(a: agents.Agent, cfg: dict) -> tuple[Optional[str], Optional[str]]:
+    """(English, Mandarin) Gemini should speak with: exactly its own voices from agents.toml. Gemini's hook speaks
+    Edge only, so a Kokoro or missing voice is None: not written (there is no shared voice and no Jenny default any
+    more, Peter 2026-11-11). Careful: the hook itself still falls back to its built-in voice when the file has no
+    line; the grid says so on Gemini's row."""
+    en = a.voice if _EDGE.match(a.voice or "") else None
+    zh = a.voice_zh if _EDGE.match(a.voice_zh or "") else None
+    return en, zh
 
 
 def _gemini_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
@@ -358,6 +352,8 @@ def _gemini_items(a: agents.Agent, cfg: dict, path: Path) -> list[Item]:
         return [Item(a.key, label, path, "conf", "(file)", None, None, problem=f"cannot read: {exc.strerror}")]
     items = []
     for var, want in zip(("NEURAL_VOICE_EN", "NEURAL_VOICE_ZH"), gemini_wants(a, cfg)):
+        if want is None:
+            continue                                   # no voice of its own: nothing to write (no shared default)
         if var in found:
             items.append(Item(a.key, label, path, "conf", var, found[var][1], want, line=found[var][0]))
         else:

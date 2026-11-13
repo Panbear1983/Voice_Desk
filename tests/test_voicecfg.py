@@ -45,11 +45,11 @@ DAY_ONE_NAMES = {
                                              "wanna buff it", "warren buffett", "warren buffet")),
 }
 DAY_ONE_GREETINGS = ["hello", "hallo", "hullo", "helo"]   # Peter 2026-11-02: only hello wakes an agent
-DAY_ONE_VOICES = {   # target -> the voice written in its Hermes profile today
-    "hermes:orchestrator": "en-US-JennyNeural",
+DAY_ONE_VOICES = {   # target -> the voice agents.toml gives it today (Peter 2026-11-11: Jarvis Puck, Wanna Buffet Santa)
+    "hermes:orchestrator": "am_puck",
     "hermes:assistant": "en-US-AvaNeural",
     "hermes:tax_angel_esther": "alloy",
-    "hermes:wanna-buffet": "en-US-AndrewNeural",
+    "hermes:wanna-buffet": "am_santa",
 }
 DAY_ONE_WHISPER_PROMPT = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."
 DAY_ONE_MIC = {   # settings.py lines 25-34 on 2026-10-22; headset values (start, min length, min loudness) 2026-10-31
@@ -113,21 +113,21 @@ def test_settings_read_agents_toml() -> None:
 def test_voices_from_agents_toml() -> None:
     import agents
     import voices
-    voices.set_per_profile(True)
     tbl = {name: v for name, v in voices.table()}
-    want = {"Jarvis": ("en-US-JennyNeural", "zh-TW-HsiaoChenNeural"), "Kylie": ("en-US-AvaNeural", "zh-TW-HsiaoChenNeural"),
-            "Esther": ("alloy", "zh-TW-HsiaoYuNeural"), "Wanna Buffet": ("en-US-AndrewNeural", "zh-TW-YunJheNeural")}
-    report("voices: table() gives today's four voices, read from agents.toml",
+    want = {"Jarvis": ("am_puck", ""), "Kylie": ("en-US-AvaNeural", "zh-TW-HsiaoChenNeural"),
+            "Esther": ("alloy", "zh-TW-HsiaoYuNeural"), "Wanna Buffet": ("am_santa", "zh-TW-YunJheNeural")}
+    report("voices: table() gives today's four voices, read from agents.toml (Jarvis English only)",
            {n: (v.en, v.zh) for n, v in tbl.items()} == want and all(v.source == "agents" for v in tbl.values()),
            str(tbl))
     report("voices: the profile config.yaml no longer decides (fake profiles here carry no voice)",
            voices.voice_for("hermes:assistant").en == "en-US-AvaNeural")
     own = {a.target: a for a in agents.agents(agents.load())}
-    report("voices: Claude speaks with its own voice from agents.toml (step 5; it shared Jenny before)",
+    report("voices: Claude speaks with its own voice from agents.toml, and there is no shared voice any more",
            voices.voice_for("claude").en == own["claude"].voice and voices.voice_for("claude").source == "agents"
-           and voices.shared_voice().en == "en-US-JennyNeural" and voices.shared_voice().zh == "zh-TW-HsiaoChenNeural")
-    report("voices: Gemini and Codex speak with their own voice once agents.toml names one, else the shared one",
-           all(voices.voice_for(t).en == (own[t].voice or voices.shared_voice().en) for t in ("gemini", "codex")))
+           and not hasattr(voices, "shared_voice") and "voice" not in agents.load()["shared"])
+    report("voices: Gemini and Codex speak with their own voice, and an agent without one is silent",
+           all(voices.voice_for(t).en == (own[t].voice or "") for t in ("gemini", "codex"))
+           and voices.voice_for("hermes:nobody") == voices.SILENT)
     real = agents.PATH
     agents.PATH = _edited_copy(lambda t: t.replace('voice = "en-US-AvaNeural"', 'voice = "en-US-EmmaNeural"'))
     try:
@@ -149,9 +149,9 @@ def test_esther_speaks_through_kokoro() -> None:
     import tts
     import voices
     esther = voices.voice_for("hermes:tax_angel_esther")
-    report("esther: her voice is Kokoro 'alloy' through her own script, Aria only as the fallback",
+    report("esther: her voice is Kokoro 'alloy' through her own script, and no fallback voice",
            esther.en == "alloy" and esther.command and esther.command[-1].endswith("tax_angel_esther/scripts/esther_tts.py")
-           and esther.fallback == "en-US-AriaNeural", str(esther))
+           and not hasattr(esther, "fallback"), str(esther))
     d = Path(tempfile.mkdtemp(prefix="vd-kokoro-"))
     good = d / "good.sh"
     good.write_text('#!/bin/sh\nprintf "RIFF%s" "$3" > "$2"\n')       # writes the voice it was asked for
@@ -168,8 +168,8 @@ def test_esther_speaks_through_kokoro() -> None:
                p is not None and p.read_bytes() == b"RIFFalloy" and p.suffix == ".wav" and chained == [],
                f"{p} {p.read_bytes() if p else None} {chained}")
         p = tts.synthesize("Your return is filed.", esther._replace(command=(str(bad),)))
-        report("esther: Kokoro failing -> the Aria fallback speaks, never silence",
-               p is not None and chained == ["en-US-AriaNeural"], str(chained))
+        report("esther: Kokoro failing -> the line is silent, no other voice (Peter 2026-11-11)",
+               p is None and chained == [], str(chained))
         chained.clear()
         p = tts.synthesize("你的報稅已經送出了。", esther._replace(command=(str(good),)))
         report("esther: a Mandarin line uses her Mandarin Edge voice (Kokoro is English only)",
@@ -215,7 +215,7 @@ voice:
   stop_phrases: {_STOP}
   auto_tts: true
   name: natural
-  silence_duration: 1.5
+  silence_duration: 3.0
   silence_threshold: 450
   barge_in: false
 # a comment between blocks
@@ -228,7 +228,7 @@ tts:
   provider: jenny_only
   edge:
     voice: en-US-JennyNeural
-    speed: 1.0
+    speed: 1.2
   providers:
     natural:   # shared script for every profile
       type: command
@@ -236,8 +236,8 @@ tts:
       model: edge google mac
     jenny_only:
       type: command
-      command: /x/tts_jenny_only.sh {{input_path}} {{output_path}} {{voice}}
-      voice: en-US-JennyNeural
+      command: /x/tts_jarvis_local.sh {{input_path}} {{output_path}} {{voice}}
+      voice: am_puck
       output_format: mp3
       timeout: 90
 mcp_servers:
@@ -331,7 +331,9 @@ command_allowlist:
 """,
 }
 CLAUDE_CONF = """# Peter's spoken-reply defaults (chosen by ear 2026-09-17). THE place to change voices.
-NEURAL_VOICE_EN="en-US-GuyNeural"        # English: Jenny
+ENGLISH_ENGINE="kokoro"                    # English: Kokoro, local (2026-11-11)
+KOKORO_VOICE_EN="af_heart"                 # the Kokoro voice for English
+NEURAL_VOICE_EN="en-US-GuyNeural"        # English
 NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"    # Chinese: HsiaoChen, Taiwan Mandarin
 VOICE_ALWAYS_ON=1                          # 1 = every Claude Code session starts with voice on
 VOICE_MODE="tap"                           # push-to-talk mode restored if missing
@@ -363,7 +365,8 @@ def test_check() -> None:
            {("kylie", "tts.providers.natural.voice"), ("jarvis", "tts.providers.jenny_only.voice"),
             ("esther", "tts.providers.esther.voice"), ("wanna_buffet", "tts.edge.speed"),
             ("wanna_buffet", "voice.silence_threshold"), ("esther", "voice.barge_in_grace_seconds"),
-            ("jarvis", "voice.stop_phrases"), ("claude", "NEURAL_VOICE_EN"), ("claude", "VOICE_MODE")} <= keys,
+            ("jarvis", "voice.stop_phrases"), ("claude", "KOKORO_VOICE_EN"), ("claude", "ENGLISH_ENGINE"),
+            ("claude", "VOICE_MODE")} <= keys and ("claude", "NEURAL_VOICE_EN") not in keys,
            str(sorted(keys)))
     report("check: today's shapes -> zero drift", V.drift(items) == [], str(V.drift(items)))
     wb = next(i for i in items if (i.where, i.key) == ("wanna_buffet", "voice.silence_threshold"))
@@ -526,19 +529,21 @@ CLAUDE_HOOK = Path.home() / ".claude/hooks/speak-response.sh"
 def test_sync_claude() -> None:
     import subprocess
     profiles, conf = make_fixtures()
-    toml = _edited_copy(lambda t: t.replace('voice = "en-US-GuyNeural"          # Claude Code',
-                                            'voice = "en-US-AriaNeural"          # Claude Code'))
+    toml = _edited_copy(lambda t: t.replace('voice = "af_heart"', 'voice = "en-US-AriaNeural"', 1))
     rc, out = _cli(["sync", "--dry-run", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf)])
-    report("claude: --dry-run shows the one NEURAL_VOICE_EN line", rc == 0 and '+NEURAL_VOICE_EN="en-US-AriaNeural"' in out
+    report("claude: --dry-run shows the engine line and the one NEURAL_VOICE_EN line",
+           rc == 0 and '+NEURAL_VOICE_EN="en-US-AriaNeural"' in out and '+ENGLISH_ENGINE="edge"' in out
            and "1 files would change" in out, out[-400:])
     bdir = Path(tempfile.mkdtemp(prefix="vd-bak-"))
     rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
                     "--backup-dir", str(bdir)])
     changed = _changed_lines(CLAUDE_CONF, conf.read_text())
-    report("claude: --apply backs up voice-defaults.conf and changes only that line, comment kept",
+    report("claude: --apply backs up voice-defaults.conf and changes only those lines, comments kept",
            rc == 0 and (bdir / "claude-voice-defaults.conf").read_text() == CLAUDE_CONF
-           and changed == [('NEURAL_VOICE_EN="en-US-GuyNeural"        # English: Jenny',
-                            'NEURAL_VOICE_EN="en-US-AriaNeural"        # English: Jenny')], str(changed))
+           and changed == [('ENGLISH_ENGINE="kokoro"                    # English: Kokoro, local (2026-11-11)',
+                            'ENGLISH_ENGINE="edge"                    # English: Kokoro, local (2026-11-11)'),
+                           ('NEURAL_VOICE_EN="en-US-GuyNeural"        # English',
+                            'NEURAL_VOICE_EN="en-US-AriaNeural"        # English')], str(changed))
     report("claude: the Hermes profiles are untouched",
            all((profiles / p / "config.yaml").read_text() == t for p, t in FIXTURES.items()))
     if not CLAUDE_HOOK.exists():
@@ -570,7 +575,7 @@ def test_dashboard_panel() -> None:
     cfg = agents.load()
     en, zh = V.gemini_wants(next(a for a in agents.agents(cfg) if a.key == "gemini"), cfg)
     gconf = conf.parent / "gemini-voice-defaults.conf"             # Gemini's file as the panel would have written it
-    gconf.write_text(f'NEURAL_VOICE_EN="{en}"\nNEURAL_VOICE_ZH="{zh}"\n')
+    gconf.write_text("".join(f'{k}="{v}"\n' for k, v in (("NEURAL_VOICE_EN", en), ("NEURAL_VOICE_ZH", zh)) if v))
     real_p, real_c, real_g = V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF
     V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF = profiles, conf, gconf
 
@@ -591,7 +596,7 @@ def test_dashboard_panel() -> None:
     finally:
         V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF = real_p, real_c, real_g
     report("dashboard: a read-only panel lists each agent's voice",
-           all(s in clean for s in ("Jarvis", "Kylie", "Esther", "Wanna Buffet", "Claude", "Ava", "Andrew", "Kokoro alloy")),
+           all(s in clean for s in ("Jarvis", "Kylie", "Esther", "Wanna Buffet", "Claude", "Ava", "am_santa", "Kokoro alloy")),
            clean)
     report("dashboard: no warning when the profiles match agents.toml", "drift" not in clean.lower(), clean)
     report("dashboard: a warning when check finds drift, naming the agent and the fix",
@@ -652,33 +657,29 @@ def test_sync_gemini() -> None:
     report("gemini: not managed unless the caller names its file (a test against copies never reaches Peter's)",
            not [i for i in V.collect(cfg, profiles, conf) if i.where == "gemini"])
     items = [i for i in V.collect(cfg, profiles, conf, gconf) if i.where == "gemini"]
-    report("gemini: a missing file means both voices are missing",
-           [(i.key, i.have, i.want) for i in items] == [("NEURAL_VOICE_EN", None, "en-US-AriaNeural"),
-                                                       ("NEURAL_VOICE_ZH", None, "zh-TW-HsiaoYuNeural")], str(items))
+    report("gemini: a missing file means its one voice is missing (no Mandarin voice set: no line invented)",
+           [(i.key, i.have, i.want) for i in items] == [("NEURAL_VOICE_EN", None, "en-US-AriaNeural")], str(items))
     bdir = Path(tempfile.mkdtemp(prefix="vd-bak-"))
     rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
                     "--gemini-conf", str(gconf), "--backup-dir", str(bdir)])
     text = gconf.read_text() if gconf.exists() else ""
-    report("gemini: --apply makes the file with a header, English then Mandarin, nothing else touched",
-           rc == 0 and text == V.GEMINI_CONF_HEADER + 'NEURAL_VOICE_EN="en-US-AriaNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"\n'
+    report("gemini: --apply makes the file with a header and its English voice, nothing else touched",
+           rc == 0 and text == V.GEMINI_CONF_HEADER + 'NEURAL_VOICE_EN="en-US-AriaNeural"\n'
            and "(none: the file did not exist)" in out and conf.read_text() == CLAUDE_CONF, out[-300:] + text)
     report("gemini: afterwards zero drift", V.drift(V.collect(cfg, profiles, conf, gconf)) == [])
-    gconf.write_text(text.replace('NEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"',
-                                  'NEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"    # Peter\'s note') + "# end\n")
+    gconf.write_text(text.replace('NEURAL_VOICE_EN="en-US-AriaNeural"',
+                                  'NEURAL_VOICE_EN="en-US-AriaNeural"    # Peter\'s note') + "# end\n")
     before = gconf.read_text()
     toml2 = _edited_copy(lambda t: VE.set_field(VE.set_field(VE.set_field(t, "gemini", "voice", None), "gemini", "voice_zh", None),
                                                 "gemini", "voice_zh", "zh-TW-HsiaoChenNeural"))
     cfg2 = agents.load(toml2)
     d = {i.key: (i.have, i.want) for i in V.drift(V.collect(cfg2, profiles, conf, gconf))}
-    report("gemini: no English voice in agents.toml -> the shared Voice Desk voice, as Voice Desk speaks for it",
-           d == {"NEURAL_VOICE_EN": ("en-US-AriaNeural", "en-US-JennyNeural"),
-                 "NEURAL_VOICE_ZH": ("zh-TW-HsiaoYuNeural", "zh-TW-HsiaoChenNeural")}, str(d))
+    report("gemini: no English voice in agents.toml -> nothing written for English (no shared voice, no Jenny)",
+           d == {"NEURAL_VOICE_ZH": (None, "zh-TW-HsiaoChenNeural")}, str(d))
     done, errors = V.apply(V.collect(cfg2, profiles, conf, gconf), bdir)
     report("gemini: an existing file is backed up first, comments and other lines kept",
            not errors and (bdir / "gemini-voice-defaults.conf").read_text() == before
-           and _changed_lines(before, gconf.read_text()) == [
-               ('NEURAL_VOICE_EN="en-US-AriaNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"    # Peter\'s note',
-                'NEURAL_VOICE_EN="en-US-JennyNeural"\nNEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"    # Peter\'s note')],
+           and _changed_lines(before, gconf.read_text()) == [("", 'NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"')],
            str(errors) + str(_changed_lines(before, gconf.read_text())))
     rc, out = _cli(["sync", "--apply", "--agents", str(toml), "--profiles", str(profiles), "--claude-conf", str(conf),
                     "--backup-dir", str(bdir)])

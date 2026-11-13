@@ -84,14 +84,12 @@ WHISPER_HALLUCINATIONS = {
 }
 
 # ---- text to speech ------------------------------------------------------------------
-# Hermes' voice chain, the same script the Telegram bots use: Microsoft Edge neural voices
-# through the new host (~/.local/bin/edge_tts_newhost.py), then Gemini, then a Mac voice.
-# (The older tts_jenny_or_mac.sh still dials Edge's dead host and falls through to Piper.)
+# Hermes' voice chain, the script the Telegram bots use (the dashboard's top strip watches it). Voice Desk itself
+# no longer speaks through it (Peter 2026-11-11, one voice and no fallback): tts.py asks Edge for exactly the
+# agent's voice, or runs the agent's own Kokoro script, and stays silent if that fails.
 TTS_CHAIN = HOME / ".hermes/scripts/tts_natural.sh"
-TTS_ORDER = os.environ.get("VOICE_DESK_TTS_ORDER", "edge google mac")
 TTS_FALLBACK_STATE = HOME / ".hermes/cache/tts_fallback"   # where the chain benches a voice for 10 minutes
-TTS_VOICE_EN = AGENTS["shared"]["voice"]   # the shared voice (agents.toml [shared]): Claude, Gemini, and everyone when V is off
-TTS_VOICE_ZH_MAC = "Meijia"      # Taiwan Mandarin, the Mac fallback when Edge is down
+# There is no shared Voice Desk voice any more: an agent with no voice in agents.toml is silent.
 AFPLAY = "/usr/bin/afplay"
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 STATUS_EVERY_SEC = 10           # spoken "still working" while Claude thinks

@@ -515,30 +515,34 @@ def test_status_file() -> None:
     report("dashboard: M again unmutes, H leaves a hush order", not service.is_muted() and service.take_orders() == ["hush"])
     report("dashboard: a dead listener shows as off", "off" in light3, light3)
 
-    # -- voices: each profile speaks with its own Hermes voice (Peter 2026-10-21) --------------------
+    # -- voices: each agent speaks with its own voice from agents.toml, one per language, no fallback -----------
     import voices
-    voices.set_per_profile(True)
     tbl = dict(voices.table())
     report("voices: Kylie speaks as Ava (agents.toml), Mandarin as HsiaoChen",
            tbl["Kylie"].en == "en-US-AvaNeural" and tbl["Kylie"].zh == "zh-TW-HsiaoChenNeural" and tbl["Kylie"].source == "agents", str(tbl["Kylie"]))
-    report("voices: Wanna Buffet speaks as Andrew (male), Mandarin as YunJhe (male)",
-           tbl["Wanna Buffet"].en == "en-US-AndrewNeural" and tbl["Wanna Buffet"].zh == "zh-TW-YunJheNeural", str(tbl["Wanna Buffet"]))
-    report("voices: Esther keeps her Kokoro voice through her own script; Aria only if it fails (Peter 2026-10-22)",
-           tbl["Esther"].en == "alloy" and bool(tbl["Esther"].command) and tbl["Esther"].fallback == "en-US-AriaNeural", str(tbl["Esther"]))
+    report("voices: Wanna Buffet speaks as Kokoro Santa (Peter 2026-11-11), Mandarin as YunJhe (male)",
+           tbl["Wanna Buffet"].en == "am_santa" and tbl["Wanna Buffet"].zh == "zh-TW-YunJheNeural", str(tbl["Wanna Buffet"]))
+    report("voices: Esther keeps her Kokoro voice through her own script, with no fallback voice (Peter 2026-11-11)",
+           tbl["Esther"].en == "alloy" and bool(tbl["Esther"].command) and not hasattr(tbl["Esther"], "fallback"), str(tbl["Esther"]))
     report("voices: Claude speaks with its own voice from agents.toml too (step 5)", voices.voice_for("claude").source == "agents")
-    voices.set_per_profile(False)
-    report("voices: V off -> everyone shares one voice", voices.voice_for("hermes:wanna-buffet") == voices.shared_voice())
-    voices.set_per_profile(True)
-    report("voices: V on again -> per profile", voices.voice_for("hermes:wanna-buffet").en == "en-US-AndrewNeural")
+    report("voices: the V key's shared voice is gone (no shared_voice, no per-profile switch)",
+           not hasattr(voices, "shared_voice") and not hasattr(voices, "set_per_profile"))
+    report("voices: an unknown target is silent", voices.voice_for("hermes:nobody") == voices.SILENT)
     spoken: list = []
     lst2 = make_listener(clock=FakeClock())
     _snd = Path(tempfile.mkdtemp(prefix="vd-voice-")) / "say.wav"   # a real file: speak() removes its folder after playing
     lst2.synth = lambda text, voice=None: (spoken.append(voice), _snd.write_bytes(b""), _snd)[2]
     lst2.brain.set_target("hermes:wanna-buffet")
     lst2.speak("hello")
-    report("listener: speaks with the voice of whoever is on the line", bool(spoken) and spoken[0].en == "en-US-AndrewNeural", str(spoken))
+    report("listener: speaks with the voice of whoever is on the line", bool(spoken) and spoken[0].en == "am_santa", str(spoken))
     report("listener: the status file says which voice spoke (dashboard shows it)",
-           lst2.status.data.get("voice") == "Andrew · YunJhe", str(lst2.status.data.get("voice")))
+           lst2.status.data.get("voice") == "Kokoro am_santa · YunJhe", str(lst2.status.data.get("voice")))
+    lst2.synth = lambda text, voice=None: (spoken.append(voice), None)[1]          # the voice fails
+    lst2.speak("hello again")
+    report("listener: a failed voice leaves the line silent and says so on the status (red on the grid)",
+           bool(lst2.status.data.get("voice_failed")) and "failed" in str(lst2.status.data.get("note")),
+           str(lst2.status.data))
+    lst2.synth = lambda text, voice=None: (spoken.append(voice), _snd.write_bytes(b""), _snd)[2]
     # step 5: Gemini and Codex answers spoken by Voice Desk use their own voices from agents.toml
     import agents as _A
     import voiceedit as _VE
@@ -591,27 +595,29 @@ def test_status_file() -> None:
         B.subprocess.Popen = real_popen         # type: ignore[assignment]
     report("speed: a Hermes voice turn passes --reasoning low", bool(seen) and seen[0][-2:] == ["--reasoning", "low"]
            or (bool(seen) and "--reasoning" in seen[0] and seen[0][seen[0].index("--reasoning") + 1] == "low"), str(seen[:1])[:200])
-    calls: list = []
+    real_python, real_host = T.edge_python, T.NEWHOST
+    d = Path(tempfile.mkdtemp(prefix="vd-chain-"))
+    (d / "t.txt").write_text("hi")
+    (d / "host.py").write_text("")
+    runs: list = []
 
-    class _R:
-        def __init__(self, rc):
-            self.returncode = rc
     def _run(cmd, **kw):
-        calls.append(cmd[-1])
-        if cmd[-1] == "edge" and len(calls) == 1:
-            return _R(1)                        # Edge hiccups once ...
-        Path(cmd[2]).write_bytes(b"RIFF")       # ... and works on the retry
-        return _R(0)
+        runs.append(cmd)
+        if len(runs) == 1:
+            return type("R", (), {"returncode": 1})()           # Edge hiccups once ...
+        Path(cmd[cmd.index("--write-media") + 1]).write_bytes(b"ID3")   # ... and works on the retry
+        return type("R", (), {"returncode": 0})()
     real_run = T.subprocess.run
+    T.edge_python, T.NEWHOST = (lambda: "/usr/bin/python3"), d / "host.py"
     T.subprocess.run = _run                     # type: ignore[assignment]
     try:
-        d = Path(tempfile.mkdtemp(prefix="vd-chain-"))
-        (d / "t.txt").write_text("hi")
-        got = T._chain(d / "t.txt", d / "o.wav", "en-US-AndrewNeural")
+        got = T._chain(d / "t.txt", d / "o.mp3", "en-US-AndrewNeural")
     finally:
         T.subprocess.run = real_run             # type: ignore[assignment]
-    report("voices: one Edge hiccup is retried with Edge, never handed to the fallback voice",
-           got is not None and calls == ["edge", "edge"], str(calls))
+        T.edge_python, T.NEWHOST = real_python, real_host
+    report("voices: one Edge hiccup is retried with Edge for exactly that voice, never handed to another voice",
+           got is not None and len(runs) == 2 and all(c[c.index("--voice") + 1] == "en-US-AndrewNeural" for c in runs),
+           str(runs))
     report("dashboard: never opened the microphone", not opened)
 
 

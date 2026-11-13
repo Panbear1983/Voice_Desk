@@ -6,9 +6,9 @@ Nothing is played, nothing reaches Telegram, no agent is asked anything. It is t
 testing it physically" half of the Voice check: the log evidence says what happened lately, this
 says whether the voice would work right now.
 
-An Edge voice is tried through Hermes' own TTS chain in strict mode: if the named voice cannot be
-made, the test says so instead of quietly letting another voice (Gemini's female voice, the Mac's
-voice) answer in its place, which is exactly the failure that hides in real use.
+An Edge voice is asked for by name, strictly (tts.edge_exact): if the named voice cannot be made, the test says so
+(red) instead of quietly letting another voice answer in its place. Since 2026-11-11 that is also exactly what
+happens in real use: a failed voice means a silent line, never a different voice.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ import agents
 import gridstate as G
 import settings as S
 import tts
+import voices
 
 SENTENCES = {"en": "This is a Voice Desk test for {name}.", "zh": "這是{name}的語音測試。"}
 MIN_SECONDS = 0.5
@@ -72,58 +73,33 @@ def probe(path: Path) -> tuple[bool, float, str]:
 Synth = Callable[[Path, Path, str, "agents.Agent", str], Optional[str]]
 
 
-_EDGE_PYTHONS = ("/Library/Frameworks/Python.framework/Versions/3.11/bin/python3", "/usr/local/bin/python3")
-_edge_python: Optional[str] = None
-NEWHOST = Path.home() / ".local/bin/edge_tts_newhost.py"      # Edge through Microsoft's current address
-
-
+# Edge is asked through tts.py's own strict path (exactly the named voice, nothing else), so the test checks
+# exactly what Voice Desk would speak. Kept here under the old names for callers and tests.
 def edge_python() -> Optional[str]:
-    """A Python that has edge-tts (the same search Hermes' own voice script does), found once."""
-    global _edge_python
-    if _edge_python is None:
-        import glob
-        found = ""
-        for c in [*_EDGE_PYTHONS, *sorted(glob.glob(str(Path.home() / ".hermes/installs/*/environments/*/venv/bin/python")),
-                                          key=lambda f: -Path(f).stat().st_mtime)]:
-            if Path(c).exists() and subprocess.run([c, "-c", "import edge_tts"], capture_output=True).returncode == 0:
-                found = c
-                break
-        _edge_python = found
-    return _edge_python or None
+    return tts.edge_python()
 
 
 def _edge_direct(txt: Path, out: Path, voice: str) -> bool:
-    """Ask Edge for exactly this voice and nothing else: no Google, no Mac voice. Two tries, like the chain."""
-    py = edge_python()
-    if not py or not NEWHOST.exists():
-        return False
-    for _ in range(2):
-        try:
-            r = subprocess.run([py, str(NEWHOST), "--voice", voice, "--file", str(txt), "--write-media", str(out)],
-                               capture_output=True, timeout=60)
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
-            return True
-    return False
+    return tts.edge_exact(txt, out, voice)
 
 
 def _real_synth(txt: Path, out: Path, voice: str, agent: agents.Agent, lang: str) -> Optional[str]:
-    """Make the file; return None on failure, else which path made it ('voice' or 'backup')."""
-    if lang == "en" and agent.command and not tts.voices.is_edge(voice):          # Esther / Simba: their own Kokoro script
-        if tts._script(agent.command, txt, out, voice, effect=agent.effect):
-            return "voice"
-        return "backup" if agent.fallback and _edge_direct(txt, out, agent.fallback) else None
+    """Make the file the way Voice Desk would: the agent's own script (or the shared Kokoro script) for its
+    English voice, Edge for exactly the named voice otherwise. None on failure: there is no backup voice
+    (Peter 2026-11-11), so a failed voice is a failed test."""
+    v = voices.resolve(agent)
+    if lang == "en" and v.command:
+        return "voice" if tts._script(v.command, txt, out, voice, effect=v.effect) else None
     return "voice" if _edge_direct(txt, out, voice) else None
 
 
 def voices_to_test(agent: agents.Agent, cfg: dict) -> list[tuple[str, str]]:
-    """[(language, voice name)] exactly as the agent would speak: its own, else the shared Voice Desk voice."""
+    """[(language, voice name)] exactly as the agent would speak. A language with no voice is silent by design and
+    is not tested (nothing would speak it); an agent with no voice at all gets nothing to test."""
     info = G.voice_info(agent, cfg)
-    if agent.english_only:                                  # Simba: English only, nothing else is tested or spoken
-        return [("en", info.en)]
-    out = [("en", info.en), ("zh", info.zh)]
-    out += [(code, v) for code, v in info.extra.items()]
+    out = [(lang, v) for lang, v in (("en", info.en), ("zh", info.zh)) if v]
+    if not agent.english_only:                              # Simba: English only, nothing else is tested or spoken
+        out += [(code, v) for code, v in info.extra.items()]
     return out
 
 
@@ -145,10 +121,12 @@ def run(agent: agents.Agent, cfg: dict, synth: Synth = _real_synth, probe_fn=pro
                 continue
             took = time.time() - t0
             if not via or not out.exists():
-                results.append(TestResult(lang, voice, False, 0, took, "the voice could not be made", time.time()))
+                results.append(TestResult(lang, voice, False, 0, took,
+                                          "the voice could not be made: that line would be SILENT (no other voice "
+                                          "takes over)", time.time()))
                 continue
             ok, dur, what = probe_fn(out)
-            detail = (f"{what}, {dur:.1f}s" + ("" if via == "voice" else f" (made with the backup voice {agent.fallback})")) if ok else what
+            detail = f"{what}, {dur:.1f}s" if ok else what
             results.append(TestResult(lang, voice, ok, dur, took, detail, time.time(), via))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

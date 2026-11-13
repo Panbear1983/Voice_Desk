@@ -185,17 +185,25 @@ class Engine:
         write_wav(audio, wav)
         return self.whisper.transcribe(wav)
 
+    def _voice(self):
+        """Whoever is on the line speaks with their own voice from agents.toml; none = silent (no shared voice)."""
+        import voices
+        try:
+            return voices.voice_for(self.brain.target())
+        except Exception:
+            return voices.SILENT
+
     def _status(self, phrase: str) -> None:
         self.on_event("status", phrase)
-        tts.say_now(phrase + ".", self.player)
+        tts.say_now(phrase + ".", self.player, self._voice())
 
     def _speak(self, text: str, allow_barge_in: bool = False) -> None:
         if not text:
             return
         self._set("speaking")
-        path = tts.synthesize(text)
+        path = tts.synthesize(text, self._voice())
         if not path:
-            self.on_event("note", "no voice available, see the window")
+            self.on_event("note", "silent: this agent's voice failed or it has none (no other voice is used), see the window")
             return
         self.player.play(path)
         if allow_barge_in and self.mode == "open":

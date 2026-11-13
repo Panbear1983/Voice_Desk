@@ -144,6 +144,8 @@ def intents(history: list[dict]) -> dict[tuple[str, str, str], str]:
             continue
         token = str(h["new"])
         if place == "mic":
+            if token.split(":")[0] in onoff.RETIRED_MIC_GROUPS:
+                continue                                  # the shared-voice switch is gone (2026-11-11): nothing to keep
             out[("*", "mic", token.split(":")[0])] = token
         else:
             out[(str(h.get("agent", "")), place, "")] = token

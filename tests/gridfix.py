@@ -21,8 +21,6 @@ AGENTS_TOML = '''\
 [shared]
 greetings = ["hello"]
 whisper_prompt = "Jarvis, Kylie."
-voice = "en-US-JennyNeural"
-voice_zh = "zh-TW-HsiaoChenNeural"
 
 [shared.end_phrases]
 always = ["stop"]
@@ -79,7 +77,6 @@ voice = "alloy"                      # her Kokoro voice
 voice_zh = "zh-TW-HsiaoYuNeural"
 command = ["/nonexistent/python",
            "/nonexistent/esther_tts.py"]
-fallback = "en-US-AriaNeural"
 auto_tts = true
 silence_duration = 1.5
 barge_in = false
@@ -132,7 +129,7 @@ def make_world(*, group_on: bool = True, dm_modes: dict | None = None) -> Simple
     (gemini / "config/hooks/audio_cache").mkdir(parents=True)
     (gemini / "config/hooks/speak-response.py").write_text("# hook\n")
     gemini_conf = gemini / "config/hooks/voice-defaults.conf"          # as Voice Desk writes it (step 5)
-    gemini_conf.write_text('# Gemini\'s spoken-reply voices.\nNEURAL_VOICE_EN="en-US-JennyNeural"\n'
+    gemini_conf.write_text('# Gemini\'s spoken-reply voices.\nNEURAL_VOICE_EN="en-US-EmmaNeural"\n'
                            'NEURAL_VOICE_ZH="zh-TW-HsiaoChenNeural"\n')
     state = root / "state"
     (state / "speech").mkdir(parents=True)

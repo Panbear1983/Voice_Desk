@@ -117,7 +117,7 @@ class TheRun(unittest.TestCase):
         self.assertFalse(res[0].ok)
         self.assertIn("script exploded", res[0].detail)
 
-    def test_esther_is_rendered_by_her_own_script_and_the_backup_is_labelled(self):
+    def test_esther_is_rendered_by_her_own_script_and_a_failure_is_a_failure_with_no_backup(self):
         a, cfg = agent_and_cfg("esther")
         self.assertTrue(a.command)
 
@@ -130,23 +130,25 @@ class TheRun(unittest.TestCase):
             res = VT.run(a, cfg)
         script.assert_called_once()
         self.assertEqual(script.call_args.args[3], "alloy")
-        self.assertEqual(direct.call_args_list[0].args[2], "en-US-AriaNeural", "the backup voice is asked for, by name")
-        self.assertTrue(res[0].ok)
-        self.assertEqual(res[0].via, "backup")
-        self.assertIn("backup voice", res[0].detail)
+        self.assertEqual([c.args[2] for c in direct.call_args_list], ["zh-TW-HsiaoYuNeural"],
+                         "only her Mandarin voice goes to Edge; no backup voice is asked for")
+        self.assertFalse(res[0].ok, "Peter 2026-11-11: a failed voice is red, never covered by another voice")
+        self.assertIn("SILENT", res[0].detail)
 
-    def test_gemini_and_codex_are_tested_with_the_shared_voice_they_really_use(self):
-        for key in ("gemini", "codex"):
-            a, cfg = agent_and_cfg(key)
-            got = []
+    def test_a_voiceless_agent_has_nothing_to_test_and_an_agent_is_tested_with_exactly_its_own_voices(self):
+        a, cfg = agent_and_cfg("codex")
+        got = []
 
-            def synth(txt, out, voice, agent, lang):
-                got.append(voice)
-                make_wav(out)
-                return "voice"
+        def synth(txt, out, voice, agent, lang):
+            got.append(voice)
+            make_wav(out)
+            return "voice"
 
-            VT.run(a, cfg, synth=synth)
-            self.assertEqual(got, ["en-US-JennyNeural", "zh-TW-HsiaoChenNeural"])
+        self.assertEqual(VT.run(a, cfg, synth=synth), [], "no voice: silent by design, nothing to make")
+        self.assertEqual(got, [])
+        a, cfg = agent_and_cfg("kylie")
+        VT.run(a, cfg, synth=synth)
+        self.assertEqual(got, ["en-US-AvaNeural", "zh-TW-HsiaoChenNeural"])
 
     def test_the_temp_files_are_cleaned_up(self):
         a, cfg = agent_and_cfg("kylie")
@@ -176,7 +178,7 @@ class TheRun(unittest.TestCase):
 
 class TheRealEdgePath(unittest.TestCase):
     def test_edge_direct_refuses_when_there_is_no_edge_python(self):
-        with mock.patch.object(VT, "edge_python", return_value=None):
+        with mock.patch.object(VT.tts, "edge_python", return_value=None):
             self.assertFalse(VT._edge_direct(Path("a.txt"), Path("a.mp3"), "en-US-AvaNeural"))
 
     def test_edge_direct_asks_for_exactly_the_named_voice_and_nothing_else(self):
@@ -191,8 +193,8 @@ class TheRealEdgePath(unittest.TestCase):
             out.write_bytes(b"x" * 10)
             return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
-        with mock.patch.object(VT, "edge_python", return_value="/usr/bin/python3"), \
-                mock.patch.object(VT, "NEWHOST", fake_host), mock.patch("subprocess.run", fake_run):
+        with mock.patch.object(VT.tts, "edge_python", return_value="/usr/bin/python3"), \
+                mock.patch.object(VT.tts, "NEWHOST", fake_host), mock.patch("subprocess.run", fake_run):
             self.assertTrue(VT._edge_direct(txt, out, "zh-TW-HsiaoYuNeural"))
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][calls[0].index("--voice") + 1], "zh-TW-HsiaoYuNeural")

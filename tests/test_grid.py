@@ -31,17 +31,15 @@ def rows_by_key(world, now=NOW):
 
 
 class TheRows(unittest.TestCase):
-    def test_with_v_off_every_agent_that_has_its_own_voice_says_the_mic_window_uses_the_shared_one(self):
-        # step 5: Claude, Gemini and Codex speak with their own voice in Voice Desk too, so the V-off note covers them
-        import voices
-        from unittest import mock
-        with mock.patch.object(voices, "per_profile_enabled", return_value=False):
-            cfg = agents.load(F.make_world().toml)
-            info = {a.key: G.voice_info(a, cfg) for a in agents.agents(cfg)}
-        self.assertTrue(info["claude"].using_shared and info["kylie"].using_shared)
-        self.assertFalse(info["gemini"].using_shared, "no own voice yet: it speaks with the shared one anyway")
-        with mock.patch.object(voices, "per_profile_enabled", return_value=True):
-            self.assertFalse(G.voice_info(next(a for a in agents.agents(cfg) if a.key == "claude"), cfg).using_shared)
+    def test_every_agent_shows_exactly_its_own_voice_and_a_voiceless_one_is_silent(self):
+        # Peter 2026-11-11: one voice, no fallback, empty = silent. No shared voice fills a gap any more.
+        cfg = agents.load(F.make_world().toml)
+        info = {a.key: G.voice_info(a, cfg) for a in agents.agents(cfg)}
+        self.assertEqual((info["kylie"].en, info["kylie"].zh), ("en-US-AvaNeural", "zh-TW-HsiaoChenNeural"))
+        self.assertEqual((info["codex"].en, info["codex"].zh), ("", ""), "no voice in agents.toml: silent")
+        self.assertTrue(info["codex"].silent)
+        self.assertFalse(info["kylie"].silent)
+        self.assertFalse(hasattr(info["kylie"], "backup"), "no backup voice is shown any more")
 
     def test_rows_are_the_agents_in_peters_order_and_not_builder(self):
         w = F.make_world()
@@ -130,6 +128,28 @@ class TheCells(unittest.TestCase):
 
 class TheVoiceCheck(unittest.TestCase):
     """Peter's real case, in the log's own wording: a Telegram direct chat that answers in text only."""
+
+    def test_a_failed_voice_on_the_line_is_red_never_a_quiet_switch(self):
+        # Peter 2026-11-11: a failed voice shows as a failure on the Voice check, the line stayed silent
+        import service
+        from unittest import mock
+        a = next(x for x in agents.agents(agents.load(F.make_world().toml)) if x.key == "kylie")
+        now = time.time()
+        live = {"pid": os.getpid(), "heartbeat": now, "target": a.target, "voice": "Ava · HsiaoChen", "state": "listening",
+                "voice_failed": now - 5}
+        with mock.patch.object(service, "is_fresh", return_value=True):
+            ev = E.judge_mic(a, G.Cell(G.VOICE_BACK), live, now, "en-US-AvaNeural")
+            self.assertEqual((ev.status, ev.headline), ("bad", "voice failed"))
+            self.assertIn("silent", ev.detail)
+            live["voice_failed"] = None
+            self.assertEqual(E.judge_mic(a, G.Cell(G.VOICE_BACK), live, now, "en-US-AvaNeural").status, "ok")
+
+    def test_the_voice_column_says_silent_for_an_agent_with_no_voice_and_never_backup(self):
+        rows = rows_by_key(F.make_world())
+        self.assertIn("silent", V.voice_text(rows["codex"]).plain)
+        self.assertNotIn("backup ", V.voice_text(rows["kylie"]).plain)
+        self.assertIn("silent", V.test_text(None, False, rows["codex"].voice.silent).plain)
+        self.assertNotIn("Jenny", V.detail_text(rows["gemini"], None).plain)
 
     def test_always_but_text_only_replies_is_red(self):
         w = F.make_world()

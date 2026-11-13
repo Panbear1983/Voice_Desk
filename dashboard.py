@@ -10,7 +10,7 @@ It is an overseer, never a lifeline: every voice setting stays where the agents 
 if this panel closes, voices keep working exactly as last set.
 
 ON/OFF CELLS (steps 2-3): ← → pick a place, Enter changes it. Live today: the Telegram team group (Off / Always), Claude's terminal
-(Off / Always), the Voice Desk mic window / phone (own voices vs shared voice, speech queue on / off), the Telegram direct chats
+(Off / Always), the Voice Desk mic window / phone (speech queue on / off), the Telegram direct chats
 (Off / Voice-back / Always, gateway_voice_mode.json) and Gemini's terminal (Off / Always, a switch file its hook reads).
 W pauses / resumes the watcher (watcher.py puts drifted settings back; the top strip shows its light).
 Each change backs up the files, writes them, reads them back and goes into the history; U undoes. Hermes windows and the
@@ -21,8 +21,9 @@ iPhone stay read-only. Enter on the voice column edits the voice; Enter on the V
   M mute / unmute · H hush · S listener screen · Q close (the listener keeps running)
 
 SECOND SCREEN, the listener (it never opens the microphone): who is on the line, what was heard and
-said, and M mute · H hush · N new conversation · V voices per profile/shared · X hand the mic back ·
-R restart · K kill the listener · Esc back to the grid · Q close.
+said, and M mute · H hush · N new conversation · X hand the mic back ·
+R restart · K kill the listener · Esc back to the grid · Q close. (V, the shared-voice switch, is gone: every
+agent speaks with its own voice or stays silent.)
 
 The grid reads gently: ONE background read every 45 s (and on C) for all rows together, never a
 loop per row; the second screen's per-window herdr look-up runs only while that screen is open.
@@ -239,7 +240,6 @@ class ListenerScreen(Screen):
     """ + _LIGHT_CSS
     BINDINGS = [
         Binding("n", "new_thread", "new conversation"),
-        Binding("v", "voices", "voices: per profile / shared"),
         Binding("x", "release", "hand the mic back"),
         Binding("r", "restart", "restart listener"),
         Binding("k", "kill", "kill listener"),
@@ -276,13 +276,6 @@ class ListenerScreen(Screen):
     def action_new_thread(self) -> None:
         service.send("new_thread")
         self.app.say("the next turn starts a fresh conversation with whoever is on the line")  # type: ignore[attr-defined]
-
-    def action_voices(self) -> None:
-        on = not voices.per_profile_enabled()
-        voices.set_per_profile(on)
-        self.app.refresh_voices()      # type: ignore[attr-defined]
-        self.app.say("voices: each profile speaks with its own Hermes voice" if on   # type: ignore[attr-defined]
-                     else f"voices: everyone speaks with the shared voice ({voices.short(voices.shared_voice())})")
 
     def action_release(self) -> None:
         service.send("release")
@@ -376,7 +369,7 @@ class Dashboard(App):
             key = row.agent.key
             table.add_row(Text(row.agent.display, style="bold"), V.voice_text(row),
                           *[V.cell_text(row.cells[p], row.evidence[p]) for p in G.PLACE_KEYS],
-                          V.test_text(self.tests.get(key), key in self.testing), key=key, height=2)
+                          V.test_text(self.tests.get(key), key in self.testing, row.voice.silent), key=key, height=2)
         if self.rows:
             table.move_cursor(row=min(keep, len(self.rows) - 1), column=keep_col)
         self.show_detail()
@@ -517,7 +510,7 @@ class Dashboard(App):
         if not row:
             return
         if not voiceedit.editable(row.agent):
-            self.say(f"{row.agent.display}: no voice setting the panel can change yet (shared Voice Desk voice + its own hook)")
+            self.say(f"{row.agent.display}: no voice setting the panel can change yet")
             return
         if field_name == "effect" and not voiceedit.uses_simba_script(row.agent):
             self.say(f"{row.agent.display} has no voice effect (only Simba's Kokoro voice has one)")
@@ -576,15 +569,9 @@ class Dashboard(App):
         if not isinstance(screen, ListenerScreen):
             return
         cfg = voices.config()
-        mode = "per agent" if voices.per_profile_enabled() else f"shared ({voices.short(voices.shared_voice())})"
-        rows = [f"{name}: {voices.short(v)}" for name, v in voices.table()]
-        claude = next((a for a in agents.agents(cfg) if a.target == "claude"), None)
-        if claude and claude.voice:
-            rows.append(f"Claude: {voices.short(voices.Voice(claude.voice, claude.voice_zh or voices.zh_for(claude.voice), 'agents'))}")
-        for agent in agents.agents(cfg):
-            if agent.target in {"gemini", "codex"}:
-                rows.append(f"{agent.display}: {voices.short(voices.voice_for(agent.target))}")
-        text = f"[b #9b59b6]Voices[/] ({mode}) — V toggles · change them on the grid (E / Z) or in agents.toml\n[dim]{'   '.join(rows)}[/dim]"
+        rows = [f"{a.display}: {voices.short(voices.voice_for(a.target))}" for a in agents.agents(cfg)]
+        text = (f"[b #9b59b6]Voices[/] — each agent its own, one per language, no backup (a failed voice is silent) · "
+                f"change them on the grid (E / Z) or in agents.toml\n[dim]{'   '.join(rows)}[/dim]")
         lives = [live_session.LiveBrain(t) for t in ("claude", "gemini", "codex")]
         lives += [live_session.HermesLiveBrain(p, brain_mod.hermes_display_name(p)) for p in brain_mod.hermes_profiles()]
         for live in lives:                             # where "talk to X" goes (2026-10-25)

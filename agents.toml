@@ -25,10 +25,8 @@ greetings = ["hello", "hallo", "hullo", "helo"]
 # The words whisper is told to expect. Without it the small model hears "Javas", "Piley" and
 # "Juanaba Faye" (measured 2026-10-21); with it all four names land. Mandarin stays Mandarin.
 whisper_prompt = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."
-# Voice Desk's own shared voice: used for any agent with no voice of its own below, and for
-# everyone when the dashboard's V key turns per-agent voices off.
-voice = "en-US-JennyNeural"
-voice_zh = "zh-TW-HsiaoChenNeural"
+# There is no shared Voice Desk voice (Peter 2026-11-11): every agent speaks with its OWN voice below, one per
+# language, and nothing else. If that voice fails the line stays silent; an agent with no voice is silent.
 
 [shared.mic]
 # Microphone / silence detection for the listener and the window.
@@ -56,16 +54,17 @@ spellings = { "that's" = ["that's", "that is", "that’s"] }   # the last one ha
 
 # ---- the agents --------------------------------------------------------------------------------
 # names:     every spelling whisper has been heard to produce for the agent's name
-# voice:     the reply voice. Hermes agents: written into the profile's active tts provider (and
-#            tts.edge.voice when the profile has one). Claude and Gemini: NEURAL_VOICE_EN in their
-#            voice-defaults.conf. Codex: read here by Voice Desk. Voice Desk speaks every agent's
+# voice:     the reply voice, the ONLY English voice it ever speaks with (no voice = silent). Hermes agents: written
+#            into the profile's active tts provider (and tts.edge.voice when the profile has one). Claude and
+#            Gemini: their voice-defaults.conf. Codex: read here by Voice Desk. Voice Desk speaks every agent's
 #            turns with it too.
-# voice_zh:  the Mandarin voice Voice Desk (and Claude's and Gemini's hooks) speak with; Taiwan
-#            Mandarin (zh-TW-...) only, Peter 2026-11-09
+# voice_zh:  the ONLY Mandarin voice Voice Desk (and Claude's and Gemini's hooks) speak with; Taiwan
+#            Mandarin (zh-TW-...) only, Peter 2026-11-09. None = a Chinese line stays silent.
 # speed:     tts.edge.speed in the profile
-# command, fallback, effect:
-#            a non-Edge voice made by the agent's own script (Esther's and Simba's Kokoro), the Edge voice used if
-#            that script fails, and (Simba only) the sound effect the script puts on top (F key on the grid)
+# command, effect:
+#            a non-Edge voice made by the agent's own script (Esther's and Simba's Kokoro) and (Simba only) the sound
+#            effect the script puts on top (F key on the grid). If the script fails the line stays silent: there is
+#            no fallback voice (Peter 2026-11-11; the old `fallback` key is gone)
 # english_only: true = the agent speaks English only: no Mandarin or other-language voice, and a line with
 #            Chinese in it stays silent (Simba, Peter 2026-11-10)
 # auto_tts, silence_duration, silence_threshold, barge_in, barge_in_grace_seconds:
@@ -87,7 +86,6 @@ voice = "af_heart"                   # Kokoro, local (2026-11-11): ENGLISH_ENGIN
 voice_zh = "zh-TW-HsiaoChenNeural"   # NEURAL_VOICE_ZH
 always_on = true                     # VOICE_ALWAYS_ON: every Claude Code session starts with voice on
 mode = "tap"                         # VOICE_MODE: tap Space to start, tap to send (Peter 2026-10-25; was hold)
-fallback = "en-US-GuyNeural"         # NEURAL_VOICE_EN: Edge voice if Kokoro cannot run
 
 [agents.gemini]
 target = "gemini"
@@ -126,7 +124,6 @@ effect = "16 pitch=1.4"
 english_only = true                  # no Mandarin voice: a Chinese line stays silent (Voice Desk and simba_tts.py)
 # Voice Desk speaks her English lines through: <command> <text file> <out.wav> <voice> <effect>
 command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python", "~/GitHub/Voice_Desk/simba_tts.py"]
-fallback = "en-US-MichelleNeural"    # only if Kokoro fails, so the line never goes silent (no effect on it)
 
 [agents.jarvis]
 profile = "orchestrator"
@@ -166,7 +163,6 @@ voice_zh = "zh-TW-HsiaoYuNeural"     # Kokoro speaks English only; her Mandarin 
 # Voice Desk speaks her lines through her own Kokoro script: <command> <text file> <out.wav> <voice>
 command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python",
            "~/.hermes/profiles/tax_angel_esther/scripts/esther_tts.py"]
-fallback = "en-US-AriaNeural"        # only if Kokoro fails, so the line never goes silent
 auto_tts = true
 silence_duration = 1.5
 barge_in = false

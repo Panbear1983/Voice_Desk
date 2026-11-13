@@ -11,9 +11,8 @@ already reads, exactly the way Peter would by hand, only safely:
                           `//` skips a false) + ~/.claude/voice-defaults.conf VOICE_ALWAYS_ON (else the
                           SessionStart hook switches it back on) + `always_on` in agents.toml when it is there
                           (else `voicecfg check` would call it drift). ~/.claude/hooks is NOT touched.
-    Voice Desk (mic/phone) two global switches: ~/.voice_desk/voices_per_profile (exists = everyone speaks with
-                          the shared voice) and ~/.voice_desk/speech/off (exists = the speech queue lets windows
-                          play straight, no taking turns).
+    Voice Desk (mic/phone) one global switch: ~/.voice_desk/speech/off (exists = the speech queue lets windows
+                          play straight, no taking turns). (The old voices_per_profile / shared-voice switch is gone.)
 
 A change is: the exact edits are worked out first (`plan_*`), every file is backed up, written atomically,
 read back the way its own reader reads it (json, bash `source`, tomllib, jq for the Claude hook's own test),
@@ -44,13 +43,14 @@ import voiceedit
 # The profiles the team room can voice (voice_notes.py VOICED_AGENTS; Builder is never voiced).
 TEAM_VOICED = ("orchestrator", "assistant", "tax_angel_esther", "wanna-buffet")
 
-# mic-window switches: token -> (label, marker file relative to state dir, "marker exists" means this token's value)
+# mic-window switches: token -> (label, marker file relative to state dir, "marker exists" means this token's value).
+# The "own voices / shared voice" switch is gone with the shared voice (Peter 2026-11-11): every agent speaks with
+# its own voice, or not at all.
 MIC_SWITCHES = {
-    "own_voices:on": ("Each agent speaks with its own voice", "voices_per_profile", False),
-    "own_voices:off": ("Everyone speaks with the shared voice", "voices_per_profile", True),
     "queue:on": ("Speech queue on (voices take turns)", "speech/off", False),
     "queue:off": ("Speech queue off (windows play straight)", "speech/off", True),
 }
+RETIRED_MIC_GROUPS = ("own_voices",)        # old history lines may still name it; nothing acts on them
 
 
 @dataclass
@@ -104,12 +104,8 @@ def menu(agent: agents.Agent, place: str, cell: G.Cell, p: G.Paths) -> Menu:
         return Menu(title, [Option(G.OFF, "Off — Claude does not speak its replies", cell.value == G.OFF),
                             Option(G.ALWAYS, "Always — Claude speaks every reply", cell.value == G.ALWAYS)])
     if place == "mic":
-        own = not (p.state / "voices_per_profile").exists()
         queue_off = (p.speech_dir / "off").exists()
-        return Menu(f"Voice Desk mic window / phone (all agents; Voice Desk always answers aloud when Peter speaks)", [
-            Option("own_voices:off" if own else "own_voices:on",
-                   ("Switch to the shared voice for everyone" if own else "Give each agent its own voice again")
-                   + f"   (now: {'each its own' if own else 'shared voice'})"),
+        return Menu(f"Voice Desk mic window / phone (all agents; Voice Desk answers aloud in each agent's own voice)", [
             Option("queue:on" if queue_off else "queue:off",
                    ("Switch the speech queue on (voices take turns)" if queue_off else "Switch the speech queue off (windows play straight)")
                    + f"   (now: {'off' if queue_off else 'on'})")])
@@ -516,8 +512,7 @@ def _run(agent: agents.Agent, place: str, token: str, changes: list[dict], note:
 def _opposite(place: str, token: str, agent: agents.Agent, p: G.Paths) -> str:
     """The state before the switch (read now, before anything is written)."""
     if place == "mic":
-        return {"own_voices:on": "own_voices:off", "own_voices:off": "own_voices:on",
-                "queue:on": "queue:off", "queue:off": "queue:on"}[token]
+        return {"queue:on": "queue:off", "queue:off": "queue:on"}.get(token, token)
     return _current_token(agent, place, p)
 
 

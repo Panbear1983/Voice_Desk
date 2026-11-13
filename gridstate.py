@@ -219,7 +219,13 @@ def terminal_cell(a: agents.Agent, p: Paths) -> Cell:
         if not p.gemini_hook.exists():
             return Cell(OFF, "no Gemini speak hook found")
         honours = gemini_hook_honours_switch(p)
-        spoken = "Gemini's own Stop hook speaks every reply (Jenny / HsiaoChen hard-coded)"
+        en = _conf_value(p.gemini_hook.parent / "voice-defaults.conf", "NEURAL_VOICE_EN")
+        zh = _conf_value(p.gemini_hook.parent / "voice-defaults.conf", "NEURAL_VOICE_ZH")
+        spoken = (f"Gemini's own Stop hook speaks every reply with the voices Voice Desk writes for it "
+                  f"({en or 'none'} / {zh or 'none'})")
+        if not a.voice:
+            spoken += ("; agents.toml gives Gemini no voice, but its hook then uses its own built-in voice: switch "
+                       "this cell Off to keep it silent")
         if p.gemini_switch.exists():
             if honours:
                 return Cell(OFF, f"{GEMINI_SWITCH_NAME} exists in ~/.voice_desk and Gemini's hook honours it: it stays silent")
@@ -299,11 +305,9 @@ def tg_group_cell(a: agents.Agent, p: Paths) -> Cell:
 def mic_cell(a: agents.Agent, p: Paths) -> Cell:
     if kind_of(a) == OTHER:                                             # not a brain: "hello Simba" wakes nothing
         return Cell(NA, VOICE_ONLY_NOTE)
-    per_profile = not (p.state / "voices_per_profile").exists()          # exists = everyone uses the shared voice
-    own = kind_of(a) == HERMES and per_profile
-    shared = "" if own or kind_of(a) != HERMES else " — own voices are off, so it speaks with the shared voice"
     queue = " — speech queue is off (windows play straight)" if (p.speech_dir / "off").exists() else ""
-    return Cell(VOICE_BACK, "Voice Desk answers aloud when Peter speaks to it" + shared + queue)
+    return Cell(VOICE_BACK, "Voice Desk answers aloud when Peter speaks to it, in this agent's own voice "
+                            "(none set = silent)" + queue)
 
 
 def iphone_cell(a: agents.Agent, p: Paths) -> Cell:
@@ -327,23 +331,22 @@ def cells_for(a: agents.Agent, p: Paths) -> dict[str, Cell]:
 # -- voices and the optional per-place fields stored in agents.toml --------------------------------
 @dataclass(frozen=True)
 class VoiceInfo:
-    en: str
-    zh: str
+    en: str                          # "" = English lines are silent (no voice set: there is no shared voice)
+    zh: str                          # "" = Chinese lines are silent (no Mandarin voice, or English only)
     extra: dict
     override: str
-    backup: str
-    using_shared: bool               # the V key is off, so the mic window ignores this agent's own voice
     effect: Optional[str] = None     # Simba's sound effect on top of her Kokoro voice (F key)
+
+    @property
+    def silent(self) -> bool:
+        return not self.en and not self.zh
 
 
 def voice_info(a: agents.Agent, cfg: dict) -> VoiceInfo:
+    """Exactly the voices the agent speaks with (voices.resolve): one per language, none = silent."""
     import voices
-    shared = agents.shared(cfg)
-    en = a.voice or shared.get("voice", S.TTS_VOICE_EN)
-    zh = "" if a.english_only else a.voice_zh or shared.get("voice_zh") or voices.zh_for(en)
-    backup = a.fallback or shared.get("voice", S.TTS_VOICE_EN)
-    return VoiceInfo(en, zh, dict(a.voices_extra), a.voice_override, backup,
-                     bool(a.voice) and not voices.per_profile_enabled(), a.effect)
+    v = voices.resolve(a)
+    return VoiceInfo(v.en, v.zh, dict(a.voices_extra), a.voice_override, a.effect)
 
 
 QUIET_PLACES = set(PLACE_KEYS)

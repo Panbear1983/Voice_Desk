@@ -51,7 +51,6 @@ voice = "am_fenrir"
 effect = "fenrir16"
 english_only = true
 command = ["/nonexistent/python", "/nonexistent/simba_tts.py"]
-fallback = "en-US-MichelleNeural"
 '''
 
 # A fake kokoro_onnx: one second of a 220 Hz tone at Kokoro's 24 kHz, and a note of how it was called.
@@ -459,13 +458,13 @@ class VoiceDeskSpeaksWithIt(unittest.TestCase):
         self.cfg = agents.load(self.w.toml)
 
     def voice(self):
-        with mock.patch.object(voices, "config", return_value=self.cfg), \
-                mock.patch.object(voices, "per_profile_enabled", return_value=True):
+        with mock.patch.object(voices, "config", return_value=self.cfg):
             return voices.voice_for("simba")
 
     def test_voice_for_simba_is_her_kokoro_voice_effect_and_english_only(self):
         v = self.voice()
-        self.assertEqual((v.en, v.zh, v.effect, v.fallback), ("am_fenrir", "", "fenrir16", "en-US-MichelleNeural"))
+        self.assertEqual((v.en, v.zh, v.effect), ("am_fenrir", "", "fenrir16"))
+        self.assertFalse(hasattr(v, "fallback"), "one voice, no backup (Peter 2026-11-11)")
         self.assertEqual(v.command, ("/nonexistent/python", "/nonexistent/simba_tts.py"))
         self.assertEqual(voices.short(v), "Kokoro am_fenrir · English only")
 
@@ -476,10 +475,9 @@ class VoiceDeskSpeaksWithIt(unittest.TestCase):
         self.assertEqual(self.voice().zh, "")
         self.assertEqual(G.voice_info(agent_of(self.w.toml, "simba"), self.cfg).zh, "")
 
-    def test_with_own_voices_off_simba_has_the_shared_voice_like_everyone(self):
-        with mock.patch.object(voices, "config", return_value=self.cfg), \
-                mock.patch.object(voices, "per_profile_enabled", return_value=False):
-            self.assertEqual(voices.voice_for("simba").source, "shared")
+    def test_there_is_no_shared_voice_to_switch_her_to(self):
+        self.assertFalse(hasattr(voices, "per_profile_enabled"))
+        self.assertEqual(self.voice().source, "agents")
 
     def test_the_script_gets_the_effect_after_the_voice_and_esther_gets_exactly_what_she_got_before(self):
         seen = []
@@ -498,7 +496,7 @@ class VoiceDeskSpeaksWithIt(unittest.TestCase):
                                    "23 but slower and breathier"], "the whole recipe is one argument")
         self.assertEqual(seen[1], ["py", "esther_tts.py", str(tmp / "t.txt"), str(tmp / "b.wav"), "alloy"])
 
-    def test_english_goes_through_her_script_chinese_stays_silent_and_a_failure_goes_to_the_backup(self):
+    def test_english_goes_through_her_script_chinese_stays_silent_and_a_failure_stays_silent(self):
         v = self.voice()
         made = []
 
@@ -515,15 +513,14 @@ class VoiceDeskSpeaksWithIt(unittest.TestCase):
             self.assertIsNotNone(tts.synthesize("Go away, human.", v))
             self.assertIsNone(tts.synthesize("走開啦，人類。", v), "Peter 2026-11-10: English only")
             self.assertIsNone(tts.synthesize("Fine, 好啦, whatever.", v), "a Chinese word in an English line too")
-            self.assertIsNotNone(tts.synthesize("this one will fail", v))
-        self.assertEqual(made, [("script", "am_fenrir", "fenrir16"),
-                                ("script", "am_fenrir", "fenrir16"), ("edge", "en-US-MichelleNeural")])
+            self.assertIsNone(tts.synthesize("this one will fail", v), "Peter 2026-11-11: a failed voice is silent")
+        self.assertEqual(made, [("script", "am_fenrir", "fenrir16"), ("script", "am_fenrir", "fenrir16")],
+                         "no Edge voice ever takes over")
 
     def test_esther_keeps_her_mandarin_voice(self):
         esther = agent_of(self.w.toml, "esther")
         self.assertFalse(esther.english_only)
-        with mock.patch.object(voices, "config", return_value=self.cfg), \
-                mock.patch.object(voices, "per_profile_enabled", return_value=True):
+        with mock.patch.object(voices, "config", return_value=self.cfg):
             v = voices.voice_for(esther.target)
         self.assertEqual(v.zh, "zh-TW-HsiaoYuNeural")
         with mock.patch.object(tts, "_chain", return_value=Path("/zh.wav")) as chain:
@@ -570,7 +567,7 @@ class SimbaIsAVoiceNotABrain(unittest.TestCase):
         self.assertTrue(VE.uses_simba_script(simba))
         others = {VE._kokoro_name(a.voice) for a in agents.agents(cfg) if a.key != "simba"}
         self.assertNotIn(VE._kokoro_name(simba.voice), others, "a voice of her own")
-        self.assertNotIn(VE._kokoro_name(simba.fallback), others, "her backup voice is not someone else's either")
+        self.assertNotIn("fallback", simba.raw, "one voice, no backup (Peter 2026-11-11)")
         self.assertNotIn("simba", agents.whisper_prompt(cfg).lower())
         self.assertEqual(G.kind_of(simba), G.OTHER)
 
@@ -715,8 +712,7 @@ class TheGridShowsHer(unittest.TestCase):
 
     def test_the_voice_cell_and_the_detail_name_her_voice_and_effect(self):
         info = G.voice_info(self.simba, self.cfg)
-        self.assertEqual((info.en, info.zh, info.effect, info.backup),
-                         ("am_fenrir", "", "fenrir16", "en-US-MichelleNeural"))
+        self.assertEqual((info.en, info.zh, info.effect), ("am_fenrir", "", "fenrir16"))
         row = mock.Mock(voice=info, agent=self.simba, kind=G.OTHER, cells={}, evidence={})
         cell = V.voice_text(row).plain
         self.assertIn("am_fenrir · English only", cell)

@@ -297,6 +297,10 @@ def judge_mic(a: agents.Agent, cell: G.Cell, listener: dict, now: float, voice: 
     on_line = listener.get("target") == a.target
     if not on_line:
         return Evidence("idle", "not on the line", f"{a.display} is not the one on the line right now; the listener is running and waiting.")
+    if listener.get("voice_failed"):                    # Peter 2026-11-11: a failed voice is a failure, not a switch
+        return Evidence("bad", "voice failed", f"{a.display}'s voice failed on the last line, so that line was silent "
+                        "(no other voice takes over). T runs the silent test.", float(listener["voice_failed"]),
+                        str(listener.get("voice") or ""), False)
     spoke = listener.get("voice")
     if spoke and listener.get("state") not in ("error",):
         return Evidence("ok", "on the line", f"{a.display} is on the line. Last line spoken as {spoke}.", float(listener.get("since") or now), str(spoke), True)
@@ -366,7 +370,8 @@ def build(cfg: dict, paths: G.Paths, reader: LogReader, now: Optional[float] = N
             if kind == G.CLAUDE:
                 ev["terminal"] = judge_file_hook(cells["terminal"], claude_last, now, info.en, "Claude")
             elif kind == G.GEMINI:
-                ev["terminal"] = judge_file_hook(cells["terminal"], gemini_last, now, "Jenny / HsiaoChen (hard-coded)", "Gemini")
+                ev["terminal"] = judge_file_hook(cells["terminal"], gemini_last, now,
+                                                 f"{info.en or 'no voice'} / {info.zh or 'no Mandarin voice'}", "Gemini")
             else:
                 ev["terminal"] = NA_EVIDENCE
             ev["tg_dm"] = ev["tg_group"] = NA_EVIDENCE

@@ -164,7 +164,7 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(asked, ["kylie"])
                 cell = app.screen.query_one(DataTable).get_row_at(1)[7].plain
                 self.assertIn("en ✓ 2.5s", cell)
-                self.assertIn("zh ✗ failed", cell)
+                self.assertIn("zh ✗ FAILED", cell)
                 self.assertIn("FAILED", text_of(app, "#detail"))
 
     async def test_editing_a_voice_with_e_then_undo_with_u(self):
@@ -206,7 +206,7 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
 
     async def test_gemini_and_codex_voices_are_edited_on_the_grid_too_and_undone_with_u(self):
-        # step 5: E on Gemini's row opens the box with the voice it speaks with today (the shared Jenny)
+        # step 5: E on Gemini's row opens the box; Gemini has no voice in this fixture, so it starts empty (silent)
         app = make_app(self.w)
         conf = self.w.edit.gemini_conf
         before = conf.read_text()
@@ -216,7 +216,7 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, D.AskScreen)
             field = app.screen.query_one(Input)
-            self.assertEqual(field.value, "en-US-JennyNeural")
+            self.assertEqual(field.value, "", "no shared Jenny any more: no voice is no voice")
             field.value = "en-US-AriaNeural"
             await pilot.press("enter")
             self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
@@ -383,7 +383,7 @@ class TheOnOffCells(unittest.IsolatedAsyncioTestCase):
             gemini = {r.agent.key: r for r in rows}["gemini"]
             self.assertIn("does not read it yet", gemini.cells["terminal"].problem)
 
-    async def test_the_mic_cell_offers_the_two_voice_desk_switches(self):
+    async def test_the_mic_cell_offers_the_voice_desk_switch_and_no_shared_voice(self):
         app = make_app(self.w)
         async with app.run_test(size=(180, 50)) as pilot:
             await load(app, pilot)
@@ -391,8 +391,8 @@ class TheOnOffCells(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, D.ChoiceScreen)
             options = app.screen.query_one(OptionList)
-            self.assertEqual([o.id for o in options._options], ["own_voices:off", "queue:off"])
-            await pilot.press("down", "enter")
+            self.assertEqual([o.id for o in options._options], ["queue:off"])
+            await pilot.press("enter")
             self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
             self.assertTrue((self.w.paths.speech_dir / "off").exists())
 

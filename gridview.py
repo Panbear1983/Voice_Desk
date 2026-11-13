@@ -45,26 +45,32 @@ def cell_text(cell: G.Cell, ev: E.Evidence) -> Text:
     return t
 
 
-def test_text(results: Optional[list[voicetest.TestResult]], busy: bool) -> Text:
+def test_text(results: Optional[list[voicetest.TestResult]], busy: bool, silent: bool = False) -> Text:
     if busy:
         return Text("testing…", style="#3498db")
+    if silent:
+        return Text("silent\n(no voice set)", style="#7f8c8d")
     if not results:
         return Text("not tested\n(T tests)", style="#7f8c8d")
     t = Text()
     for i, r in enumerate(results[:2]):
         if i:
             t.append("\n")
-        t.append(f"{r.lang} ✓ {r.seconds:.1f}s" if r.ok else f"{r.lang} ✗ failed", style=COLOUR["ok"] if r.ok else COLOUR["bad"])
+        t.append(f"{r.lang} ✓ {r.seconds:.1f}s" if r.ok else f"{r.lang} ✗ FAILED · silent", style=COLOUR["ok"] if r.ok else COLOUR["bad"])
     return t
 
 
 def voice_text(row: E.Row) -> Text:
     v = row.voice
     t = Text()
-    t.append(f"{voice_short(v.en)} · {voice_short(v.zh) if v.zh else 'English only'}")
+    if v.silent:
+        t.append("silent", style="bold #aaaaaa")
+        t.append("\nno voice set", style="#7f8c8d")
+        return t
+    t.append(f"{voice_short(v.en) if v.en else 'EN silent'} · {voice_short(v.zh) if v.zh else 'English only'}")
     extras = f" +{len(v.extra)}" if v.extra else ""
-    effect = f" · {v.effect}" if v.effect else ""
-    t.append(f"\nbackup {voice_short(v.backup)}{extras}{effect}", style="#7f8c8d")
+    effect = f"effect {v.effect}" if v.effect else ""
+    t.append(f"\none voice, no backup{extras}" if not effect else f"\n{effect}{extras}", style="#7f8c8d")
     return t
 
 
@@ -88,15 +94,18 @@ def detail_text(row: E.Row, results: Optional[list[voicetest.TestResult]], now: 
     v = row.voice
     t = Text()
     t.append(f"{row.agent.display}", style="bold #9b59b6")
-    mandarin = f"Mandarin {v.zh}" if v.zh else "English only (a Chinese line stays silent)"
-    t.append(f"  English {v.en}  ·  {mandarin}  ·  backup {v.backup}  ·  language: {v.override}")
+    if v.silent:
+        t.append("  silent: no voice set, so nothing speaks for it (E gives it one)")
+    else:
+        english = f"English {v.en}" if v.en else "English silent (no voice)"
+        mandarin = f"Mandarin {v.zh}" if v.zh else "English only (a Chinese line stays silent)"
+        t.append(f"  {english}  ·  {mandarin}  ·  one voice each, no backup: if it fails the line is silent  ·  "
+                 f"language: {v.override}")
     if v.effect:
         import simba_tts
         t.append(f"  ·  effect: {v.effect} = {simba_tts.describe(v.effect)} (F changes it)")
     if v.extra:
         t.append("  ·  also " + ", ".join(f"{k}: {x}" for k, x in v.extra.items()))
-    if v.using_shared:
-        t.append("\nThe mic window speaks with the shared voice, not this one (V key on the listener screen is off).", style="#e67e22")
     if row.kind == G.HERMES:
         t.append("\nMandarin lines go through Hermes' voice script, which picks its own Mandarin voice; this agent's "
                  "Mandarin setting is kept for Voice Desk and Claude.", style="#7f8c8d")
