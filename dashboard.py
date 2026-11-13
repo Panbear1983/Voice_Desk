@@ -16,11 +16,16 @@ W pauses / resumes the watcher (watcher.py puts drifted settings back; the top s
 Each change backs up the files, writes them, reads them back and goes into the history; U undoes. Hermes windows and the
 iPhone stay read-only. Enter on the voice column edits the voice; Enter on the Voice check column runs the silent test.
 
-  ↑ ↓ pick an agent   T silent voice test (no sound)   Shift-T test everyone   C check now
-  E English voice   Z Mandarin voice (pick-lists: arrows + Enter, last line "other, type it")   U undo last change
+  ↑ ↓ pick an agent   ← → pick a place   T silent voice test (no sound)   Shift-T test everyone   C check now
+  E English voice   Z Mandarin voice (pick-lists: arrows + Enter, last line "other, type it")   F voice effect
+  (Simba only)   U undo last change
   A add an agent (a Hermes profile on this Mac, or another CLI agent)   D remove the agent from the grid (its
   agents.toml block only: the profile and every file stay; U puts it back)
+  X here / not here at the selected place (separate from the voice switch; not here = a blank cell)
+  P activation phrase of the selected place (stored and shown)   ? what the colours mean
   M mute / unmute · H hush · S listener screen · Q close (the listener keeps running)
+The footer shows only the keys that apply to the selected row and cell. L (extra languages) and O (language
+override) still work but are hidden: they are stored only, nothing enforces them yet.
 
 SECOND SCREEN, the listener (it never opens the microphone): who is on the line, what was heard and
 said, and M mute · H hush · N new conversation · X hand the mic back ·
@@ -150,6 +155,48 @@ class ChoiceScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+class HelpScreen(ModalScreen[None]):
+    """"?" on the grid: what the colours and the keys mean (Part 5). Esc, ? or Enter closes it."""
+    CSS = """
+    HelpScreen { align: center middle; }
+    #help { width: 100; height: auto; border: round #9b59b6; background: #1b1b1b; padding: 1 2; }
+    """
+    BINDINGS = [Binding("escape", "close", "close"), Binding("question_mark", "close", "close", show=False),
+                Binding("enter", "close", "close", show=False)]
+
+    def compose(self) -> ComposeResult:
+        yield Static(help_text(), id="help")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+def help_text() -> Text:
+    t = Text()
+    t.append("What the grid's colours mean\n", style="bold #9b59b6")
+    t.append("● ", style=V.COLOUR["ok"])
+    t.append("green   spoke recently and it worked (only real evidence turns a cell green)\n")
+    t.append("● ", style=V.COLOUR["idle"])
+    t.append("grey    idle: nothing to say lately, or switched Off (not a failure)\n")
+    t.append("● ", style=V.COLOUR["warn"])
+    t.append("yellow  worked last time, but some recent replies were text only\n")
+    t.append("● ", style=V.COLOUR["bad"])
+    t.append("red     a mismatch or a failure; a failed voice is red and its line was silent (no backup voice)\n")
+    t.append("◌ ", style=V.COLOUR["unfinished"])
+    t.append("orange  here, but not wired yet (switched here, nothing speaks there yet; never green)\n")
+    t.append("        blank cell: the agent is not here at that place (X puts it here)\n\n")
+    t.append("Keys on the grid\n", style="bold #9b59b6")
+    t.append("T voice test of the row (silent) · Shift-T test all · C check now\n"
+             "E English voice · Z Mandarin voice (pick-lists; last line \"other, type it\") · F voice effect (Simba)\n"
+             "A add an agent · D remove it from the grid (its settings block only; the profile stays)\n"
+             "X here / not here at the selected place (not the voice switch: Enter changes that)\n"
+             "P activation phrase of the selected place (stored and shown; it renames nothing yet)\n"
+             "U undo the last change · W pause / resume the watcher · S listener screen\n"
+             "M mute / unmute · H hush · Q close (the listener keeps running)\n", style="default")
+    t.append("The footer shows only the keys that apply to the selected row and cell. Esc closes this.", style="#7f8c8d")
+    return t
+
+
 class GridScreen(Screen):
     CSS = """
     GridScreen { layout: vertical; }
@@ -168,9 +215,10 @@ class GridScreen(Screen):
         Binding("c", "check_now", "check now"),
         Binding("e", "edit_en", "English voice"),
         Binding("z", "edit_zh", "Mandarin voice"),
-        Binding("l", "edit_extra", "extra language"),
-        Binding("o", "edit_override", "language override"),
         Binding("f", "edit_effect", "voice effect"),
+        # Part 5 (Peter 2026-11-11): L and O are stored only, nothing enforces them: hidden, the keys still work
+        Binding("l", "edit_extra", "extra language", show=False),
+        Binding("o", "edit_override", "language override", show=False),
         Binding("a", "add_agent", "add agent"),
         Binding("d", "remove_agent", "remove from grid"),
         Binding("x", "toggle_here", "here / not here"),
@@ -178,7 +226,36 @@ class GridScreen(Screen):
         Binding("u", "undo", "undo"),
         Binding("w", "watcher", "pause / resume watcher"),
         Binding("s", "listener", "listener screen"),
+        Binding("question_mark", "help", "colours", key_display="?"),
     ]
+    # The footer shows only the keys that apply to the selected row or cell (Part 5)
+    ROW_ACTIONS = {"test_row", "edit_en", "edit_zh", "edit_effect", "edit_extra", "edit_override", "remove_agent"}
+    CELL_ACTIONS = {"toggle_here", "edit_phrase"}
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> Optional[bool]:
+        if action not in self.ROW_ACTIONS | self.CELL_ACTIONS:
+            return True
+        try:
+            app = self.app
+            row = app.selected()                        # type: ignore[attr-defined]
+            if row is None:
+                return False
+            a = row.agent
+            if action in ("edit_en", "edit_zh", "edit_extra", "edit_override") and not voiceedit.editable(a):
+                return False
+            if action == "edit_zh":
+                return not a.english_only               # Simba / Jarvis: English only, no Mandarin voice
+            if action == "edit_effect":
+                return voiceedit.uses_simba_script(a)   # F only on Simba's row
+            if action in self.CELL_ACTIONS:
+                place = app.selected_place()            # type: ignore[attr-defined]
+                if place is None:
+                    return False
+                if action == "edit_phrase":
+                    return row.is_here(place)           # a phrase belongs to a "here" cell
+            return True
+        except Exception:                               # never let the footer take the panel down
+            return True
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -200,6 +277,10 @@ class GridScreen(Screen):
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         self.app.show_detail()         # type: ignore[attr-defined]
+        self.refresh_bindings()        # the footer follows the selected row and cell
+
+    def action_help(self) -> None:
+        self.app.push_screen(HelpScreen())
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         self.app.open_cell(event.coordinate.column)    # type: ignore[attr-defined]
@@ -395,6 +476,7 @@ class Dashboard(App):
         if self.rows:
             table.move_cursor(row=min(keep, len(self.rows) - 1), column=keep_col)
         self.show_detail()
+        screen.refresh_bindings()
 
     def restore_grid(self) -> None:
         """Back from the listener screen: show what was collected while it was open."""

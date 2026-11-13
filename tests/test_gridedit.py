@@ -33,6 +33,71 @@ def files_under(root: Path) -> dict[str, bytes]:
     return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
+def footer_keys(app) -> list[str]:
+    """The keys the footer shows right now (Textual's own list: hidden and switched-off keys left out)."""
+    return [k for k, ab in app.screen.active_bindings.items() if ab.binding.show]
+
+
+class TheFooter(unittest.IsolatedAsyncioTestCase):
+    """Part 5: the footer shows only the keys that apply to the selected row or cell."""
+
+    async def test_the_footer_follows_the_row_and_the_cell(self):
+        from tests.test_dashboard_grid import load, make_app
+        w = F.make_world()
+        w.toml.write_text(F.AGENTS_TOML + '\n[agents.simba]\ntarget = "simba"\ndisplay = "Simba"\nnames = ["simba"]\n'
+                          'voice = "am_fenrir"\neffect = "fenrir16"\nenglish_only = true\n'
+                          'command = ["/nonexistent/python", "/nonexistent/simba_tts.py"]\n')
+        app = make_app(w)
+        async with app.run_test(size=(200, 50)) as pilot:
+            await load(app, pilot)
+            keys = footer_keys(app)                                              # Jarvis, Agent column
+            for k in ("t", "T", "c", "e", "z", "a", "d", "u", "w", "s", "question_mark", "m", "h", "q"):
+                self.assertIn(k, keys)
+            for k in ("v", "l", "o", "f", "x", "p"):
+                self.assertNotIn(k, keys, f"{k} does not apply here")
+            await pilot.press("right", "right")                                  # Jarvis, Terminal window
+            await pilot.pause()
+            self.assertIn("x", footer_keys(app))
+            self.assertIn("p", footer_keys(app))
+            await pilot.press(*["down"] * 7)                                     # Simba (8th row)
+            await pilot.pause()
+            self.assertEqual(app.selected().agent.key, "simba")
+            keys = footer_keys(app)
+            self.assertIn("f", keys, "F only on Simba's row")
+            self.assertNotIn("z", keys, "Simba speaks English only")
+            self.assertNotIn("p", keys, "Simba is not here at the terminal")
+            self.assertIn("x", keys)
+
+    async def test_question_mark_explains_the_colours(self):
+        import dashboard as D
+        from textual.widgets import Static
+        from tests.test_dashboard_grid import load, make_app
+        w = F.make_world()
+        app = make_app(w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("question_mark")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.HelpScreen)
+            text = str(app.screen.query_one("#help", Static).render())
+            for word in ("green", "grey", "yellow", "red", "orange", "blank cell", "never green", "Shift-T"):
+                self.assertIn(word, text)
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.GridScreen)
+
+    async def test_l_and_o_are_hidden_but_still_work(self):
+        import dashboard as D
+        from tests.test_dashboard_grid import load, make_app
+        w = F.make_world()
+        app = make_app(w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("down", "o")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.AskScreen, "O still opens its box")
+
+
 class AddingAnAgent(unittest.TestCase):
     def setUp(self):
         self.w = world_with_builder()
@@ -262,9 +327,10 @@ class TheKeys(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((app.selected().agent.key, app.selected_place()), ("codex", "tg_dm"))
             table = app.screen.query_one(DataTable)
             self.assertEqual(table.get_cell_at(table.cursor_coordinate).plain, "", "not here: a blank cell")
+            self.assertNotIn("p", footer_keys(app), "no phrase on a cell where the agent is not")
             await pilot.press("p")
             await pilot.pause()
-            self.assertIn("not here at Telegram direct: X puts it here first", text_of(app, "#msg"))
+            self.assertNotIsInstance(app.screen, D.AskScreen)
             await pilot.press("x")
             self.assertTrue(await wait_for(lambda: VE.read_history(w.edit)))
             await load(app, pilot)

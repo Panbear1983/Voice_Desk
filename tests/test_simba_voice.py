@@ -775,15 +775,19 @@ class TheGridKeys(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(w.toml.read_text(), start)
 
-    async def test_f_on_another_row_says_why_not(self):
-        from tests.test_dashboard_grid import load, make_app, text_of
+    async def test_f_on_another_row_is_not_offered_and_does_nothing(self):
+        # Part 5 (2026-11-13): F is in the footer only on Simba's row
+        from tests.test_dashboard_grid import load, make_app
+        from tests.test_gridedit import footer_keys
+        import dashboard as D
         w = simba_world()
         app = make_app(w)
         async with app.run_test(size=(180, 50)) as pilot:
             await load(app, pilot)
             await pilot.press("down", "f")                                       # Kylie
             await pilot.pause()
-            self.assertIn("no voice effect", text_of(app, "#msg"))
+            self.assertNotIn("f", footer_keys(app))
+            self.assertIsInstance(app.screen, D.GridScreen)
             self.assertEqual(VE.read_history(w.edit), [])
 
 

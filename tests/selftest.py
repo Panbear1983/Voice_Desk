@@ -89,12 +89,17 @@ def stage_stt(w: stt.Whisper) -> None:
 
 # 3 ---------------------------------------------------------------------------------------------
 def stage_tts() -> None:
+    # Peter 2026-11-11: no shared voice and no Mac voice: an agent's line is made with that agent's own voice
+    # (Kylie: Edge Ava / HsiaoChen here), and no voice at all means silence.
+    import voices
+    kylie = voices.voice_for("hermes:assistant")
     t0 = time.monotonic()
-    p = tts.synthesize("Your daily trading report is working again.")
-    report("english voice", p is not None and p.stat().st_size > 1000, f"{time.monotonic()-t0:.1f}s {p}")
+    p = tts.synthesize("Your daily trading report is working again.", kylie)
+    report(f"english voice ({kylie.en})", p is not None and p.stat().st_size > 1000, f"{time.monotonic()-t0:.1f}s {p}")
     t0 = time.monotonic()
-    p = tts.synthesize("早安，今天的報告已經送出了。")
-    report("mandarin voice (Meijia)", p is not None and p.stat().st_size > 1000, f"{time.monotonic()-t0:.1f}s")
+    p = tts.synthesize("早安，今天的報告已經送出了。", kylie)
+    report(f"mandarin voice ({kylie.zh})", p is not None and p.stat().st_size > 1000, f"{time.monotonic()-t0:.1f}s")
+    report("no voice = silent (nothing made, no stand-in voice)", tts.synthesize("hello", voices.SILENT) is None)
     report("speakable strips markdown",
            tts.speakable("**Done.** See `foo.py` and https://x.y/z\n```\ncode\n```") ==
            "Done. See foo.py and a link the code is in the window.")
