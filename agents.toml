@@ -121,6 +121,7 @@ target = "simba"
 display = "Simba"
 names = ["simba"]
 voice = "am_fenrir"
+no_fallback = true                  # Peter 2026-11-11: own voice only, silent if it fails, never Microsoft or the Mac voice
 effect = "16 pitch=1.4"
 english_only = true                  # no Mandarin voice: a Chinese line stays silent (Voice Desk and simba_tts.py)
 # Voice Desk speaks her English lines through: <command> <text file> <out.wav> <voice> <effect>
@@ -131,11 +132,15 @@ fallback = "en-US-MichelleNeural"    # only if Kokoro fails, so the line never g
 profile = "orchestrator"
 display = "Jarvis"
 names = ["jarvis", "javis", "jaarvis", "javas", "jervis", "jarvas", "orchestrator"]
-voice = "en-US-JennyNeural"
+voice = "am_puck"                     # Kokoro, local (2026-11-11 Peter: Puck, 1.2x, no fallback)
+no_fallback = true                  # Peter 2026-11-11: own voice only, silent if it fails, never Microsoft or the Mac voice
+# Voice Desk speaks Jarvis through his own script: <command> <text file> <out> <voice> (local Kokoro Puck, 1.2x)
+command = ["/bin/bash", "~/.hermes/profiles/orchestrator/scripts/tts_jarvis_local.sh"]
+english_only = true                   # no Microsoft voice for him: a Chinese line stays silent (Peter 2026-11-11)
 voice_zh = "zh-TW-HsiaoChenNeural"
-speed = 1.0
+speed = 1.2                           # Peter 2026-11-11 (tempo applied by tts_kokoro_then_jenny.sh)
 auto_tts = true
-silence_duration = 1.5
+silence_duration = 3.0               # Peter 2026-11-11 (was 1.5, cut him off mid-sentence)
 silence_threshold = 450               # live value Peter has been running (was 200 here until 2026-11-09)
 barge_in = false
 
@@ -156,6 +161,7 @@ profile = "tax_angel_esther"
 display = "Esther"
 names = ["esther", "ester", "tax angel esther", "tax angel"]
 voice = "alloy"                      # her Kokoro voice, everywhere (Peter 2026-10-22)
+no_fallback = true                  # Peter 2026-11-11: own voice only, silent if it fails, never Microsoft or the Mac voice
 voice_zh = "zh-TW-HsiaoYuNeural"     # Kokoro speaks English only; her Mandarin lines use this Edge voice
 # Voice Desk speaks her lines through her own Kokoro script: <command> <text file> <out.wav> <voice>
 command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python",
@@ -170,7 +176,8 @@ barge_in_grace_seconds = 0.5
 profile = "wanna-buffet"
 display = "Wanna Buffet"
 names = ["wanna buffet", "wanna buffett", "wannabuffet", "wana buffet", "wanna buff it", "warren buffett", "warren buffet"]
-voice = "en-US-AndrewNeural"
+voice = "am_santa"                   # Kokoro, local (2026-11-11 Peter: Santa, no Microsoft fallback)
+no_fallback = true                  # Peter 2026-11-11: own voice only, silent if it fails, never Microsoft or the Mac voice
 voice_zh = "zh-TW-YunJheNeural"
 speed = 0.92
 auto_tts = true

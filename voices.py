@@ -45,6 +45,7 @@ class Voice(NamedTuple):
     command: tuple[str, ...] = ()    # non-Edge voice: English lines are made by this script
     fallback: Optional[str] = None   # Edge voice if that script fails
     effect: Optional[str] = None     # passed to that script after the voice (Simba's effect recipe, e.g. "16")
+    no_fallback: bool = False        # agents.toml no_fallback = true: script fails -> silent, never another voice
     # zh == "" means English only (agents.toml english_only = true, Simba): a line with Chinese in it stays silent
 
 
@@ -130,10 +131,10 @@ def voice_for(target: str) -> Voice:
         # its own Edge voice (fallback) if Kokoro fails, else the shared Voice Desk voice
         fb = a.fallback if is_edge(a.fallback) else shared_voice().en
         zh = "" if a.english_only else a.voice_zh or zh_for(fb)
-        return Voice(a.voice, zh, "agents", agents.KOKORO_COMMAND, fb)
+        return Voice(a.voice, zh, "agents", agents.KOKORO_COMMAND, fb, None, a.no_fallback)
     if a.command:
         zh = "" if a.english_only else a.voice_zh or zh_for(a.fallback or "")
-        return Voice(a.voice, zh, "agents", a.command, a.fallback, a.effect)
+        return Voice(a.voice, zh, "agents", a.command, a.fallback, a.effect, a.no_fallback)
     if a.fallback:
         return Voice(a.fallback, a.voice_zh or zh_for(a.fallback), "fallback")
     return shared_voice()

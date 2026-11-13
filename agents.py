@@ -50,6 +50,7 @@ class Agent:
     voice_override: str = "auto"     # "auto" = follow the reply's language; "en", "zh" or an extra code pins it
     quiet_hours: dict = field(default_factory=dict)     # place -> "22:00-07:00" (stored and shown only)
     english_only: bool = False       # speaks English only: no Mandarin voice, a Chinese line stays silent (Simba)
+    no_fallback: bool = False        # Peter 2026-11-11: its own voice only. If that script fails the line stays silent: no Edge fallback, no Mac voice
 
     @property
     def profile(self) -> Optional[str]:
@@ -70,7 +71,7 @@ def _agent(key: str, raw: dict) -> Agent:
         effect=raw.get("effect"),
         knobs={k: raw[k] for k in KNOBS if k in raw}, raw=raw,
         voices_extra=dict(raw.get("voices_extra") or {}), voice_override=str(raw.get("voice_override") or "auto"),
-        quiet_hours=dict(raw.get("quiet_hours") or {}), english_only=raw.get("english_only") is True,
+        quiet_hours=dict(raw.get("quiet_hours") or {}), english_only=raw.get("english_only") is True, no_fallback=raw.get("no_fallback") is True,
     )
 
 

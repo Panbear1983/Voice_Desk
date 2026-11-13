@@ -89,6 +89,8 @@ def synthesize(text: str, voice: Optional[voices.Voice] = None) -> Optional[Path
         got = _script(v.command, txt, out, v.en, effect=v.effect)
         if got:
             return got
+        if v.no_fallback:            # Peter 2026-11-11: its own voice only; a failed script means a silent line
+            return None
     got = _chain(txt, out, v.fallback if v.command and v.fallback else v.en)
     if got:
         return got
