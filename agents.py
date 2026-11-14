@@ -1,7 +1,8 @@
 """Read agents.toml: every agent's names, voices and voice-mode settings in one file.
 
-Standard library only (tomllib); this module imports nothing from Voice Desk, so settings.py,
-voices.py and voicecfg.py can all use it.
+Standard library only (tomllib); this module imports nothing from Voice Desk except voicebank (itself standard
+library only, imported when a voice name is not one of the known Kokoro names), so settings.py, voices.py and
+voicecfg.py can all use it.
 """
 from __future__ import annotations
 
@@ -26,7 +27,17 @@ KOKORO_COMMAND = (os.path.expanduser(os.environ.get("VOICE_DESK_KOKORO_PY", "~/.
 
 
 def is_kokoro(voice: Optional[str]) -> bool:
-    return bool(voice) and voice in KOKORO_VOICES
+    """An English Kokoro voice: one of the names above, or any English (af_/am_/bf_/bm_) voice in a Kokoro voice
+    file that is really installed (voicebank.py), so a newly installed voice is accepted when picked, not only listed
+    (2026-11-14 review of the command-center stage 1). The names above stay valid when no voice file can be read."""
+    if not voice:
+        return False
+    if voice in KOKORO_VOICES:
+        return True
+    if not (len(voice) > 3 and voice[0] in "ab" and voice[1] in "fm" and voice[2] == "_"):
+        return False                                # an Edge name or anything else: no need to read the voice files
+    import voicebank                                # standard library only, imports nothing from Voice Desk either
+    return voice in voicebank.english_kokoro_names()
 
 
 KNOBS = ("auto_tts", "silence_duration", "silence_threshold", "barge_in", "barge_in_grace_seconds")

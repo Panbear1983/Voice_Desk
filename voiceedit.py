@@ -401,6 +401,12 @@ def change(agent_key: str, field_name: str, new: Any, paths: Optional[EditPaths]
         if removing and (kind == "undo" or field_name in ("voice", "voice_zh", "voices_extra", "voice_override")):
             new = None                                  # taking a setting away (undo, clearing the extras, or a
             #                                             voice set to silent: Peter 2026-11-11, empty = silent)
+        elif kind == "undo":
+            pass                                        # U puts back exactly what agents.toml held before the change
+            #                                             (read from that change's own history line). It is not checked
+            #                                             as a new pick: a rule that refuses a NEW value must not keep
+            #                                             the old one away (2026-11-14 review: Jarvis is English only,
+            #                                             so Z -> silent took his stored Mandarin voice and U was refused)
         else:
             new = check_voice(field_name, new, agent)
         # (Simba's "a voice of her own" rule was lifted on 2026-11-13, brief decision 14: she may take any voice her

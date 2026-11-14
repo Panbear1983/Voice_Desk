@@ -169,6 +169,12 @@ def mandarin_taiwan(edge_path: Optional[Path] = None) -> list[BankVoice]:
     return sorted((v for v in edge(edge_path) if v.locale == "zh-TW"), key=lambda v: v.name)
 
 
+def english_kokoro_names(homes: Optional[Iterable[Path]] = None) -> frozenset[str]:
+    """The names of the English Kokoro voices that are really installed (what agents.is_kokoro accepts besides the
+    names it always knew). Read from the files, cached by size and time like the list itself."""
+    return frozenset(v.name for v in kokoro(homes) if v.lang == "en")
+
+
 def everything(homes: Optional[Iterable[Path]] = None, edge_path: Optional[Path] = None) -> list[BankVoice]:
     return kokoro(homes) + sorted(edge(edge_path), key=_edge_order)
 

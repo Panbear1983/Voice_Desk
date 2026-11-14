@@ -22,6 +22,8 @@ A line the agent's own speaker cannot make today is still shown, marked ◌ and 
     everyone else   the whole list is pickable
 
 Voices other agents already use are no longer hidden from Simba (decision 14 lifts that limit from the list).
+Jenny is never a line (Peter 2026-11-11: "no Jenny"): she stays in the bank, and an agent that still has her keeps
+her line, marked as today's voice (not_offered).
 "silent" is a line of its own (Peter 2026-11-11: an agent with no voice is silent; there is no shared voice).
 This module only builds the lists; it writes nothing.
 """
@@ -49,6 +51,13 @@ def _same_voice(a: Optional[str], b: Optional[str]) -> bool:
     return bool(a) and bool(b) and voiceedit._kokoro_name(a) == voiceedit._kokoro_name(b)
 
 
+def not_offered(v: voicebank.BankVoice) -> bool:
+    """A bank voice Peter ruled out by name, so it is never a line on the lists: Jenny (Peter 2026-11-11: "no Jenny";
+    she was the old shared voice). It stays in the bank (nothing is removed, decision 2) and an agent that still has
+    her keeps her line, marked as today's voice, until Peter picks another."""
+    return v.engine == "edge" and v.who.split(" ")[0] == "Jenny"
+
+
 def not_yet(agent: agents.Agent, field_name: str, v: voicebank.BankVoice) -> str:
     """Why this agent's own speaker cannot make this bank voice today ("" = it can, the line is pickable)."""
     if field_name == "voice_zh":
@@ -59,6 +68,8 @@ def not_yet(agent: agents.Agent, field_name: str, v: voicebank.BankVoice) -> str
         if v.engine == "edge":
             return "her script: Kokoro only (stage 2); her effect would not apply"
         if simba_tts.voice_problem(v.name):
+            if v.name[:3] in ("af_", "am_"):              # an American voice installed after her script was checked
+                return "her script knows only the 20 American voices it was checked with (stage 2)"
             return "her script: American Kokoro only (stage 2)"
     elif agent.target == "gemini" and v.engine != "edge":
         return "Gemini's hook: Microsoft voices only (stage 2)"
@@ -80,6 +91,8 @@ def _rows(agent: agents.Agent, field_name: str, bank: list[voicebank.BankVoice])
                     else "")
             out.append(onoff.Option(v.name, v.label + note, True))     # today's voice: always shown as it is
             continue
+        if not_offered(v):
+            continue                                                   # stays in the bank, never offered as a pick
         why = not_yet(agent, field_name, v)
         out.append(onoff.Option(NOT_YET + v.name, f"{v.label} — not yet: {why}", False, True) if why
                    else onoff.Option(v.name, v.label))

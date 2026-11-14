@@ -63,12 +63,25 @@ def _desk_voice(a: agents.Agent) -> str:
 
 
 def _reaches(a: agents.Agent, prov: Optional[str], have: Optional[str]) -> str:
+    """Whether E reaches a Hermes profile, true for each kind of pick (2026-11-14 review: the old line said "written
+    into its profile" for Wanna Buffet and Kylie, but a Kokoro pick only changes agents.toml). voicecfg writes the
+    profile's voice line for an agent with a script of its own (Esther, Jarvis, Simba: whatever E lets them pick) and,
+    for every other agent, for a Microsoft voice only: a Kokoro name is spoken by Voice Desk alone and never written
+    into Hermes' own provider."""
     if not a.voice:
         return "E gives it a voice in agents.toml; its profile keeps its own until then"
-    if have and voicecfg.same("voice", have, a.voice):
-        return "E changes it here too (written into its profile, backed up, undo with U)"
-    if agents.is_kokoro(a.voice) and not a.command:
-        return f"E does not reach it: a Kokoro voice is not written into its profile, which speaks {have or 'nothing set'}"
+    matches = bool(have) and voicecfg.same("voice", have, a.voice)
+    if a.command:
+        if matches:
+            return "E changes it here too (written into its profile, backed up, undo with U)"
+        return f"E should reach it but the profile says {have or 'nothing'} (voicecfg check shows it)"
+    kokoro_rule = (f"a Kokoro pick changes Voice Desk's own speech only (agents.toml), so here it keeps "
+                   f"{have or 'nothing set'}")
+    if agents.is_kokoro(a.voice):
+        return (f"E does not write here today: its voice is Kokoro, and {kokoro_rule}; "
+                "a Microsoft pick would be written into its profile too (backed up, undo with U)")
+    if matches:
+        return f"a Microsoft pick with E is written here too (into its profile, backed up, undo with U); {kokoro_rule}"
     return f"E should reach it but the profile says {have or 'nothing'} (voicecfg check shows it)"
 
 

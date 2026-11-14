@@ -71,25 +71,44 @@ class TheLists(unittest.TestCase):
         english_kokoro = [n for n in tests.FAKE_KOKORO if n[0] in "ab"]
         english_edge = {n for n, loc, _ in tests.FAKE_EDGE if loc.startswith("en-")}
         for key in ("kylie", "gemini", "esther", "simba", "codex", "jarvis", "claude", "wanna_buffet"):
-            opts = P.english(agent(self.cfg, key), self.cfg)
+            a = agent(self.cfg, key)
+            opts = P.english(a, self.cfg)
+            # no Jenny (Peter 2026-11-11), except as today's voice of an agent that still has her (fixture: Claude, Jarvis)
+            want_edge = english_edge if a.voice == "en-US-JennyNeural" else english_edge - {"en-US-JennyNeural"}
             names = [t[len(P.NOT_YET):] if t.startswith(P.NOT_YET) else t for t in ids(opts)
                      if t not in (P.SILENT, P.OTHER)
                      and "not in the voice bank" not in next(o.label for o in opts if o.token == t)]
             self.assertEqual(names[:len(english_kokoro)], english_kokoro, key)
-            self.assertEqual(set(names[len(english_kokoro):]), english_edge, key)
+            self.assertEqual(set(names[len(english_kokoro):]), want_edge, key)
             self.assertNotIn("jf_alpha", names, "a Japanese Kokoro voice is not an English voice")
             self.assertNotIn("zf_xiaobei", names)
             self.assertEqual(ids(opts)[-2], P.SILENT)
 
     def test_microsoft_order_american_then_british_then_other_accents(self):
         edge = [t for t in pickable(P.english(agent(self.cfg, "kylie"), self.cfg)) if t.endswith("Neural")]
-        self.assertEqual([t[:5] for t in edge], ["en-US"] * 5 + ["en-GB", "en-AU"])
+        self.assertEqual([t[:5] for t in edge], ["en-US"] * 4 + ["en-GB", "en-AU"], "Jenny is not offered")
 
-    def test_jenny_is_on_the_list_now_but_nobody_gets_her_by_default(self):
-        """Decision 14 (Peter 2026-11-13): everyone gets the full list. Jenny is a line, not anyone's voice."""
-        opts = P.english(agent(self.cfg, "kylie"), self.cfg)
-        self.assertIn("en-US-JennyNeural", pickable(opts))
-        self.assertEqual([o.token for o in opts if o.current], ["en-US-AvaNeural"])
+    def test_jenny_is_never_offered_but_stays_in_the_bank(self):
+        """Peter 2026-11-11: "no Jenny" (she was the old shared voice). Decision 14 widens the list to the whole bank,
+        but she is not a line on anyone's E list (that list is also the one for a new worker); she stays in the bank."""
+        import voicebank
+        self.assertIn("en-US-JennyNeural", [v.name for v in voicebank.edge()], "still in the bank (decision 2)")
+        for key in ("kylie", "gemini", "esther", "simba", "codex", "wanna_buffet"):
+            opts = P.english(agent(self.cfg, key), self.cfg)
+            self.assertFalse([o for o in opts if "Jenny" in o.token or "Jenny" in o.label], key)
+        self.assertEqual([o.token for o in P.english(agent(self.cfg, "kylie"), self.cfg) if o.current],
+                         ["en-US-AvaNeural"])
+
+    def test_an_agent_that_still_has_jenny_keeps_her_line_marked_as_today(self):
+        """The fixture's Claude speaks with Jenny: the list shows her once, as today's voice, so nothing changes by
+        itself (decision 14). Once another voice is set she is gone from the list."""
+        opts = P.english(agent(self.cfg, "claude"), self.cfg)
+        jenny = [o for o in opts if o.token == "en-US-JennyNeural"]
+        self.assertEqual(len(jenny), 1)
+        self.assertTrue(jenny[0].current)
+        self.assertFalse(jenny[0].disabled)
+        self.cfg["agents"]["claude"]["voice"] = "en-US-AriaNeural"
+        self.assertNotIn("en-US-JennyNeural", ids(P.english(agent(self.cfg, "claude"), self.cfg)))
 
     def test_kylie_can_pick_anything_in_the_bank(self):
         self.assertFalse(not_yet(P.english(agent(self.cfg, "kylie"), self.cfg)))

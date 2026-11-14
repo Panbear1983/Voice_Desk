@@ -210,14 +210,14 @@ class WhatEachPlaceCanDo(unittest.TestCase):
     def test_a_hermes_terminal_and_telegram_speak_with_the_profiles_own_voice(self):
         c = self.can("kylie", "terminal")
         self.assertIn("en-US-AvaNeural (provider natural)", c.speaks)
-        self.assertIn("E changes it here too", c.voice)
+        self.assertIn("a Microsoft pick with E is written here too", c.voice)
         self.assertIn("view only", c.change)
         self.assertIn("Enter: Off / Voice-back / Always", self.can("kylie", "tg_dm").change)
         self.assertIn("Enter: Off / Always", self.can("kylie", "tg_group").change)
 
     def test_a_profile_voice_that_differs_from_agents_toml_is_said(self):
         c = self.can("jarvis", "terminal")                  # fixture: Jenny in both, so it reaches it
-        self.assertIn("E changes it here too", c.voice)
+        self.assertIn("a Microsoft pick with E is written here too", c.voice)
         cfgp = self.w.paths.profiles / "orchestrator/config.yaml"
         cfgp.write_text(cfgp.read_text().replace("voice: en-US-JennyNeural", "voice: en-US-GuyNeural", 1))
         self.assertIn("profile says en-US-GuyNeural", self.can("jarvis", "terminal").voice)
@@ -319,6 +319,136 @@ class NoVoiceChangesAsASideEffect(unittest.TestCase):
         resolved = {a.key: voices.resolve(a) for a in agents.agents(agents.load(w.toml))}
         self.assertEqual(resolved["simba"].en, "am_fenrir")
         self.assertEqual(resolved["jarvis"].en, "am_puck")
+
+
+# ---- the stage 1 review fixes (2026-11-14, card t_1d723c38) --------------------------------------------------------
+JARVIS_ENGLISH_ONLY = F.AGENTS_TOML.replace('names = ["jarvis"]\n', 'names = ["jarvis"]\nenglish_only = true\n', 1)
+
+
+def outside(w) -> dict:
+    """Every file a voice change may write, except Voice Desk's own history and backups."""
+    return {k: v for k, v in snapshot(w.root).items()
+            if not k.startswith((str(w.root / "state"), str(w.root / "profile-backups")))}
+
+
+class StageOneReviewFixes(unittest.TestCase):
+    def setUp(self):
+        self.w = F.make_world()
+
+    # (1) silent, then U, on an English-only agent's stored Mandarin voice
+    def test_silent_then_u_puts_jarvis_mandarin_voice_back_exactly(self):
+        import voiceedit as VE
+        import voicepick
+        self.w.toml.write_text(JARVIS_ENGLISH_ONLY)
+        before_toml, before = self.w.toml.read_bytes(), outside(self.w)
+        jarvis = agent(self.w, "jarvis")
+        self.assertTrue(jarvis.english_only)
+        self.assertEqual(jarvis.voice_zh, "zh-TW-HsiaoChenNeural")
+        _, opts, why = voicepick.menu(jarvis, "voice_zh", agents.load(self.w.toml))
+        silent = next(o for o in opts if o.token == voicepick.SILENT)
+        self.assertFalse(silent.disabled, "the Z list offers 'silent' on his row, so it can be picked")
+        res = VE.change("jarvis", "voice_zh", None, self.w.edit)          # what picking 'silent' does
+        self.assertTrue(res.ok, res.message)
+        self.assertIsNone(agent(self.w, "jarvis").voice_zh)
+        res = VE.undo(self.w.edit)
+        self.assertTrue(res.ok, res.message)
+        self.assertEqual(self.w.toml.read_bytes(), before_toml, "the exact line is back, comment and place")
+        self.assertEqual(outside(self.w), before, "no other file changed")
+        self.assertEqual(agent(self.w, "jarvis").voice_zh, "zh-TW-HsiaoChenNeural")
+        self.assertFalse(VE.undo(self.w.edit).ok, "nothing left to undo")
+
+    def test_undo_puts_back_only_the_old_value_a_new_mandarin_voice_is_still_refused(self):
+        import voiceedit as VE
+        self.w.toml.write_text(JARVIS_ENGLISH_ONLY)
+        res = VE.change("jarvis", "voice_zh", "zh-TW-HsiaoYuNeural", self.w.edit)       # the typed route
+        self.assertFalse(res.ok)
+        self.assertIn("English only", res.message)
+        self.assertEqual(self.w.toml.read_text(), JARVIS_ENGLISH_ONLY)
+        res = VE.change("kylie", "voice", "en-US-AriaNeural", self.w.edit)              # an ordinary change + U
+        self.assertTrue(res.ok, res.message)
+        self.assertTrue(VE.undo(self.w.edit).ok)
+        self.assertEqual(self.w.toml.read_text(), JARVIS_ENGLISH_ONLY)
+
+    # (2) the "what this place can do" line is true for each kind of pick
+    def can(self, key, place="terminal"):
+        a = agent(self.w, key)
+        return gridcan.can(a, place, G.CELL_FUNCS[place](a, self.w.paths), self.w.paths)
+
+    def test_kylie_microsoft_pick_reaches_her_profile_a_kokoro_pick_does_not_and_the_line_says_so(self):
+        import voiceedit as VE
+        line = self.can("kylie").voice
+        self.assertIn("a Microsoft pick with E is written here too", line)
+        self.assertIn("a Kokoro pick changes Voice Desk's own speech only", line)
+        self.assertIn("keeps en-US-AvaNeural", line)
+        prof = self.w.paths.profiles / "assistant/config.yaml"
+        before = prof.read_bytes()
+        self.assertTrue(VE.change("kylie", "voice", "af_heart", self.w.edit).ok)         # Kokoro: profile untouched
+        self.assertEqual(prof.read_bytes(), before)
+        self.assertTrue(VE.undo(self.w.edit).ok)
+        self.assertTrue(VE.change("kylie", "voice", "en-US-AriaNeural", self.w.edit).ok)  # Microsoft: written there
+        self.assertIn("voice: en-US-AriaNeural", prof.read_text())
+
+    def test_wanna_buffet_on_kokoro_the_line_no_longer_claims_e_writes_his_profile(self):
+        import voiceedit as VE
+        self.w.toml.write_text(F.AGENTS_TOML.replace('voice = "en-US-AndrewNeural"', 'voice = "am_santa"', 1))
+        prof = self.w.paths.profiles / "wanna-buffet/config.yaml"
+        prof.write_text(F.profile_yaml("am_santa", threshold=500, speed=0.92))          # his profile speaks Santa too
+        line = self.can("wanna_buffet").voice
+        self.assertNotIn("E changes it here too", line, "the old, untrue line")
+        self.assertIn("E does not write here today", line)
+        self.assertIn("keeps am_santa", line)
+        self.assertIn("a Microsoft pick would be written into its profile too", line)
+        before = prof.read_bytes()
+        self.assertTrue(VE.change("wanna_buffet", "voice", "am_onyx", self.w.edit).ok)   # Kokoro: profile untouched
+        self.assertEqual(prof.read_bytes(), before)
+        self.assertIn("keeps am_santa", self.can("wanna_buffet").voice)
+        self.assertTrue(VE.change("wanna_buffet", "voice", "en-US-AvaNeural", self.w.edit).ok)
+        self.assertIn("voice: en-US-AvaNeural", prof.read_text(), "a Microsoft pick is written there, as the line says")
+
+    def test_an_agent_with_its_own_script_gets_every_pick_written_into_its_profile(self):
+        import voiceedit as VE
+        self.assertIn("E changes it here too (written into its profile", self.can("esther").voice)
+        self.assertTrue(VE.change("esther", "voice", "af_heart", self.w.edit).ok)
+        self.assertIn("voice: af_heart", (self.w.paths.profiles / "tax_angel_esther/config.yaml").read_text())
+        self.assertIn("E changes it here too (written into its profile", self.can("esther").voice)
+
+    # (3) the pick check reads the installed voice bank
+    def test_a_newly_installed_kokoro_voice_is_listed_and_accepted_when_picked(self):
+        import voiceedit as VE
+        import voicepick
+        from unittest import mock
+        d = Path(tempfile.mkdtemp(prefix="vd-newbank-"))
+        with zipfile.ZipFile(d / "voices-v1.0.bin", "w") as z:
+            for n in (*tests.FAKE_KOKORO, "af_brandnew", "bm_newcomer", "jf_newone"):
+                z.writestr(f"{n}.npy", b"\0")
+        kylie = agent(self.w, "kylie")
+        self.assertFalse(agents.is_kokoro("af_brandnew"), "not installed: not a voice")
+        with self.assertRaises(VE.EditError):
+            VE.check_voice("voice", "af_brandnew", kylie)
+        prof = self.w.paths.profiles / "assistant/config.yaml"
+        before = prof.read_bytes()
+        with mock.patch.object(B, "KOKORO_HOMES", (d,)):
+            for name in ("af_brandnew", "bm_newcomer"):
+                self.assertTrue(agents.is_kokoro(name), name)
+                line = next(o for o in voicepick.english(kylie, {}) if name in o.token)
+                self.assertEqual((line.token, line.disabled), (name, False), "listed AND pickable")
+                self.assertEqual(VE.check_voice("voice", name, kylie), name)
+            self.assertFalse(agents.is_kokoro("jf_newone"), "a Japanese voice is not an English voice")
+            with self.assertRaises(VE.EditError):
+                VE.check_voice("voice", "jf_newone", kylie)
+            res = VE.change("kylie", "voice", "af_brandnew", self.w.edit)
+            self.assertTrue(res.ok, res.message)
+            v = voices.resolve(agent(self.w, "kylie"))
+            self.assertEqual((v.en, v.command), ("af_brandnew", agents.KOKORO_COMMAND),
+                             "spoken by the shared Kokoro script, like any Kokoro voice")
+            self.assertEqual(prof.read_bytes(), before, "a Kokoro name is never written into Hermes' own provider")
+            self.assertTrue(VE.undo(self.w.edit).ok)
+        self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML)
+
+    def test_the_known_names_and_edge_names_still_read_as_before(self):
+        self.assertTrue(agents.is_kokoro("am_adam"), "a known name stays valid even when no voice file lists it")
+        for name in ("en-US-AvaNeural", "alloy", "", None, "zf_xiaobei"):
+            self.assertFalse(agents.is_kokoro(name), name)
 
 
 if __name__ == "__main__":

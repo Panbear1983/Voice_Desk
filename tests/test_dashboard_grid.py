@@ -195,7 +195,7 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(str(lst._options[lst.highlighted].prompt).startswith("●"), "the current voice is marked")
             self.assertEqual(ids[-2:], [voicepick.SILENT, voicepick.OTHER], "silent, then 'other, type it' last")
             self.assertIn("af_heart", ids, "Kokoro voices are on the list")
-            self.assertIn("en-US-JennyNeural", ids, "decision 14: the whole bank, Jenny included (not anyone's default)")
+            self.assertNotIn("en-US-JennyNeural", ids, "Peter 2026-11-11: no Jenny (she stays in the bank, never a line)")
             await pick(app, pilot, "en-US-AriaNeural")
             self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
             await pilot.pause()
@@ -243,6 +243,31 @@ class TheGridScreen(unittest.IsolatedAsyncioTestCase):
             await pilot.press("u")
             self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 2))
             self.assertEqual(self.w.toml.read_text(), F.AGENTS_TOML, "the line is back exactly, comment and place")
+
+    async def test_silent_then_u_on_an_english_only_agent_puts_the_stored_mandarin_voice_back(self):
+        # 2026-11-14 review of stage 1: Jarvis is English only with a stored Mandarin voice; Z -> silent removed it and
+        # U was refused ("Jarvis speaks English only"), so the dashboard could not bring it back at all.
+        import voicepick
+        text = F.AGENTS_TOML.replace('names = ["jarvis"]\n', 'names = ["jarvis"]\nenglish_only = true\n', 1)
+        self.w.toml.write_text(text)
+        app = make_app(self.w)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await load(app, pilot)
+            await pilot.press("z")                                              # Jarvis is the first row
+            await pilot.pause()
+            self.assertIsInstance(app.screen, D.ChoiceScreen)
+            await pick(app, pilot, voicepick.SILENT)
+            self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
+            await pilot.pause()
+            jarvis = lambda: next(a for a in agents.agents(agents.load(self.w.toml)) if a.key == "jarvis")  # noqa: E731
+            self.assertEqual(voiceedit.read_history(self.w.edit)[0]["agent"], "jarvis")
+            self.assertIsNone(jarvis().voice_zh)
+            await pilot.press("u")
+            self.assertTrue(await wait_for(lambda: len(voiceedit.read_history(self.w.edit)) == 2))
+            await pilot.pause()
+            self.assertTrue(voiceedit.read_history(self.w.edit)[1]["ok"], voiceedit.read_history(self.w.edit)[1])
+            self.assertEqual(self.w.toml.read_text(), text, "Jarvis's Mandarin line is back exactly")
+            self.assertEqual(jarvis().voice_zh, "zh-TW-HsiaoChenNeural")
 
     async def test_gemini_and_codex_voices_are_edited_on_the_grid_too_and_undone_with_u(self):
         # Gemini has no voice in this fixture (silent): its list is Edge voices only (its own hook speaks Edge only)
