@@ -63,21 +63,34 @@ def screen_tail(pane: str, lines: int = 6, ansi: bool = False) -> Optional[str]:
 
 
 def state_of(tail: Optional[str]) -> str:
-    """recording | transcribing | conversation | voice-idle | off | gone  (from the status bar)"""
+    """recording | transcribing | conversation | voice-idle | off | gone  (from the status bar)
+
+    Hermes now renders a second footer row below the voice status bar (model/context/usage
+    stats, e.g. " claude-fable-5-1 · 147K/1M · ..."), so the voice bar is not always the very
+    last line. Scan the last few non-blank rows for the voice marker instead of trusting only
+    rows[-1] (seen live 2026-11-06: an already-on pane was misread as "off" because the stats
+    row had become the true last line).
+
+    Only rows BELOW the input box's top rule count (the input line, the voice bar, the stats
+    row). Above it is scrollback, and "Voice mode disabled." there must not read as voice on,
+    or rearm() never turns voice back on after an end phrase (seen live 2026-11-09)."""
     if tail is None:
         return "gone"
     rows = [r for r in tail.splitlines() if r.strip()]
     if not rows:
         return "gone"                          # an empty read is a herdr hiccup, not "voice off"
-    bar = rows[-1] if rows else ""
-    if "● REC" in bar:
-        return "recording"
-    if "◉ Transcribing" in bar or "◉ STT" in bar:
-        return "transcribing"
-    if "Voice mode" in bar and "Continuous" in bar:
-        return "conversation"
-    if "Voice mode" in bar or bar.strip().startswith("🎤"):
-        return "voice-idle"
+    rules = [i for i, r in enumerate(rows) if r.strip().startswith("──")]
+    footer = rows[rules[-1] + 1:] if rules else rows[-3:]
+    footer = [r for r in footer if not r.strip().startswith("Voice mode")]   # Hermes' own messages
+    for bar in reversed(footer):
+        if "● REC" in bar:
+            return "recording"
+        if "◉ Transcribing" in bar or "◉ STT" in bar:
+            return "transcribing"
+        if "Voice mode" in bar and "Continuous" in bar:
+            return "conversation"
+        if "Voice mode" in bar or bar.strip().startswith("🎤"):
+            return "voice-idle"
     return "off"
 
 

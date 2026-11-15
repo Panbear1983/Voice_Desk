@@ -870,6 +870,18 @@ def test_switchboard() -> None:
     report("panes: voice on, nobody talking", P.state_of(f"{rule}\n 🎤 Voice mode | TTS on  —  Ctrl+B to record\n") == "voice-idle")
     report("panes: voice off (no voice bar)", P.state_of(f"{rule}\n ☤ claude-fable-5-1 │ 143K/1M │ 14% \n") == "off")
     report("panes: unreadable -> gone", P.state_of(None) == "gone" and P.state_of("") == "gone")
+    # real window bottoms read live 2026-11-09: Hermes draws a model/context row UNDER the voice bar
+    stats = " ☤ agy-opus · 10h 40m · …r_Tax (main)"
+    voice_on = f"\n─ 29.3s · 9:10 AM\n─────────── Esther online status reply ─\n🎤 type or Ctrl+B to record\n 🎤 Ctrl+B\n{stats}\n"
+    report("panes: voice on, stats row below the voice bar -> voice-idle", P.state_of(voice_on) == "voice-idle")
+    report("panes: recording, stats row below -> recording",
+           P.state_of(f"{rule}\norchestrator ❯ \n ● REC  Ctrl+B to stop \n{stats}\n") == "recording")
+    after_end = (".\n\nVoice mode disabled.\n───── Speak every response without lag ─\n"
+                 "orchestrator ❯ Research this topic and w\n ☤ agy-opus · 12h 28m · ~\n")
+    report("panes: 'Voice mode disabled.' above the input box is off, not voice-idle (or rearm never fires)",
+           P.state_of(after_end) == "off")
+    report("panes: typed '🎤' text in the scrollback does not count",
+           P.state_of(f"🎤 hello there\n{rule}\nassistant ❯ \n{stats}\n") == "off")
     fp.bar["wH:pR"] = "voice-idle"
     lst.handle("Hello Kylie")
     fp.bar["wH:pR"] = "gone"                # one empty herdr read
