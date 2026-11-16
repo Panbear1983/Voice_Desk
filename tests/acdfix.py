@@ -83,6 +83,8 @@ only_job_cards = true
 
 [agents.simba]
 answers_when_named = true
+answers = "when_named"
+answers_locked = true
 model_locked = true
 takes_work_from = ""
 '''
@@ -190,18 +192,74 @@ def edit_world(armed: bool = False, launcher: bool = True):
                      + '\n[agents.tax_angel_esther]\nrole = "tax"\nmodel_note = "meant to stay fixed on Claude Opus 5.5"\n',
                      encoding="utf-8")
     (g.root / "members.json").write_text(json.dumps({
-        "lead": "orchestrator", "saved": "2026-11-14T17:15:14+08:00",
-        "members": [{"profile": p, "name": p.title()} for p in list(spec) + ["simba"]]}), encoding="utf-8")
+        "generation": 4, "room_id": "team-4", "lead": "orchestrator", "saved": "2026-11-14T17:15:14+08:00",
+        "members": [{"profile": p, "handle": ROOM_HANDLE.get(p, p), "name": ROOM_NAME.get(p, p.title())}
+                    for p in list(spec) + ["simba"]]}, indent=1), encoding="utf-8")
     (g.root / "gateway_state.json").write_text(json.dumps({"platforms": {
         "assistant:telegram": {"state": "connected"}, "orchestrator:telegram": {"state": "connected"}}}), encoding="utf-8")
     paths = D.Paths(profiles=profiles, agents_toml=g.toml, members=g.root / "members.json", rules=rules,
                     shortcuts=g.root / "repo", gateway_state=g.root / "gateway_state.json")
     edit = E.EditPaths(state=g.root / "acd-state", profiles=profiles, rules=rules,
                        restart_request=g.root / "helper" / "gateway_restart.request",
-                       config_backups=g.root / "config-backups", voice=g.edit, launcher_armed=launcher)
+                       config_backups=g.root / "config-backups", voice=g.edit, launcher_armed=launcher,
+                       members=g.root / "members.json", team_room_cmd=g.root / "no-such-team-room-command",
+                       gateway_state=g.root / "gateway_state.json")
     if armed:
         E.set_armed(edit, True)
     return SimpleNamespace(root=g.root, paths=paths, edit=edit, now=NOW, profiles=profiles, toml=g.toml)
+
+
+ROOM_HANDLE = {"orchestrator": "jarvis", "assistant": "kylie", "tax_angel_esther": "esther"}
+ROOM_NAME = {"orchestrator": "Jarvis", "assistant": "Kylie", "tax_angel_esther": "Esther", "wanna-buffet": "Wanna Buffet",
+             "simba": "Simba"}
+ADDON_LINE = "    - team-room-telegram\n"
+
+
+class FakeTeamRoom:
+    """A stand-in for the Team Room's own command, working only on the throw-away world. It does what the real
+    add / kick does to the two doors: the saved member list (the terminal room) and, for an agent with its own
+    bot, the team-room add-on in that agent's settings (the Telegram side).
+
+        wire=False     the member list changes but the Telegram side does not follow (the two doors disagree)
+        fail=True      the room cannot be made: nothing changes at all
+        says="..."     extra words the command prints (for example Hermes' "restart" sentence)
+    """
+
+    def __init__(self, w, wire: bool = True, fail: bool = False, says: str = "") -> None:
+        self.w, self.wire, self.fail, self.says = w, wire, fail, says
+        self.calls: list[list] = []
+
+    def has_bot(self, profile: str) -> bool:
+        plats = json.loads(self.w.edit.gateway_state.read_text(encoding="utf-8"))["platforms"]
+        return f"{profile}:telegram" in plats
+
+    def __call__(self, words: list) -> tuple:
+        self.calls.append(list(words))
+        if self.fail:
+            return 4, "team-room: the gateway refused: the new room could not be made"
+        path = self.w.edit.members
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if words[0] == "add":
+            profile, handle, name = words[1], words[2], words[3]
+            data["members"].append({"profile": profile, "handle": handle, "name": name})
+            joining = True
+        else:
+            hit = next(m for m in data["members"] if m["handle"] == words[1])
+            profile = hit["profile"]
+            data["members"].remove(hit)
+            joining = False
+        data["generation"] += 1
+        data["room_id"] = f"team-{data['generation']}"
+        path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        if self.wire and self.has_bot(profile):
+            cfg = self.w.profiles / profile / "config.yaml"
+            text = cfg.read_text(encoding="utf-8")
+            if joining and ADDON_LINE not in text:
+                text = text.replace("  enabled:\n", "  enabled:\n" + ADDON_LINE, 1)
+            elif not joining:
+                text = text.replace(ADDON_LINE, "", 1)
+            cfg.write_text(text, encoding="utf-8")
+        return 0, f"done: {'add' if joining else 'remove'} {profile}. New room {data['room_id']}. {self.says}"
 
 
 def config_yaml(model: str, service: str, effort: str) -> str:

@@ -340,16 +340,29 @@ def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
 
     add(Text("├─ Where it shows up", style="bold"))
     for i, p in enumerate(v.presence):
-        branch = "└─ " if i == len(v.presence) - 1 else "├─ "
         last = i == len(v.presence) - 1
-        add(_leaves("│  " + branch, D.PLACE_NAME[p.key], p.status if p.state == D.ON else None,
-                    f"{state_word(p)}: {p.evidence}", 23, dim=p.state != D.ON,
-                    more="│     " if last else "│  │  "))
+        branch = "└─ " if last else "├─ "
+        more = "│     " if last else "│  │  "
+        lines = _leaves("│  " + branch, D.PLACE_NAME[p.key], p.status if p.state == D.ON or p.status == D.RED else None,
+                        f"{state_word(p)}: {p.evidence}", 23, dim=p.state != D.ON and p.status != D.RED, more=more)
+        if not p.can_switch and p.why_not:
+            lines += _leaves(more, "", None, p.why_not, 23, dim=True, more=more)
+        add(lines, "team_room" if p.can_switch else None)
 
     add(Text("└─ Who it may talk to", style="bold"))
-    for i, (what, answer) in enumerate(v.talks):
-        branch = "└─ " if i == len(v.talks) - 1 else "├─ "
-        add(_leaf("   " + branch, what, Text(answer), 26))
+    rules = v.talk_rules
+    if not rules:
+        for i, (what, answer) in enumerate(v.talks):
+            branch = "└─ " if i == len(v.talks) - 1 else "├─ "
+            add(_leaf("   " + branch, what, Text(answer), 26))
+    for i, r in enumerate(rules):
+        last = i == len(rules) - 1
+        branch = "└─ " if last else "├─ "
+        more = "      " if last else "   │  "
+        colour = D.GREEN if r.standing.startswith((D.WORKS_TODAY, D.ENFORCED)) else None
+        lines = _leaves("   " + branch, r.label, colour, r.answer, 26, more=more)
+        lines += _leaves(more, "", None, r.standing + (f"; {r.locked}" if r.locked else ""), 26, dim=True, more=more)
+        add(lines, "talk")
     return rows
 
 
@@ -830,8 +843,9 @@ class Desk(App):
     def __init__(self, collector: Optional[Callable[[], D.Snapshot]] = None, autostart: bool = True,
                  edit: Optional[E.EditPaths] = None, loader: Optional[E.Loader] = None,
                  tester: Optional[Callable[[A.Agent, str, str], tuple[bool, str]]] = E.real_voice_test,
-                 launcher_armed: bool = False) -> None:
+                 launcher_armed: bool = False, runner: Optional[Callable[[list], tuple]] = None) -> None:
         super().__init__()
+        self.runner = runner                                     # tests pass a fake Team Room command
         self.snapshot: Optional[D.Snapshot] = None
         self.autostart = autostart
         self.edit = edit or E.EditPaths.default(launcher_armed=launcher_armed)
@@ -903,7 +917,8 @@ class Desk(App):
 
     def open_setting(self, v: D.AgentView, setting: str) -> None:
         build = {"model": self.model_popup, "backups": self.backups_popup, "voice": self.voice_popup,
-                 "voice_zh": self.voice_popup, "speed": self.voice_popup}.get(setting)
+                 "voice_zh": self.voice_popup, "speed": self.voice_popup, "team_room": self.team_room_popup,
+                 "talk": self.talk_popup}.get(setting)
         if not build:
             return
         popup, jobs_for = build(v, setting)
@@ -1007,6 +1022,105 @@ class Desk(App):
         return EditPopup(f"{v.name}: voice", groups, describe, tester=tester, dry=dry,
                          note="Only the voices this agent's own speaker can make are listed. One voice, silent if it fails."), jobs
 
+    def team_room_popup(self, v: D.AgentView, _setting: str):
+        """In or out of the Team Room: ONE switch for the terminal room and the Telegram group together."""
+        edit, loader, runner, dry = self.edit, self.loader, self.runner, not self.is_armed
+        title = f"{v.name}: Team Room and Telegram team group"
+        if v.room_lead or v.in_room is None:
+            why = (f"{v.name} leads the Team Room and cannot be taken out of it." if v.room_lead else
+                   "The Team Room members file could not be read, so the desk will not change it.")
+            return EditPopup(title, [], lambda c: [], locked=why, dry=dry), lambda c: []
+        has_bot = any(p.key == "tg_private" and p.state == D.ON for p in v.presence)
+        group = Group("room", "The Team Room (terminal) and the Telegram team group: one switch for both", "radio",
+                      [Opt("in", "in the room", bool(v.in_room)), Opt("out", "out of the room", not v.in_room)])
+
+        def describe(c: dict) -> list[str]:
+            if "room" not in c:
+                return []
+            joining = c["room"] == "in"
+            out = [f"{v.name} {'joins' if joining else 'leaves'} the Team Room: the terminal room and the Telegram "
+                   "group change together, or not at all.",
+                   "The room is rebuilt, so the chat on screen starts fresh. The old lines stay in the saved history."]
+            if has_bot:
+                out.append("Putting its bot into the Telegram group is Peter's own tap in Telegram; until then the "
+                           "lead's bot speaks for it." if joining else
+                           "Its bot is taken out of the Telegram group. Putting it back later is Peter's own tap in Telegram.")
+            return out
+
+        def jobs(c: dict) -> list:
+            if "room" not in c:
+                return []
+            return [lambda: E.set_team_room(v.profile, c["room"] == "in", edit, loader=loader, runner=runner)]
+
+        note = ("One switch moves both places. The desk runs the Team Room's own add or kick, checks both doors, and "
+                "runs it backwards if they do not agree.")
+        return EditPopup(title, [group], describe, note=note, dry=dry), jobs
+
+    def talk_popup(self, v: D.AgentView, _setting: str):
+        """Who it may talk to: a few plain choices, kept in the one rules file the Team Room can read."""
+        edit, dry = self.edit, not self.is_armed
+        rules = {r.key: r for r in v.talk_rules}
+        if not rules:
+            return (EditPopup(f"{v.name}: who it may talk to", [], lambda c: [], dry=dry,
+                              locked="The rules file could not be read, so there is nothing to change."), lambda c: [])
+        lead = next((a for a in (self.snapshot.agents if self.snapshot else ()) if a.room_lead), None)
+        lead_name, lead_profile = (lead.name, lead.profile) if lead else ("the lead", "orchestrator")
+        sp, ho, tk, an = rules["speaks"], rules["hands_out"], rules["takes_from"], rules["answers"]
+        groups = [
+            Group("speaks", "May speak in the Team Room", "radio",
+                  [Opt("yes", "yes", sp.token == "yes"),
+                   Opt("no", "no", sp.token == "no", disabled=bool(sp.locked), note=sp.locked)]),
+            Group("hands_out", f"Hands out work (only {lead_name} by default)", "radio",
+                  [Opt("yes", "yes", ho.token == "yes"), Opt("no", "no", ho.token == "no")]),
+            Group("takes_from", "Takes work from", "radio",
+                  [Opt("lead", lead_name, tk.token == "lead", disabled=v.room_lead,
+                       note="this is the lead" if v.room_lead else ""),
+                   Opt("cards", "job cards only", tk.token == "cards"),
+                   Opt("nobody", "nobody (Peter only)", tk.token == "nobody")]),
+            Group("answers", "Answers", "radio",
+                  [Opt("always", "always", an.token == "always", disabled=bool(an.locked), note=an.locked),
+                   Opt("when_named", "when named in the line", an.token == "when_named", disabled=bool(an.locked),
+                       note=an.locked)])]
+        takes_words = {"lead": f"takes work from {lead_name}", "cards": "takes work only as job cards",
+                       "nobody": "takes work from nobody (Peter only)"}
+
+        def describe(c: dict) -> list[str]:
+            out = []
+            if "speaks" in c:
+                out.append(f"{v.name} {'may' if c['speaks'] == 'yes' else 'may not'} speak in the Team Room.")
+            if "hands_out" in c:
+                out.append(f"{v.name} {'hands' if c['hands_out'] == 'yes' else 'does not hand'} out work.")
+            if "takes_from" in c:
+                out.append(f"{v.name} {takes_words[c['takes_from']]}.")
+            if "answers" in c:
+                out.append(f"{v.name} answers {'every line' if c['answers'] == 'always' else 'when named in the line'}.")
+            if out:
+                out.append("The rule is written into the desk's rules file. " + (
+                    "The Team Room reads that file." if self.snapshot and self.snapshot.room_follows_rules else
+                    "The Team Room does not read that file yet: recorded, not yet enforced."))
+            return out
+
+        def changes_for(c: dict) -> dict:
+            out: dict = {}
+            if "speaks" in c:
+                out["speaks_in_team_room"] = c["speaks"] == "yes"
+            if "hands_out" in c:
+                out["hands_out_work"] = c["hands_out"] == "yes"
+            if "takes_from" in c:
+                out["only_job_cards"] = c["takes_from"] == "cards"
+                out["takes_work_from"] = "" if c["takes_from"] == "nobody" else lead_profile
+            if "answers" in c:
+                out["answers"] = c["answers"]
+            return out
+
+        def jobs(c: dict) -> list:
+            todo = changes_for(c)
+            return [lambda: E.change_rules(v.profile, todo, edit)] if todo else []
+
+        note = ("Each line of the tree says where a rule stands: how the room works today, enforced, or recorded and "
+                "not yet enforced.")
+        return EditPopup(f"{v.name}: who it may talk to", groups, describe, note=note, dry=dry), jobs
+
     @work(thread=True, group="acd-change")
     def run_jobs(self, jobs: list) -> None:
         results = []
@@ -1025,7 +1139,7 @@ class Desk(App):
         self.action_reread()
 
     def action_undo(self) -> None:
-        edit, loader = self.edit, self.loader
+        edit, loader, runner = self.edit, self.loader, self.runner
         last = E.last_undoable(edit)
         if last is None:
             self.push_screen(NoticePopup("Undo", Text("There is no change from the desk to undo.")))
@@ -1033,7 +1147,7 @@ class Desk(App):
         body = join([Text("The newest change from the desk:"), Text("  " + str(last.get("what"))), Text(""),
                      Text("Undo runs it backwards through the same safe path (backup, read back).", style=DIM)])
         self.push_screen(NoticePopup("Undo the newest change?", body, ask="yes, undo it"),
-                         lambda yes: self.run_jobs([lambda: E.undo(edit, loader=loader)]) if yes else None)
+                         lambda yes: self.run_jobs([lambda: E.undo(edit, loader=loader, runner=runner)]) if yes else None)
 
     def action_restart_review(self) -> None:
         edit = self.edit
@@ -1047,6 +1161,8 @@ class Desk(App):
             out.append(Text("No saved change is waiting for a restart."))
             out.append(Text("Model, backup and voice changes need none: new chats pick them up; an open terminal chat "
                             "keeps its old setting until a fresh chat is started.", style=DIM))
+            out.append(Text("A Team Room change needs one only when the agents' system did not reload its add-ons; "
+                            "the desk lists it here when that happens.", style=DIM))
         out.append(Text(""))
         out += [Text(part) for part in textwrap.wrap(E.RESTART_WORDS, 92)]
         if edit.restart_request.exists():

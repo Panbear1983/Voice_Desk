@@ -192,7 +192,9 @@ class Collect(unittest.TestCase):
         self.assertIsNone(v.voice)
         self.assertEqual(v.name, "Builder")            # not in the voice list: the Team Room's name for it
         self.assertEqual(presence(v, "mac_voice").state, D.OFF)
-        self.assertEqual(presence(v, "tg_group").state, D.OFF)
+        # version three: a Team Room member with no bot of its own IS in the Telegram group, through the lead's bot
+        self.assertEqual(presence(v, "tg_group").state, D.ON)
+        self.assertIn("by the lead's bot", presence(v, "tg_group").evidence)
         self.assertEqual(presence(v, "team_room").state, D.ON)
         self.assertIn(("Takes work", "only as job cards"), v.talks)
 

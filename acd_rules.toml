@@ -1,8 +1,17 @@
 # Agent Control Desk: who the agents are to each other, and who may talk to whom.
 #
-# The desk only SHOWS these rules (editing them comes in a later version); nothing enforces them from this file yet. They are written
-# down here, in one place, so the Team Room can later read the same rules the desk shows (Peter, 2026-11-16:
-# merge the rules, not the windows). Keys under [agents.<name>] are Hermes profile folder names.
+# The ONE place for the talk rules (Peter, 2026-11-16: merge the rules, not the windows). The desk shows them and,
+# since version three, changes them from a pop-up (backup first, only the needed lines, read back). The Team Room
+# reads this same file once its small adapter is installed (docs/team_room_rules_adapter.md); until then every
+# rule that the room does not already follow is shown on the desk as "recorded, not yet enforced".
+# Keys under [agents.<name>] are Hermes profile folder names.
+#
+#   speaks_in_team_room   true / false
+#   hands_out_work        true / false            (only the manager, by default)
+#   takes_work_from       a profile name, or ""   ("" = nobody, Peter only)
+#   only_job_cards        true = takes work only as job cards
+#   answers               "always" / "when_named" (not written = how the room works today: the lead gets every
+#                         line with no name, everyone else answers when named)
 
 # Profile folders that are not agents and must never become a row.
 ignore = ["default", "wanna_buffet"]
@@ -41,5 +50,7 @@ role = "investing"
 [agents.simba]
 role = "the comedian"
 answers_when_named = true       # she answers when her name is in the line
+answers = "when_named"
+answers_locked = true           # kept as it is: the desk does not offer to change how she answers
 model_locked = true             # her model is shown, never changed from the desk
 takes_work_from = ""

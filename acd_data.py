@@ -22,6 +22,7 @@ The four colours (Peter, 2026-11-16):
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 import os
@@ -132,6 +133,7 @@ class Paths:
     rules: Path
     shortcuts: Path                 # the folder that holds the "Talk to <agent>.shortcut" files (names only)
     gateway_state: Optional[Path] = None   # the agents' own status file: which Telegram bots are connected
+    team_room_code: Optional[Path] = None  # the Team Room's own program, read only to see if it follows the desk's rules
 
     @classmethod
     def default(cls) -> "Paths":
@@ -142,7 +144,8 @@ class Paths:
             members=Path(env("ACD_TEAM_ROOM_MEMBERS", HOME / "GitHub/Team_Room/members.json")),
             rules=Path(env("ACD_RULES", REPO / "acd_rules.toml")),
             shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Voice_Desk")),
-            gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")))
+            gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")),
+            team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")))
 
 
 # ---- an agent's log ------------------------------------------------------------------------------------
@@ -307,6 +310,26 @@ class Presence:
     state: str                      # ON / OFF / UNKNOWN
     evidence: str                   # where that answer came from, in plain words
     status: str = GREY
+    can_switch: bool = False        # a clean switch that can be put back exists today (version three)
+    why_not: str = ""               # when it cannot be switched from the desk: why, in plain words
+
+
+# ---- who may talk to whom (version three) ---------------------------------------------------------------
+WORKS_TODAY = "how the room works today"
+ENFORCED = "enforced by the Team Room"
+TOLD = "told to the agents in the room's notes, not enforced"
+RECORDED = "recorded, not yet enforced"
+ADAPTER_MARK = "ACD_RULES_ADAPTER"     # the line the Team Room carries once it reads the desk's rules
+
+
+@dataclass(frozen=True)
+class TalkRule:
+    key: str                        # speaks / hands_out / takes_from / answers
+    label: str
+    answer: str                     # the plain answer shown
+    token: str                      # the choice as the pop-up names it
+    standing: str                   # WORKS_TODAY / ENFORCED / TOLD / RECORDED
+    locked: str = ""                # why this rule cannot be changed for this agent, if it cannot
 
 
 @dataclass(frozen=True)
@@ -352,6 +375,9 @@ class AgentView:
     model_pending: str = ""                           # the desk changed the model; why it is not live everywhere yet
     model_behind: str = ""                            # the settings file no longer says what the desk last set
     backups_locked: bool = False
+    talk_rules: tuple = ()                            # TalkRule lines: the same rules, with where each one stands
+    room_lead: bool = False                           # leads the Team Room (cannot be taken out of it)
+    in_room: Optional[bool] = None                    # a saved member of the Team Room (None = could not be read)
 
     @property
     def model_status(self) -> str:
@@ -401,6 +427,7 @@ class Snapshot:
     waiting: tuple[str, ...] = ()                     # saved changes that wait for a restart
     armed: bool = False                               # False = changes are dry runs
     last_change: str = ""
+    room_follows_rules: bool = False                  # the Team Room has the small adapter that reads the desk's rules
 
 
 # ---- small readers ---------------------------------------------------------------------------------------
@@ -620,28 +647,140 @@ def presence(profile: str, name: str, turns: Optional[list[Turn]], plugin_names:
     else:
         out.append(Presence("tg_private", UNKNOWN, no_log or "no Telegram reply in the current log"))
 
-    if TEAM_ROOM_PLUGIN in plugin_names:
-        out.append(Presence("tg_group", ON, "the team-room add-on is switched on for this agent", GREEN))
+    is_lead = bool(members) and members.get("lead") == profile
+    is_member = None if members is None else any(
+        isinstance(m, dict) and m.get("profile") == profile for m in members["members"])
+    has_bot = bool(state)
+    addon_on = TEAM_ROOM_PLUGIN in plugin_names
+    if is_lead:
+        room_why = "leads the Team Room and cannot be taken out of it"
+    elif members is None:
+        room_why = "the Team Room members file could not be read, so the desk will not change it"
     else:
-        out.append(Presence("tg_group", OFF, "the team-room add-on is not switched on for this agent"))
-
-    if members is None:
-        out.append(Presence("team_room", UNKNOWN, "the Team Room members file could not be read"))
-    elif any(isinstance(m, dict) and m.get("profile") == profile for m in members["members"]):
-        lead = ", leads the room" if members.get("lead") == profile else ""
-        out.append(Presence("team_room", ON, "a saved member of the Team Room" + lead, GREEN))
+        room_why = ""
+    switch = not room_why
+    if is_member is None:
+        if addon_on:
+            out.append(Presence("tg_group", ON, "the team-room add-on is switched on for this agent", GREEN,
+                                why_not=room_why))
+        else:
+            out.append(Presence("tg_group", OFF, "the team-room add-on is not switched on for this agent",
+                                why_not=room_why))
+        out.append(Presence("team_room", UNKNOWN, "the Team Room members file could not be read", why_not=room_why))
+    elif is_member:
+        follows = "follows the Team Room: one switch moves both"
+        if has_bot and not addon_on:
+            out.append(Presence("tg_group", ON, "a Team Room member with its own Telegram bot, but the team-room "
+                                "add-on is off for it: the two doors do not agree (its bot may answer the group "
+                                "by itself)", RED, switch, room_why))
+        elif addon_on:
+            out.append(Presence("tg_group", ON, "its Team Room lines are copied into the Telegram group, through its "
+                                f"own bot (the team-room add-on is switched on); {follows}", GREEN, switch, room_why))
+        else:
+            out.append(Presence("tg_group", ON, "its Team Room lines are copied into the Telegram group by the "
+                                f"lead's bot, text only (it has no bot of its own there); {follows}", GREEN, switch,
+                                room_why))
+        lead = ", leads the room" if is_lead else ""
+        out.append(Presence("team_room", ON, "a saved member of the Team Room" + lead, GREEN, switch, room_why))
     else:
-        out.append(Presence("team_room", OFF, "not a saved member of the Team Room"))
+        if addon_on:
+            out.append(Presence("tg_group", OFF, "not in the Team Room, but the team-room add-on is still on for it: "
+                                "the two doors do not agree", RED, switch, room_why))
+        else:
+            out.append(Presence("tg_group", OFF, "not in the Team Room, so nothing of it reaches the Telegram group",
+                                can_switch=switch, why_not=room_why))
+        out.append(Presence("team_room", OFF, "not a saved member of the Team Room", can_switch=switch,
+                            why_not=room_why))
 
     if voice:
-        out.append(Presence("mac_voice", ON, "has a voice in the Voice Desk list", GREEN))
+        out.append(Presence("mac_voice", ON, "has a voice in the Voice Desk list", GREEN, why_not=WHY_NOT["mac_voice"]))
     else:
-        out.append(Presence("mac_voice", OFF, "no voice in the Voice Desk list"))
+        out.append(Presence("mac_voice", OFF, "no voice in the Voice Desk list", why_not=WHY_NOT["mac_voice"]))
 
     if (Path(shortcuts) / f"Talk to {name}.shortcut").exists():         # only the NAME is looked at
-        out.append(Presence("iphone_voice", ON, "a Siri shortcut for this agent exists; Siri reads the answer", GREEN))
+        out.append(Presence("iphone_voice", ON, "a Siri shortcut for this agent exists; Siri reads the answer", GREEN,
+                            why_not=WHY_NOT["iphone_voice"]))
     else:
-        out.append(Presence("iphone_voice", UNKNOWN, "no Siri shortcut for this agent was found"))
+        out.append(Presence("iphone_voice", UNKNOWN, "no Siri shortcut for this agent was found",
+                            why_not=WHY_NOT["iphone_voice"]))
+    out[0] = dataclasses.replace(out[0], why_not=WHY_NOT["terminal"])
+    out[1] = dataclasses.replace(out[1], why_not=WHY_NOT["tg_private"])
+    return tuple(out)
+
+
+# Why a place has no switch on the desk yet (docs/acd_presence_facts.md has the long version).
+WHY_NOT = {
+    "terminal": "no switch: it is a chat window that is open or closed, not a setting",
+    "tg_private": "no switch from the desk: it would mean taking the bot's secret out of the agent's private "
+                  "settings and restarting, and the desk never touches secrets",
+    "mac_voice": "no clean switch: leaving the Voice Desk list would also drop its voice settings, and a window's "
+                 "own voice is set inside that window",
+    "iphone_voice": "no switch on the Mac: the Siri shortcut lives on the iPhone (import or delete it there)",
+}
+
+
+def room_follows_rules(code: Optional[Path]) -> bool:
+    """True when the Team Room's own program carries the small adapter that reads the desk's rules.
+    Read-only: one file is opened and searched for one marker word."""
+    if not code:
+        return False
+    try:
+        return ADAPTER_MARK in Path(code).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def answers_token(r: dict, is_lead: bool) -> str:
+    """'always' or 'when_named'. Not written down = how the room works today: the lead gets every line with no
+    name, everyone else answers when named."""
+    raw = r.get("answers")
+    if raw in ("always", "when_named"):
+        return raw
+    return "always" if is_lead else "when_named"
+
+
+def takes_token(r: dict, profile: str) -> str:
+    if r.get("only_job_cards"):
+        return "cards"
+    boss = r.get("takes_work_from")
+    return "lead" if boss and boss != profile else "nobody"
+
+
+def talk_rules(profile: str, rules: dict, names: dict[str, str], lead: str = "",
+               adapter: bool = False) -> tuple[TalkRule, ...]:
+    """The four talk rules of one agent, each with where it honestly stands today."""
+    r = rules_for(rules, profile)
+    is_lead = bool(lead) and profile == lead
+    lead_name = names.get(lead, "the lead") if lead else "the lead"
+    told = TOLD if adapter else RECORDED
+    out = []
+
+    speaks = bool(r.get("speaks_in_team_room", True))
+    out.append(TalkRule("speaks", "Speaks in the Team Room", "yes, like every member" if speaks else "no",
+                        "yes" if speaks else "no",
+                        WORKS_TODAY if speaks else (ENFORCED + " at both doors: Peter's plain mention no longer "
+                                                    "hands it a turn (an explicit @name still does)" if adapter
+                                                    else RECORDED),
+                        "leads the room, so it always speaks" if is_lead else ""))
+
+    hands = bool(r.get("hands_out_work"))
+    out.append(TalkRule("hands_out", "Hands out work", "yes" if hands else "no", "yes" if hands else "no", told))
+
+    takes = takes_token(r, profile)
+    boss = r.get("takes_work_from")
+    words = {"cards": "only as job cards", "lead": names.get(boss, str(boss)), "nobody": "nobody (Peter only)"}[takes]
+    out.append(TalkRule("takes_from", "Takes work from", words, takes, told))
+
+    ans = answers_token(r, is_lead)
+    locked = ("kept as it is for this agent" if r.get("answers_locked") else "")
+    if ans == "when_named":
+        standing = WORKS_TODAY + ": a member gets a turn only when a line names it"
+        if is_lead:
+            standing = RECORDED + f" (the room still hands every line with no name to {lead_name})"
+    else:
+        standing = (WORKS_TODAY + ": every line with no name goes to the lead") if is_lead else RECORDED
+    out.append(TalkRule("answers", "Answers", "when named in the line" if ans == "when_named" else "always",
+                        ans, standing, locked))
     return tuple(out)
 
 
@@ -719,6 +858,9 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         problems.append(f"the Voice Desk list could not be read ({type(e).__name__})")
     members = read_members(paths.members)
     platforms = read_gateway_platforms(paths.gateway_state)
+    adapter = room_follows_rules(paths.team_room_code)
+    lead = str(members.get("lead") or "") if members else ""
+    in_room = None if members is None else {m.get("profile") for m in members["members"] if isinstance(m, dict)}
     desk = desk or DeskRecord()
     keys = {a.profile: a.key for a in (A.agents(agents_cfg) if agents_cfg else ()) if a.profile}
 
@@ -755,7 +897,9 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
             presence=presence(profile, name, turns, plug, members, voice, paths.shortcuts, now, stale, platforms),
             talks=talk_lines(profile, rules, names), addons=plug, voice_key=keys.get(profile, ""),
             model_note=str(r.get("model_note") or ""), model_pending=pending, model_behind=behind,
-            backups_locked=locked))
+            backups_locked=locked, talk_rules=talk_rules(profile, rules, names, lead, adapter),
+            room_lead=bool(lead) and profile == lead,
+            in_room=None if in_room is None else profile in in_room))
 
     others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names)
                    for a in (A.agents(agents_cfg) if agents_cfg else ()) if not a.profile)
@@ -767,7 +911,8 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         room = f"{lead} leads the Team Room. {len(members['members'])} members saved{' ' + saved if saved else ''}."
     views_t = tuple(views)
     return Snapshot(views_t, others, warnings(views_t, problems, desk), room, now, tuple(problems),
-                    waiting=tuple(desk.waiting), armed=desk.armed, last_change=desk.last_change)
+                    waiting=tuple(desk.waiting), armed=desk.armed, last_change=desk.last_change,
+                    room_follows_rules=adapter)
 
 
 def _count(n: int, one: str, many: str) -> str:
@@ -806,6 +951,9 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
     pinned = [v for v in views if v.override]
     if pinned:
         out.append(Warning(BLUE, _count(len(pinned), "agent has", "agents have") + " a temporary model choice"))
+    split = [v.name for v in views if any(p.key == "tg_group" and p.status == RED for p in v.presence)]
+    if split:
+        out.append(Warning(RED, "the Team Room and the Telegram group do not agree for: " + ", ".join(split)))
     for v in views:
         if DLS_PLUGIN in v.addons:
             out.append(Warning(YELLOW, f"the DLS add-on is still switched on inside {v.name}"))

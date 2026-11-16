@@ -4,6 +4,7 @@
     .venv/bin/python acd_snapshot.py --out /tmp/x --agent 2 --size 190x58
 
     .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v2       # version two: the pop-ups as well
+    .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v3       # version three: Team Room switch, talk rules
 
 Nothing appears on the screen and nothing is written except the pictures (the desk is never armed here, so a
 save inside a picture run is a dry run). Used for checks and for the
@@ -113,6 +114,65 @@ async def render_v2(out: Path, collector: Optional[Callable[[], D.Snapshot]] = N
     return made
 
 
+async def render_v3(out: Path, collector: Optional[Callable[[], D.Snapshot]] = None, agent: int = 1,
+                    size: tuple[int, int] = (190, 70), prefix: str = "v3", desk_kwargs: Optional[dict] = None) -> list[Path]:
+    """Version three's pictures: one agent's tree (where it shows up, who it may talk to), the Team Room switch,
+    the talk-rules pop-up and the restart review. Never armed, so nothing can be written or run."""
+    out.mkdir(parents=True, exist_ok=True)
+    made: list[Path] = []
+    kwargs = dict(desk_kwargs or {})
+    kwargs.pop("launcher_armed", None)
+
+    async def one(name: str, steps) -> None:
+        app = acd.Desk(collector=collector, autostart=False, **kwargs) if collector else acd.Desk(autostart=False, **kwargs)
+        snap = await asyncio.to_thread(app.collector)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            app.apply_snapshot(snap)
+            await pilot.pause()
+            await steps(app, pilot)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            path = out / f"{prefix}_{name}.svg"
+            path.write_text(app.export_screenshot(title=f"Agent Control Desk: {name.replace('_', ' ')}"), encoding="utf-8")
+            made.append(path)
+
+    async def setting(app, pilot, name: str) -> bool:
+        app.open_tree(agent)
+        await pilot.pause()
+        if name not in app.screen.settings:
+            return False
+        app.screen.query_one("#tree").highlighted = app.screen.settings.index(name)
+        await pilot.press("enter")
+        await pilot.pause()
+        return True
+
+    async def tree(app, pilot):
+        app.open_tree(agent)
+        await pilot.pause()
+        if "team_room" in app.screen.settings:
+            app.screen.query_one("#tree").highlighted = app.screen.settings.index("team_room")
+            await pilot.pause()
+
+    async def presence(app, pilot):
+        if await setting(app, pilot, "team_room"):
+            await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.press("s")
+
+    async def talk(app, pilot):
+        await setting(app, pilot, "talk")
+
+    async def restart(app, pilot):
+        await pilot.press("r")
+
+    await one("tree", tree)
+    await one("presence_popup", presence)
+    await one("talk_popup", talk)
+    await one("restart_popup", restart)
+    return made
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
@@ -120,9 +180,13 @@ def main() -> None:
     ap.add_argument("--size", default="190x58", help="columns x rows")
     ap.add_argument("--prefix", default="v1")
     ap.add_argument("--v2", action="store_true", help="draw version two's pictures (the pop-ups too); never armed")
+    ap.add_argument("--v3", action="store_true", help="draw version three's pictures (Team Room switch, talk rules)")
     a = ap.parse_args()
     w, h = (int(x) for x in a.size.lower().split("x"))
-    if a.v2:
+    if a.v3:
+        made = asyncio.run(render_v3(a.out, agent=a.agent or 1, size=(w, h),
+                                     prefix=a.prefix if a.prefix != "v1" else "v3"))
+    elif a.v2:
         made = asyncio.run(render_v2(a.out, agent=a.agent, size=(w, h), prefix=a.prefix if a.prefix != "v1" else "v2"))
     else:
         made = asyncio.run(render(a.out, agent=a.agent, size=(w, h), prefix=a.prefix))

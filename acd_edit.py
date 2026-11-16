@@ -1,4 +1,5 @@
-"""Agent Control Desk, version two: the changes. Voice, backups on/off, language model.
+"""Agent Control Desk: the changes. Voice, backups on/off, language model (version two); Team Room membership
+and the talk rules (version three).
 
 Everything the desk can CHANGE lives here, so acd_data.py stays a module that only reads.
 
@@ -20,6 +21,15 @@ A real change does what Peter would do by hand, safely:
     for all three    a dated backup first, only the needed lines change and every comment stays, atomic replace,
                      the file is read back through Hermes' own settings reader, and the backup is put back at once
                      if the value did not take. A file the desk does not recognise is refused: nothing changes.
+
+Version three adds two more, with the same guarantees:
+
+    Team Room        in or out of the room. The desk never edits the member list and never switches the add-on by
+                     itself: it runs the Team Room's OWN add / kick, which changes the terminal room and the
+                     Telegram group in one go, then checks both doors and runs the command backwards if they
+                     do not agree. Both doors, or nothing.
+    talk rules       acd_rules.toml, the one file that says who may talk to whom: dated backup, only the needed
+                     lines, atomic replace, read back, put back at once if a value did not take.
 
 Every change is one line in history.jsonl (who, when, what, before, after), and U undoes the newest one by
 running it backwards through the same safe path.
@@ -72,7 +82,13 @@ NEEDS = {
               "old list until a fresh chat is started.",
     "voice": "No restart needed. The Voice Desk speaks it from the next line; a Hermes agent's own window uses it "
              "from its next session.",
+    "rule": "No restart needed. The desk shows it at once. The Team Room follows a rule only where its line says so; "
+            "a rule marked 'recorded, not yet enforced' changes nothing in the room yet.",
+    "team_room": "No restart needed in the normal case: the Team Room makes its next room through the agents' system "
+                 "and switches the Telegram side in the same step. The chat on screen starts fresh; the old lines "
+                 "stay in the saved history.",
 }
+UNDOABLE = ("model", "effort", "backup", "voice", "rule", "team_room")
 _DESK_NOTE = re.compile(r"^[ \t]*# \d{4}-\d\d-\d\d " + re.escape(WHO) + r": ")
 
 
@@ -90,6 +106,9 @@ class EditPaths:
     config_backups: Path
     voice: voiceedit.EditPaths      # the Voice Desk's own paths (agents.toml and what it syncs)
     launcher_armed: bool = False    # True only when the launcher was started with --armed
+    members: Optional[Path] = None          # the Team Room's saved member list (read, never written by the desk)
+    team_room_cmd: Optional[Path] = None    # the Team Room's own command (its add / kick does both doors)
+    gateway_state: Optional[Path] = None    # the agents' own status file: which agent has a Telegram bot
 
     @classmethod
     def default(cls, launcher_armed: bool = False) -> "EditPaths":
@@ -101,7 +120,9 @@ class EditPaths:
                    restart_request=Path(env("ACD_RESTART_REQUEST",
                                             HOME / ".hermes/profiles/orchestrator/state/gateway_restart.request")),
                    config_backups=Path(env("ACD_CONFIG_BACKUPS", HOME / ".hermes/profile-backups")),
-                   voice=vp, launcher_armed=launcher_armed)
+                   voice=vp, launcher_armed=launcher_armed, members=base.members,
+                   team_room_cmd=Path(env("ACD_TEAM_ROOM_CMD", HOME / ".local/bin/team-room")),
+                   gateway_state=base.gateway_state)
 
     @property
     def armed_file(self) -> Path:
@@ -114,6 +135,10 @@ class EditPaths:
     @property
     def off_file(self) -> Path:
         return self.state / "backups_off.json"
+
+    @property
+    def rules_backups(self) -> Path:
+        return self.state / "rules-backups"
 
 
 def _read_json(path: Path) -> Any:
@@ -473,8 +498,7 @@ def last_undoable(paths: EditPaths) -> Optional[dict]:
     hist = read_history(paths)
     undone = {e.get("undoes") for e in hist if e.get("undoes")}
     for e in reversed(hist):
-        if e.get("ok") and not e.get("undoes") and e.get("kind") in ("model", "effort", "backup", "voice") \
-                and e.get("id") not in undone:
+        if e.get("ok") and not e.get("undoes") and e.get("kind") in UNDOABLE and e.get("id") not in undone:
             return e
     return None
 
@@ -867,8 +891,271 @@ def real_voice_test(agent: A.Agent, lang: str, voice: str) -> tuple[bool, str]:
 
 
 
+# ---- the talk rules (version three) ------------------------------------------------------------------------------
+RULE_KEYS = {"speaks_in_team_room": bool, "hands_out_work": bool, "only_job_cards": bool, "takes_work_from": str,
+             "answers": str}
+_PROFILE_OK = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _rule_words(key: str, value: Any, names: dict) -> str:
+    if key == "speaks_in_team_room":
+        return "may speak in the Team Room" if value else "may not speak in the Team Room"
+    if key == "hands_out_work":
+        return "hands out work" if value else "does not hand out work"
+    if key == "only_job_cards":
+        return "takes work only as job cards" if value else "is not limited to job cards"
+    if key == "takes_work_from":
+        return f"takes work from {names.get(value, value)}" if value else "takes work from nobody (Peter only)"
+    return "answers every line" if value == "always" else "answers when named in the line"
+
+
+def read_rules_text(paths: EditPaths) -> tuple[str, dict]:
+    """The rules file as text and as data. A file the desk does not recognise is refused: nothing changes."""
+    try:
+        text = Path(paths.rules).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise EditError(f"the rules file could not be read ({exc.strerror or exc}); nothing changed") from exc
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise EditError(f"the rules file cannot be read as it stands ({str(exc)[:100]}); nothing changed") from exc
+    if not isinstance(data.get("defaults"), dict) or not isinstance(data.get("agents", {}), dict):
+        raise EditError("the rules file is not in the shape the desk knows (no [defaults] or [agents] part); "
+                        "nothing changed")
+    return text, data
+
+
+def rules_text_with(text: str, profile: str, changes: dict) -> str:
+    """The rules text with `changes` set under [agents.<profile>] (None takes a line out). Only those lines move."""
+    if not _PROFILE_OK.match(profile):
+        raise EditError(f"{profile!r} is not a name the desk can write into the rules file; nothing changed")
+    lines = text.splitlines(keepends=True)
+    try:
+        voiceedit._block(lines, profile)
+    except voiceedit.EditError:
+        if all(v is None for v in changes.values()):
+            return text
+        text = text + ("" if text.endswith("\n") else "\n") + f"\n[agents.{profile}]\n"
+    try:
+        for key, value in changes.items():
+            text = voiceedit.set_field(text, profile, key, value)
+    except voiceedit.EditError as exc:
+        raise EditError(str(exc).replace("agents.toml", "the rules file")) from exc
+    return text
+
+
+def change_rules(profile: str, changes: dict, paths: EditPaths, *, now: Optional[_dt.datetime] = None,
+                 undoes: Optional[str] = None) -> Result:
+    """Set talk rules for one agent in acd_rules.toml. `changes` maps a rule key to its new value; None takes the
+    agent's own line out, so the default applies again (that is what an undo of a first change does)."""
+    now = _now(now)
+    name = _name(paths, profile)
+    try:
+        for key, value in changes.items():
+            kind = RULE_KEYS.get(key)
+            if kind is None:
+                raise EditError(f"{key!r} is not a talk rule the desk knows; nothing changed")
+            if value is not None and not isinstance(value, kind):
+                raise EditError(f"{key} cannot be set to {value!r}; nothing changed")
+            if key == "answers" and value not in (None, "always", "when_named"):
+                raise EditError(f"answers cannot be set to {value!r}; nothing changed")
+        old, data = read_rules_text(paths)
+        mine = data.get("agents", {}).get(profile, {})
+        mine = mine if isinstance(mine, dict) else {}
+        effective = D.rules_for(data, profile)
+        if effective.get("answers_locked") and "answers" in changes and not undoes:
+            raise EditError(f"how {name} answers is kept as it is; nothing changed")
+        before = {k: mine.get(k) for k in changes}
+        todo = {}
+        for k, v in changes.items():
+            if v is None:
+                if k in mine:                               # take the agent's own line out: the default applies again
+                    todo[k] = None
+            elif effective.get(k) != v or (undoes and mine.get(k) != v):
+                todo[k] = v
+        if not todo:
+            return Result(True, f"{name}'s talk rules already say that; nothing to change")
+        new = rules_text_with(old, profile, todo)
+        after_data = tomllib.loads(new)
+        after_eff = D.rules_for(after_data, profile)
+    except EditError as exc:
+        return _refused(exc)
+    names = {p: _name(paths, p) for p in data.get("agents", {})}
+    parts = [_rule_words(k, after_eff.get(k), names) for k in todo]
+    what = f"{name} now " + " and ".join(parts)
+    lines = diff_lines(old, new)
+    if not armed(paths):
+        return Result(True, f"DRY RUN, nothing written ({why_not_armed(paths)}). This would happen: {what}",
+                      dry=True, lines=lines, needs=NEEDS["rule"])
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    path = Path(paths.rules)
+    try:
+        if path.read_text(encoding="utf-8") != old:
+            raise EditError("the rules file changed while the edit was prepared; nothing written, try again")
+        paths.rules_backups.mkdir(parents=True, exist_ok=True)
+        bak = paths.rules_backups / f"{stamp}-{path.name}"
+        n = 1
+        while bak.exists():
+            n += 1
+            bak = paths.rules_backups / f"{stamp}-{n}-{path.name}"
+        shutil.copy2(path, bak)
+        voicecfg._atomic_write(path, new)
+        bad = []
+        try:
+            got = D.rules_for(D.load_rules(path), profile)
+            bad = [f"{k} reads back as {got.get(k)!r}" for k in todo if got.get(k) != after_eff.get(k)]
+        except Exception as exc:                            # noqa: BLE001  any doubt at all = put it back
+            bad = [f"it could not be read back ({str(exc)[:100]})"]
+        if bad:
+            voicecfg._atomic_write(path, old)
+            raise EditError("the change did not read back right, so the rules file was put back exactly as it "
+                            "was: " + "; ".join(bad))
+    except (EditError, OSError) as exc:
+        return Result(False, f"Not changed. {exc}", lines=lines)
+    entry = {"id": f"{stamp}-{profile}-rule", "ts": now.timestamp(), "who": WHO, "kind": "rule", "profile": profile,
+             "what": what, "before": {k: before[k] for k in todo}, "after": {k: after_eff.get(k) for k in todo},
+             "ok": True, "files": [{"path": str(path), "backup": str(bak)}]}
+    if undoes:
+        entry["undoes"] = undoes
+    _append_history(paths, entry)
+    return Result(True, ("Undone: " if undoes else "Saved: ") + what, lines=lines, needs=NEEDS["rule"], entry=entry)
+
+
+# ---- Team Room membership: both doors, or nothing (version three) ----------------------------------------------
+Runner = Callable[[list], tuple]     # (the Team Room command's words) -> (exit code, what it printed)
+
+
+def _members(paths: EditPaths) -> dict:
+    data = D.read_members(paths.members) if paths.members else None
+    if data is None:
+        raise EditError("the Team Room members file could not be read, so the desk will not change it; "
+                        "nothing changed")
+    rows = data["members"]
+    if not all(isinstance(m, dict) and isinstance(m.get("profile"), str) for m in rows) or not data.get("lead"):
+        raise EditError("the Team Room members file is not in the shape the desk knows; nothing changed")
+    return data
+
+
+def _has_bot(paths: EditPaths, profile: str) -> Optional[bool]:
+    plats = D.read_gateway_platforms(paths.gateway_state)
+    if plats is None:
+        return None
+    return f"{profile}:telegram" in plats
+
+
+def _addon_on(paths: EditPaths, profile: str, loader: Optional[Loader]) -> Optional[bool]:
+    try:
+        path = _config(paths, profile)
+        cfg = loader(path) if loader else None
+        if not isinstance(cfg, dict):
+            return None
+        return D.TEAM_ROOM_PLUGIN in D.addons(cfg)
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
+def _room_name(m: dict) -> str:
+    return str(m.get("name") or m.get("handle") or m.get("profile"))
+
+
+def set_team_room(profile: str, on: bool, paths: EditPaths, *, runner: Optional[Runner] = None,
+                  now: Optional[_dt.datetime] = None, loader: Optional[Loader] = None, undoes: Optional[str] = None,
+                  handle: str = "", name: str = "") -> Result:
+    """Put an agent into the Team Room or take it out. ONE path for both doors: the Team Room's own add / kick
+    changes the terminal room and the Telegram group together. The desk then checks both; if they do not agree,
+    it runs the command backwards and reports that nothing changed."""
+    now = _now(now)
+    shown = _name(paths, profile)
+    try:
+        data = _members(paths)
+        rows = data["members"]
+        mine = next((m for m in rows if m.get("profile") == profile), None)
+        if profile == data.get("lead"):
+            raise EditError(f"{shown} leads the Team Room and cannot be taken out of it; nothing changed")
+        if not _config(paths, profile).is_file():
+            raise EditError(f"there is no agent called {profile}; nothing changed")
+        if on and mine is not None:
+            return Result(True, f"{shown} is already in the Team Room; nothing to change")
+        if not on and mine is None:
+            return Result(True, f"{shown} is already out of the Team Room; nothing to change")
+    except EditError as exc:
+        return _refused(exc)
+    loader = loader or default_loader()
+    bot = _has_bot(paths, profile)
+    before_names = [_room_name(m) for m in rows]
+    if on:
+        handle = (handle or profile).strip().lstrip("@").lower().replace("_", "-")
+        name = name.strip() or shown
+        words = ["add", profile, handle, name]
+        after_names = before_names + [name]
+        what = f"{shown} joins the Team Room (the terminal room and the Telegram group together)"
+        tail = ("Its own Telegram bot has to be in the Telegram group to speak there; putting a bot into the group is "
+                "Peter's own tap in Telegram, and until then the lead's bot speaks for it."
+                if bot else "The lead's bot speaks its lines in the Telegram group, text only.")
+    else:
+        handle, name = str(mine.get("handle") or profile), _room_name(mine)
+        words = ["kick", handle]
+        after_names = [n for m, n in zip(rows, before_names) if m is not mine]
+        what = f"{shown} leaves the Team Room (the terminal room and the Telegram group together)"
+        tail = ("Its Telegram bot is taken out of the Telegram group; putting the bot back later is Peter's own tap "
+                "in Telegram." if bot else "It had no bot of its own in the Telegram group.")
+    lines = ["- Team Room members: " + ", ".join(before_names), "+ Team Room members: " + ", ".join(after_names),
+             "  runs the Team Room's own command: team-room " + " ".join(words)]
+    needs = NEEDS["team_room"] + " " + tail
+    if not armed(paths):
+        return Result(True, f"DRY RUN, nothing written ({why_not_armed(paths)}). This would happen: {what}",
+                      dry=True, lines=lines, needs=needs)
+    if runner is None:
+        import acd_room                 # the one module that starts a program: the Team Room's own command
+        runner = acd_room.default_runner(paths.team_room_cmd)
+    run = runner
+    code, said = run(words)
+    said = str(said or "").strip()
+    first = said.splitlines()[0][:200] if said else ""
+    try:
+        after = _members(paths)
+    except EditError as exc:
+        return Result(False, f"Not confirmed. The Team Room's command ran (it said: {first or 'nothing'}), but "
+                             f"afterwards {exc}", lines=lines)
+    is_in = any(m.get("profile") == profile for m in after["members"])
+    if is_in != on:
+        return Result(False, "Not changed. The Team Room did not make the change, so nothing is different at "
+                             f"either door. It said: {first or 'nothing'}", lines=lines)
+    addon = _addon_on(paths, profile, loader) if bot else None
+    if bot and addon is not None and addon != on:
+        back = ["kick", handle] if on else ["add", profile, handle, name]
+        _code2, said2 = run(back)
+        try:
+            again = _members(paths)
+            put_back = any(m.get("profile") == profile for m in again["members"]) != on
+        except EditError:
+            put_back = False
+        return Result(False, "Not changed. The terminal room changed but the Telegram side did not follow, so the "
+                             "desk ran the Team Room's command backwards: "
+                             + ("the room is as it was." if put_back else
+                                "AND THAT DID NOT WORK: the two doors do not agree now; look at the Team Room. "
+                                f"It said: {str(said2 or '').strip()[:160]}"), lines=lines)
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    import acd_room
+    restart = acd_room.says_restart(said)
+    entry = {"id": f"{stamp}-{profile}-team_room", "ts": now.timestamp(), "who": WHO, "kind": "team_room",
+             "profile": profile, "what": what, "before": not on, "after": on, "ok": True, "handle": handle,
+             "name": name, "room_before": data.get("room_id"), "room_after": after.get("room_id"),
+             "said": said[:600]}
+    if restart:
+        entry["needs_restart"] = True
+        entry["what"] = what + "; the agents' system did not reload its add-ons, so the Telegram side waits for a restart"
+        needs = ("A RESTART IS NEEDED for the Telegram side: the running system did not reload its add-ons. "
+                 "Press R to review. " + tail)
+    if undoes:
+        entry["undoes"] = undoes
+    _append_history(paths, entry)
+    return Result(True, ("Undone: " if undoes else "Saved: ") + entry["what"], lines=lines, needs=needs, entry=entry)
+
+
 # ---- undo ------------------------------------------------------------------------------------------------------------
-def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Optional[Loader] = None) -> Result:
+def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Optional[Loader] = None,
+         runner: Optional[Callable[[list], tuple]] = None) -> Result:
     """Run the newest change backwards, through the same safe path."""
     last = last_undoable(paths)
     if last is None:
@@ -881,6 +1168,11 @@ def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Option
     if kind == "backup":
         return set_backup(last["profile"], last["provider"], last["model"], bool(last["before"]), paths, now=now,
                           loader=loader, undoes=last["id"])
+    if kind == "rule":
+        return change_rules(last["profile"], dict(last["before"]), paths, now=now, undoes=last["id"])
+    if kind == "team_room":
+        return set_team_room(last["profile"], bool(last["before"]), paths, now=now, loader=loader, runner=runner,
+                             undoes=last["id"], handle=str(last.get("handle") or ""), name=str(last.get("name") or ""))
     return change_voice(last["agent"], last["field"], last["before"], paths, now=now, undoes=last["id"])
 
 

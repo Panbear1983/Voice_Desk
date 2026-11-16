@@ -46,7 +46,8 @@ def edit_paths(w, launcher: bool = True) -> E.EditPaths:
                                 claude_conf=root / "no-claude.conf", gemini_conf=None)
     return E.EditPaths(state=root / "acd-state", profiles=w.paths.profiles, rules=w.paths.rules,
                        restart_request=root / "helper" / "gateway_restart.request",
-                       config_backups=root / "config-backups", voice=voice, launcher_armed=launcher)
+                       config_backups=root / "config-backups", voice=voice, launcher_armed=launcher,
+                       members=w.paths.members, team_room_cmd=root / "no-such-team-room-command")
 
 
 def make_app(w):
