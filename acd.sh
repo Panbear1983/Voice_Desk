@@ -1,10 +1,15 @@
 #!/bin/bash
-# Agent Control Desk, version one. It shows every agent's language model, voice, where it shows up and who it
-# talks to. It only reads files: it changes nothing, restarts nothing and calls no model. Closing it changes nothing.
-#   up/down choose an agent   Enter open the agent's tree   Esc back   C read again   Q close
+# Agent Control Desk. It shows every agent's language model, voice, where it shows up and who it talks to, and
+# (version two) lets you change the model, the backups and the voice from small pop-ups.
+#   ./acd.sh            every change is a DRY RUN: shown in full, nothing is written
+#   ./acd.sh --armed    changes are written, but only if the desk's own armed switch is also on:
+#                         .venv/bin/python acd_edit.py arm | disarm | status
+# It never restarts anything itself; R only leaves a request for the existing restart helper.
+#   grid: up/down, Enter open the tree     tree: up/down, Enter change, left/right other agent, Esc back
+#   U undo   R restart review   C read again   Q close
 # The project's Python lives in the main Voice Desk folder (.venv); a worktree borrows it.
 cd "$(dirname "$0")" || exit 1
 PY=".venv/bin/python"
 [ -x "$PY" ] || PY="$HOME/GitHub/Voice_Desk/.venv/bin/python"
 [ -x "$PY" ] || { echo "missing .venv in ~/GitHub/Voice_Desk"; exit 1; }
-exec "$PY" acd.py
+exec "$PY" acd.py "$@"

@@ -1,4 +1,4 @@
-"""Agent Control Desk, version one: the facts. It SHOWS everything and CHANGES nothing.
+"""Agent Control Desk: the facts. This module only READS (every change is made in acd_edit.py).
 
 For every Hermes agent this module answers, from the files where the truth already lives:
 
@@ -131,6 +131,7 @@ class Paths:
     members: Path                   # the Team Room's saved members
     rules: Path
     shortcuts: Path                 # the folder that holds the "Talk to <agent>.shortcut" files (names only)
+    gateway_state: Optional[Path] = None   # the agents' own status file: which Telegram bots are connected
 
     @classmethod
     def default(cls) -> "Paths":
@@ -140,7 +141,8 @@ class Paths:
             agents_toml=Path(env("VOICE_DESK_AGENTS", HOME / "GitHub/Voice_Desk/agents.toml")),
             members=Path(env("ACD_TEAM_ROOM_MEMBERS", HOME / "GitHub/Team_Room/members.json")),
             rules=Path(env("ACD_RULES", REPO / "acd_rules.toml")),
-            shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Voice_Desk")))
+            shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Voice_Desk")),
+            gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")))
 
 
 # ---- an agent's log ------------------------------------------------------------------------------------
@@ -272,7 +274,8 @@ class Backup:
     position: int
     model: str
     service: str
-    on: bool = True                 # version one: a listed backup is on. "Off" needs the desk's own record (later)
+    on: bool = True                 # listed in the settings file = on. Off = remembered in the desk's own record
+    note: str = ""                  # for an off backup: since when, or "not on this agent's list yet"
 
 
 @dataclass(frozen=True)
@@ -316,6 +319,17 @@ class Override:
 
 
 @dataclass(frozen=True)
+class DeskRecord:
+    """What the desk itself remembers (acd_edit.py reads it from the desk's own folder). All of it is optional:
+    with no record the desk shows exactly what the files say."""
+    off: dict = field(default_factory=dict)        # profile -> [{"provider", "model", "position", "note"}, ...]
+    pending: dict = field(default_factory=dict)    # profile -> {"ts", "model", "service"}: the desk's last model change
+    waiting: tuple = ()                            # saved changes that wait for a restart, in plain words
+    armed: bool = False                            # False = every change is a dry run: shown, never written
+    last_change: str = ""                          # the newest change, in plain words (what U would undo)
+
+
+@dataclass(frozen=True)
 class AgentView:
     profile: str
     name: str
@@ -333,11 +347,18 @@ class AgentView:
     presence: tuple[Presence, ...] = ()
     talks: tuple[tuple[str, str], ...] = ()           # (what, answer) lines
     addons: tuple[str, ...] = ()
+    voice_key: str = ""                               # this agent's name in the Voice Desk list ([agents.<key>])
+    model_note: str = ""                              # a plain sentence about a note on the model (meant to stay fixed)
+    model_pending: str = ""                           # the desk changed the model; why it is not live everywhere yet
+    model_behind: str = ""                            # the settings file no longer says what the desk last set
+    backups_locked: bool = False
 
     @property
     def model_status(self) -> str:
-        if self.error:
+        if self.error or self.model_behind:
             return RED
+        if self.model_pending:
+            return YELLOW
         return GREEN if self.model else GREY
 
     @property
@@ -377,6 +398,9 @@ class Snapshot:
     room_note: str
     read_at: float
     problems: tuple[str, ...] = ()                    # files the desk itself could not read
+    waiting: tuple[str, ...] = ()                     # saved changes that wait for a restart
+    armed: bool = False                               # False = changes are dry runs
+    last_change: str = ""
 
 
 # ---- small readers ---------------------------------------------------------------------------------------
@@ -551,9 +575,22 @@ def _when(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts).strftime("%-d %b %H:%M")
 
 
+def read_gateway_platforms(path: Optional[Path]) -> Optional[dict]:
+    """The agents' own status file says which bots are connected ("<profile>:telegram" -> {"state": ...}).
+    None when it cannot be read. Only the connection words are looked at."""
+    if not path:
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    plats = data.get("platforms") if isinstance(data, dict) else None
+    return plats if isinstance(plats, dict) else None
+
+
 def presence(profile: str, name: str, turns: Optional[list[Turn]], plugin_names: tuple[str, ...],
              members: Optional[dict], voice: Optional[Voice], shortcuts: Path, now: float,
-             old_chat_count: int = 0) -> tuple[Presence, ...]:
+             old_chat_count: int = 0, platforms: Optional[dict] = None) -> tuple[Presence, ...]:
     out = []
     no_log = "unknown: this agent has no log to read" if turns is None else ""
 
@@ -568,8 +605,18 @@ def presence(profile: str, name: str, turns: Optional[list[Turn]], plugin_names:
         out.append(Presence("terminal", UNKNOWN, no_log or "no terminal reply in the current log"))
 
     t = _seen(turns, ("telegram",), now)
-    if t:
+    bot = _as_dict((platforms or {}).get(f"{profile}:telegram"))
+    state = str(bot.get("state") or "")
+    if state == "connected":
+        seen = f"; a Telegram reply was logged {_when(t.ts)}" if t else ""
+        out.append(Presence("tg_private", ON, "the agents' own status says this agent's Telegram bot is connected"
+                            + seen, GREEN))
+    elif state:
+        out.append(Presence("tg_private", ON, f"this agent has a Telegram bot, but its status says: {state}", RED))
+    elif t:
         out.append(Presence("tg_private", ON, f"a Telegram reply was logged {_when(t.ts)}", GREEN))
+    elif platforms is not None:
+        out.append(Presence("tg_private", OFF, "the agents' own status lists no Telegram bot for this agent"))
     else:
         out.append(Presence("tg_private", UNKNOWN, no_log or "no Telegram reply in the current log"))
 
@@ -617,8 +664,42 @@ def talk_lines(profile: str, rules: dict, names: dict[str, str]) -> tuple[tuple[
 
 
 # ---- everything at once ----------------------------------------------------------------------------------
+def with_off_backups(listed: tuple[Backup, ...], recorded: list) -> tuple[Backup, ...]:
+    """The backups in the settings file (on), then the ones the desk remembers as switched off."""
+    have = {(b.service, b.model) for b in listed}
+    out = list(listed)
+    for r in recorded or ():
+        if isinstance(r, dict) and r.get("model") and (str(r.get("provider") or ""), str(r["model"])) not in have:
+            out.append(Backup(int(r.get("position") or len(out) + 1), str(r["model"]), str(r.get("provider") or ""),
+                              on=False, note=str(r.get("note") or "")))
+            have.add((str(r.get("provider") or ""), str(r["model"])))
+    return tuple(out)
+
+
+PENDING_NOTE = ("new chats and job cards use it at once, Telegram on its next message (expected, not live-tested); "
+                "open terminal chats keep the old model until a fresh chat is started")
+
+
+def judge_pending(pending: Optional[dict], ms: Optional[ModelSet], turns: Optional[list[Turn]]) -> tuple[str, str]:
+    """(why the desk's own model change is not live everywhere yet, what changed behind the desk's back).
+    Both empty = nothing to say (green)."""
+    if not pending or ms is None:
+        return "", ""
+    want_model, want_service = str(pending.get("model") or ""), str(pending.get("service") or ms.service)
+    if want_model and (want_model, want_service) != (ms.model, ms.service):
+        return "", (f"the desk last set {model_name(want_model)}, but the settings file now says "
+                    f"{model_name(ms.model)}: it was changed somewhere else")
+    since = float(pending.get("ts") or 0)
+    for t in reversed(turns or ()):
+        if t.ts < since:
+            break
+        if not t.dropped and t.start_model == ms.model and t.start_service == ms.service:
+            return "", ""                              # a reply on the new setting was logged: live
+    return f"saved {_when(since)}, no reply on it logged yet: {PENDING_NOTE}", ""
+
+
 def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Callable[[Path], Any] = hermes_yaml,
-            now: Optional[float] = None) -> Snapshot:
+            now: Optional[float] = None, desk: Optional[DeskRecord] = None) -> Snapshot:
     """Read every source once and return what the desk shows. Never raises for a bad file: a file that cannot
     be read becomes an error on that agent (or a line in `problems`), and the rest is still shown."""
     import time
@@ -637,6 +718,9 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         agents_cfg = None
         problems.append(f"the Voice Desk list could not be read ({type(e).__name__})")
     members = read_members(paths.members)
+    platforms = read_gateway_platforms(paths.gateway_state)
+    desk = desk or DeskRecord()
+    keys = {a.profile: a.key for a in (A.agents(agents_cfg) if agents_cfg else ()) if a.profile}
 
     profiles = discover_profiles(paths.profiles, rules)
     names = {p: display_name(p, agents_cfg, members) for p in profiles}
@@ -660,13 +744,18 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         voice = voice_for(profile, agents_cfg)
         plug = addons(cfg)
         stale = old_chats(turns, ms, listed, now)
+        pending, behind = judge_pending(desk.pending.get(profile), ms, turns)
+        locked = bool(r.get("model_locked"))
         views.append(AgentView(
-            profile=profile, name=name, role=role, model=ms, model_locked=bool(r.get("model_locked")),
+            profile=profile, name=name, role=role, model=ms, model_locked=locked,
             last=last_reply(turns, ms, listed), drops_today=drops_on(turns, today), old_chats=stale,
             signin_failed=recent_signin_failure(turns, now),
-            override=find_override(turns, ms, listed, now), backups=listed, voice=voice,
-            presence=presence(profile, name, turns, plug, members, voice, paths.shortcuts, now, stale),
-            talks=talk_lines(profile, rules, names), addons=plug))
+            override=find_override(turns, ms, listed, now),
+            backups=listed if locked else with_off_backups(listed, desk.off.get(profile)), voice=voice,
+            presence=presence(profile, name, turns, plug, members, voice, paths.shortcuts, now, stale, platforms),
+            talks=talk_lines(profile, rules, names), addons=plug, voice_key=keys.get(profile, ""),
+            model_note=str(r.get("model_note") or ""), model_pending=pending, model_behind=behind,
+            backups_locked=locked))
 
     others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names)
                    for a in (A.agents(agents_cfg) if agents_cfg else ()) if not a.profile)
@@ -677,16 +766,27 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         saved = str(members.get("saved") or "")[:10]
         room = f"{lead} leads the Team Room. {len(members['members'])} members saved{' ' + saved if saved else ''}."
     views_t = tuple(views)
-    return Snapshot(views_t, others, warnings(views_t, problems), room, now, tuple(problems))
+    return Snapshot(views_t, others, warnings(views_t, problems, desk), room, now, tuple(problems),
+                    waiting=tuple(desk.waiting), armed=desk.armed, last_change=desk.last_change)
 
 
 def _count(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def warnings(views: tuple[AgentView, ...], problems: list[str] = ()) -> tuple[Warning, ...]:
+def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
+             desk: Optional[DeskRecord] = None) -> tuple[Warning, ...]:
     """The strip at the top. Real conditions only; when nothing is wrong it says so."""
     out = [Warning(RED, p) for p in problems]
+    if desk and desk.waiting:
+        out.append(Warning(YELLOW, _count(len(desk.waiting), "saved change is", "saved changes are")
+                           + " waiting for a restart: press R to review"))
+    behind = [v.name for v in views if v.model_behind]
+    if behind:
+        out.append(Warning(RED, "the model was changed behind the desk's back for: " + ", ".join(behind)))
+    fresh = [v.name for v in views if v.model_pending]
+    if fresh:
+        out.append(Warning(YELLOW, "a model change from the desk is not live everywhere yet for: " + ", ".join(fresh)))
     broken = [v.name for v in views if v.error]
     if broken:
         out.append(Warning(RED, "settings file could not be read for: " + ", ".join(broken)))

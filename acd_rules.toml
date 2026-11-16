@@ -1,6 +1,6 @@
 # Agent Control Desk: who the agents are to each other, and who may talk to whom.
 #
-# Version one of the desk only SHOWS these rules; nothing enforces them from this file yet. They are written
+# The desk only SHOWS these rules (editing them comes in a later version); nothing enforces them from this file yet. They are written
 # down here, in one place, so the Team Room can later read the same rules the desk shows (Peter, 2026-11-16:
 # merge the rules, not the windows). Keys under [agents.<name>] are Hermes profile folder names.
 
@@ -32,6 +32,8 @@ only_job_cards = true           # Builder is never started directly, only throug
 
 [agents.tax_angel_esther]
 role = "tax"
+# Peter, 2026-11-16: used rarely (tax season), so she stays on the strongest model. A note, not a lock.
+model_note = "meant to stay fixed on Claude Opus 5.5 (Peter, 16 Nov)"
 
 [agents.wanna-buffet]
 role = "investing"

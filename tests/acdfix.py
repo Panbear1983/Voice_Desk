@@ -160,3 +160,84 @@ def collect(w, reader=None) -> D.Snapshot:
 
 def agent(snap: D.Snapshot, profile: str) -> D.AgentView:
     return next(v for v in snap.agents if v.profile == profile)
+
+
+# ---- a world whose settings files are real YAML text, for the tests that CHANGE things (version two) ---------
+def edit_world(armed: bool = False, launcher: bool = True):
+    """gridfix's fake world (agents.toml, four profiles with a voice block, Claude and Gemini voice files), with
+    every profile's settings file rewritten as full YAML text, plus an acd_edit.EditPaths that points only into
+    the throw-away folder. armed=True switches the desk's own armed file on."""
+    import acd_edit as E
+    import voicecfg
+    from tests import gridfix as G
+
+    g = G.make_world()
+    profiles = g.edit.profiles
+    spec = {"orchestrator": ("claude-sonnet-5-5", "anthropic", "medium", "en-US-JennyNeural"),
+            "assistant": ("claude-opus-5-5", "anthropic", "medium", "en-US-AvaNeural"),
+            "tax_angel_esther": ("claude-opus-5-5", "anthropic", "medium", "alloy"),
+            "wanna-buffet": ("claude-opus-5-5", "anthropic", "medium", "en-US-AndrewNeural")}
+    for prof, (model, service, effort, voice) in spec.items():
+        tts = G.profile_yaml(voice, speed=0.92 if prof == "wanna-buffet" else 1.0).split("\n", 1)[1]
+        (profiles / prof / "config.yaml").write_text(config_yaml(model, service, effort) + tts, encoding="utf-8")
+    (profiles / "simba" / "logs").mkdir(parents=True)
+    (profiles / "simba" / "config.yaml").write_text(
+        "model:\n  provider: openrouter\n  default: x-ai/grok-4.20\nfallback_providers: []\n"
+        "agent:\n  reasoning_effort: none\nplugins:\n  enabled:\n    - team-room-telegram\n", encoding="utf-8")
+    rules = g.root / "rules.toml"
+    rules.write_text(RULES_TOML.replace('order = ["orchestrator", "assistant", "builder", "simba"]',
+                                        'order = ["orchestrator", "assistant", "tax_angel_esther", "wanna-buffet", "simba"]')
+                     + '\n[agents.tax_angel_esther]\nrole = "tax"\nmodel_note = "meant to stay fixed on Claude Opus 5.5"\n',
+                     encoding="utf-8")
+    (g.root / "members.json").write_text(json.dumps({
+        "lead": "orchestrator", "saved": "2026-11-14T17:15:14+08:00",
+        "members": [{"profile": p, "name": p.title()} for p in list(spec) + ["simba"]]}), encoding="utf-8")
+    (g.root / "gateway_state.json").write_text(json.dumps({"platforms": {
+        "assistant:telegram": {"state": "connected"}, "orchestrator:telegram": {"state": "connected"}}}), encoding="utf-8")
+    paths = D.Paths(profiles=profiles, agents_toml=g.toml, members=g.root / "members.json", rules=rules,
+                    shortcuts=g.root / "repo", gateway_state=g.root / "gateway_state.json")
+    edit = E.EditPaths(state=g.root / "acd-state", profiles=profiles, rules=rules,
+                       restart_request=g.root / "helper" / "gateway_restart.request",
+                       config_backups=g.root / "config-backups", voice=g.edit, launcher_armed=launcher)
+    if armed:
+        E.set_armed(edit, True)
+    return SimpleNamespace(root=g.root, paths=paths, edit=edit, now=NOW, profiles=profiles, toml=g.toml)
+
+
+def config_yaml(model: str, service: str, effort: str) -> str:
+    return (f"model:\n  provider: {service}\n  default: {model}   # the main model\n  base_url: ''\n"
+            "# a comment that must stay\n"
+            "fallback_providers:\n"
+            "  # first choice\n"
+            "  - provider: antigravity-subscription-directsdk\n    model: claude-opus-5-5\n"
+            "  - provider: antigravity-subscription-directsdk\n    model: gemini-3.8-flash\n"
+            "  - provider: nvidia\n    model: nvidia/nemotron-3.5-lightning-30b-a3b   # last resort\n"
+            f"agent:\n  reasoning_effort: {effort}\n"
+            "plugins:\n  enabled:\n    - team-room-telegram\n")
+
+
+def lines_loader(path: Path):
+    """The tests' stand-in for Hermes' own reader on YAML text: the three managed things plus the add-ons,
+    read by lines. A file with the word BROKEN in it cannot be parsed."""
+    import acd_edit as E
+    import voicecfg
+    text = Path(path).read_text(encoding="utf-8")
+    if "BROKEN" in text:
+        raise ValueError(f"cannot parse {Path(path).name}")
+    data = E.managed(text)
+    e = voicecfg.scan(text)
+    enabled = voicecfg._block_list(text, e["plugins.enabled"]) if "plugins.enabled" in e else []
+    data["plugins"] = {"enabled": enabled or []}
+    return data
+
+
+def edit_collect(w, reader=None):
+    import acd_edit as E
+    return D.collect(w.paths, reader=reader, yaml_loader=lines_loader, now=w.now, desk=E.record(w.edit))
+
+
+def tree_hashes(root: Path) -> dict:
+    """A fingerprint of every file under a folder (to prove that a dry run wrote nothing)."""
+    import hashlib
+    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(Path(root).rglob("*")) if p.is_file()}
