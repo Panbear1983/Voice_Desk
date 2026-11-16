@@ -12,8 +12,9 @@ the speaking speed. S saves (after one confirm line that says exactly what will 
 
   grid   up / down  choose an agent     Enter  open the agent's tree
   tree   up / down  choose a setting    Enter  change it     left / right  other agent     Esc  back
-  both   U  undo the newest change      R  restart review    C  read again now    Q  close
-         P  pause / resume the watcher  A  (grid) the voices of Claude, Gemini and Codex
+  both   u  undo the newest change      r  restart review    c  read again now    q  close
+         p  pause / resume the watcher  a  (grid) the voices of Claude, Gemini and Codex
+  (plain lower-case letters, no Shift; the hint line on screen shows them the same way)
 
 Version four adds, per agent: whether each service it uses can still sign in and how much allowance is left
 (acd_health.py), anything changed behind the desk's back with "put it back" / "accept it" (acd_watch.py), and
@@ -175,9 +176,12 @@ def cell_backups(v: D.AgentView) -> Text:
     out = []
     for b in v.backups:
         t = Text()
-        t.append("on  " if b.on else "off ", style=COLOUR[D.GREEN] if b.on else DIM)
+        trouble = D.backup_trouble(v.health, b)
+        t.append("on  " if b.on else "off ", style=COLOUR[D.RED if trouble else D.GREEN] if b.on else DIM)
         t.append(backup_words(b), style="" if b.on else DIM)
         out.append(t)
+        if trouble:
+            out.append(Text("    " + trouble.removeprefix("allowance "), style=COLOUR[D.RED]))   # kept short: the grid is narrow
     return join(out)
 
 
@@ -198,6 +202,9 @@ SHORT_PLACE = {"terminal": "terminal chat", "tg_private": "Telegram private", "t
                "team_room": "Team Room", "mac_voice": "Mac voice", "iphone_voice": "iPhone voice"}
 
 
+SHORT_UNKNOWN = {"iphone_voice": "iPhone: no shortcut"}        # a grey square and the reason, never a bare "?"
+
+
 def cell_presence(v: D.AgentView) -> Text:
     if v.error:
         return line(None, "unknown", dim=True)
@@ -208,7 +215,7 @@ def cell_presence(v: D.AgentView) -> Text:
         elif p.state == D.OFF:
             out.append(Text(f"- {SHORT_PLACE[p.key]}: off", style=DIM))
         else:
-            out.append(Text(f"? {SHORT_PLACE[p.key]}", style=DIM))
+            out.append(line(D.GREY, SHORT_UNKNOWN.get(p.key, f"{SHORT_PLACE[p.key]}: unknown"), dim=True))
     return join(out)
 
 
@@ -350,8 +357,12 @@ def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
         branch = "└─" if i == len(v.backups) - 1 else "├─"
         t = Text()
         t.append(f"│        {branch} {b.position if b.on else '-'}  ", style=DIM)
-        t.append("on   " if b.on else "off  ", style=COLOUR[D.GREEN] if b.on else DIM)
+        trouble = D.backup_trouble(v.health, b)
+        t.append("on   " if b.on else "off  ", style=COLOUR[D.RED if trouble else D.GREEN] if b.on else DIM)
         t.append(backup_words(b, short=False), style="" if b.on else DIM)
+        if trouble:
+            t.append(f"  (on, but {trouble}: it cannot answer until then)" if "until" in trouble
+                     else f"  (on, but {trouble}: it cannot answer)", style=COLOUR[D.RED])
         if b.note:
             t.append(f"  ({b.note})", style=DIM)
         add(t, "backups")
@@ -440,7 +451,7 @@ def agent_list_text(snap: D.Snapshot, index: int) -> Text:
 def others_text(snap: D.Snapshot) -> Text:
     if not snap.others:
         return Text("")
-    out = [Text("Called by name through the Voice Desk (voice and call names only; A changes their voices)", style=DIM)]
+    out = [Text("Called by name through the Voice Desk (voice and call names only; press a to change their voices)", style=DIM)]
     for o in snap.others:
         t = Text()
         t.append(f"  {o.name.ljust(8)}", style="bold")
@@ -455,23 +466,43 @@ def others_text(snap: D.Snapshot) -> Text:
     return join(out)
 
 
-def systems_text(snap: Optional[D.Snapshot]) -> Text:
+def systems_text(snap: Optional[D.Snapshot], width: int = 10_000) -> Text:
     """One line: the watcher's mode, then the Voice Desk's own health strip (voice engine, gateway, queue ...)."""
-    t = Text()
     if snap is None:
-        return t
+        return Text()
+    items: list[Text] = []
     if snap.watch_mode:
+        t = Text()
         t.append("watcher: ", style=DIM)
         t.append(snap.watch_mode, style=COLOUR[D.YELLOW] if snap.watch_paused else DIM)
+        items.append(t)
     for ok, label, _detail in snap.lights:
         if label.lower().startswith("watcher"):         # the Voice Desk's own watcher (voice switches), not the desk's
             label = "Voice Desk " + label.replace("(W resumes)", "").strip()
             label = label.replace("WATCHER PAUSED", "watcher paused")
-        t.append("   ")
         colour = DIM if ok is None else COLOUR[D.GREEN] if ok else COLOUR[D.RED]
+        t = Text()
         t.append("● ", style=colour)
         t.append(label, style=colour if ok is False else DIM)
-    return t
+        items.append(t)
+    return flow(items, width)
+
+
+def flow(items: list[Text], width: int, gap: str = "   ") -> Text:
+    """Items side by side, broken into lines BETWEEN items only: no item is ever split across two lines
+    (unless one item alone is wider than the window)."""
+    rows: list[Text] = []
+    row = Text()
+    for item in items:
+        if row.plain and len(row.plain) + len(gap) + len(item.plain) > width:
+            rows.append(row)
+            row = Text()
+        if row.plain:
+            row.append(gap)
+        row.append_text(item)
+    if row.plain:
+        rows.append(row)
+    return join(rows)
 
 
 # ---- the pop-ups -------------------------------------------------------------------------------------------
@@ -655,7 +686,7 @@ class EditPopup(ModalScreen[Optional[dict]]):
             return
         self.confirming = True
         head = ("This is a DRY RUN: the desk will show exactly what would change and write nothing."
-                if self.dry else "This will be WRITTEN now (backup first, read back, U undoes it).")
+                if self.dry else "This will be WRITTEN now (backup first, read back, u undoes it).")
         body = [Text(head, style=COLOUR[D.YELLOW] if self.dry else COLOUR[D.RED])]
         body += [Text("  " + s) for s in self.describe(changes)]
         self.query_one("#box-confirm", Static).update(join(body))
@@ -787,11 +818,34 @@ _SHARED_KEYS = [Binding("c", "app.reread", "read again", show=False), Binding("q
                 Binding("p", "app.pause_watcher", "pause the watcher", show=False)]
 
 
+def hidden_below(table: DataTable, agents: tuple) -> list[str]:
+    """The names of the agents whose block is not fully on screen below the table's bottom edge."""
+    bottom = table.scroll_y + max(0, table.size.height - 1)          # the header takes one line
+    out, top = [], 0
+    for i, v in enumerate(agents):
+        try:
+            height = table.ordered_rows[i].height
+        except IndexError:
+            break
+        if top + height - 1 > bottom:                                # the last line of a block is a blank spacer
+            out.append(v.name)
+        top += height
+    return out
+
+
+# The letters are shown the way they are typed: plain lower-case keys, no Shift.
+GRID_KEYS = ("up/down choose agent   Enter open the agent's tree (change settings there)   a assistants' voices   "
+             "u undo   r restart review   p pause watcher   c read again   q close")
+TREE_KEYS = (f"{CAN_CHANGE} = can be changed: up/down choose, Enter change   left/right other agent   "
+             "Esc back to the grid   u undo   r restart review   p pause watcher   c read again   q close")
+
+
 class GridScreen(Screen):
     """Home: one row per agent."""
     CSS = _TOP_CSS + """
     #grid { height: 1fr; }
-    #grid > .datatable--cursor { background: #30363d; color: #e6edf3; }
+    #grid > .datatable--cursor { background: #30363d; }
+    #more { height: 1; padding: 0 1; color: #d29922; display: none; }
     #grid > .datatable--header { background: #161b22; color: #8b949e; }
     #others { height: auto; padding: 1 1 0 1; }
     """
@@ -802,7 +856,9 @@ class GridScreen(Screen):
         yield Static("reading every agent's settings and log ...", id="warnings")
         yield Static(legend_text(), id="legend")
         yield Static("", id="systems")
-        yield DataTable(id="grid", cursor_type="row", zebra_stripes=False)
+        yield DataTable(id="grid", cursor_type="row", zebra_stripes=False,
+                        cursor_foreground_priority="renderable")     # the chosen row keeps its green and red
+        yield Static("", id="more")
         yield Static("", id="others")
         yield Static("", id="keys")
 
@@ -815,6 +871,9 @@ class GridScreen(Screen):
         snap = self.app.snapshot
         if columns_for(self.size.width, snap.agents if snap else ()) != self.shown:
             self.show(snap)
+        elif snap is not None:
+            self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width()))
+        self.call_after_refresh(self.more_hint)
 
     def show(self, snap: Optional[D.Snapshot]) -> None:
         self.query_one("#title", Static).update(self.app.title_text())
@@ -827,13 +886,12 @@ class GridScreen(Screen):
             self.shown = cols
         hidden = len(COLUMNS) - len(cols)
         self.query_one("#keys", Static).update(
-            "up/down choose agent   Enter open the agent's tree (change settings there)   A assistants' voices   "
-            "U undo   R restart review   P pause watcher   C read again   Q close"
+            GRID_KEYS
             + (f"   ({hidden} columns hidden: window is narrow, the tree has them)" if hidden else ""))
         if snap is None:
             return
         self.query_one("#warnings", Static).update(warnings_text(snap))
-        self.query_one("#systems", Static).update(systems_text(snap))
+        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width()))
         keep = table.cursor_row
         table.clear()
         for v in snap.agents:
@@ -842,6 +900,22 @@ class GridScreen(Screen):
         if snap.agents:
             table.move_cursor(row=min(keep, len(snap.agents) - 1))
         self.query_one("#others", Static).update(others_text(snap))
+        self.call_after_refresh(self.more_hint)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self.call_after_refresh(self.more_hint)
+
+    def more_hint(self) -> None:
+        """One line under the grid when agents sit below the bottom edge, naming them: nothing is cut off in silence."""
+        snap = self.app.snapshot
+        try:
+            table, more = self.query_one("#grid", DataTable), self.query_one("#more", Static)
+        except Exception:                               # noqa: BLE001  the screen is closing
+            return
+        below = hidden_below(table, snap.agents if snap else ())
+        more.display = bool(below)
+        if below:
+            more.update("more below, press down: " + ", ".join(below))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.app.open_tree(event.cursor_row)
@@ -873,13 +947,15 @@ class TreeScreen(Screen):
         with Horizontal(id="body"):
             yield Static("", id="agents")
             yield OptionList(id="tree")
-        yield Static(f"{CAN_CHANGE} = can be changed: up/down choose, Enter change   left/right other agent   "
-                     "Esc back to the grid   U undo   R restart review   P pause watcher   C read again   Q close",
-                     id="keys")
+        yield Static(TREE_KEYS, id="keys")
 
     def on_mount(self) -> None:
         self.query_one("#tree", OptionList).focus()
         self.show(self.app.snapshot)
+
+    def on_resize(self) -> None:
+        if self.app.snapshot is not None:
+            self.query_one("#systems", Static).update(systems_text(self.app.snapshot, self.app.text_width()))
 
     def view(self) -> Optional[D.AgentView]:
         snap = self.app.snapshot
@@ -894,7 +970,7 @@ class TreeScreen(Screen):
         if snap is None or v is None:
             return
         self.query_one("#warnings", Static).update(warnings_text(snap))
-        self.query_one("#systems", Static).update(systems_text(snap))
+        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width()))
         self.query_one("#agents", Static).update(agent_list_text(snap, self.index))
         tree = self.query_one("#tree", OptionList)
         keep = None if reset else tree.highlighted
@@ -921,6 +997,18 @@ class TreeScreen(Screen):
         tree.add_options(options)
         first = next((i for i, s in enumerate(self.settings) if s), None)
         tree.highlighted = keep if keep is not None and keep < len(options) and self.settings[keep] else first
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        """Headings above the first setting and notes under the last one are not settings, so the arrow keys would
+        stop short of them: at either end, scroll the rest into view."""
+        chosen = [i for i, s in enumerate(self.settings) if s]
+        if not chosen or event.option_index is None:
+            return
+        tree = self.query_one("#tree", OptionList)
+        if event.option_index == chosen[-1]:
+            self.call_after_refresh(tree.scroll_end, animate=False)
+        elif event.option_index == chosen[0]:
+            self.call_after_refresh(tree.scroll_home, animate=False)
 
     def tree_plain(self) -> str:
         v = self.view()
@@ -990,6 +1078,10 @@ class Desk(App):
     @property
     def is_armed(self) -> bool:
         return E.armed(self.edit)
+
+    def text_width(self) -> int:
+        """How many characters fit on one line of the strips at the top (they pad one column on each side)."""
+        return max(20, self.size.width - 2)
 
     def title_text(self) -> Text:
         t = Text("AGENT CONTROL DESK", style="bold")
@@ -1159,7 +1251,7 @@ class Desk(App):
         def describe(c: dict) -> list[str]:
             if c.get("answer") == "put":
                 return [f"{v.name}'s {d.what} is put back to {d.words(d.want)}, through the desk's own safe path "
-                        "(backup, read back, U undoes it)."]
+                        "(backup, read back, u undoes it)."]
             if c.get("answer") == "accept":
                 return [f"{v.name}'s {d.what} stays {d.words(d.have)}. Only the desk's own record changes; "
                         "no agent's settings file is touched."]
@@ -1414,7 +1506,7 @@ class Desk(App):
         except OSError as e:
             self.push_screen(NoticePopup("Watcher", Text(f"The pause could not be saved ({e.strerror or e}).")))
             return
-        out = [Text("The watcher is PAUSED: it reports nothing and puts nothing back. P resumes it." if paused else
+        out = [Text("The watcher is PAUSED: it reports nothing and puts nothing back. p resumes it." if paused else
                     "The watcher is running again: it reports what was changed behind the desk's back.")]
         if edit.grid is not None:
             try:

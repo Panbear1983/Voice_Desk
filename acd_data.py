@@ -355,6 +355,25 @@ class ServiceView:
     allowance: tuple = ()           # plain lines: "Weekly: 25% left, resets Thu 19 Nov 06:35"
     allowance_note: str = ""        # why there is no reading, when there is none
     main: bool = False              # the agent's main service (not a backup's)
+    out_model: str = ""             # for a used-up allowance: the model that is refused
+    reset_ts: Optional[float] = None
+
+
+def backup_trouble(health: tuple, b: "Backup", now: Optional[float] = None) -> str:
+    """Why a backup that is switched on cannot answer right now, in a few plain words ("" = no known reason).
+    "on" is the setting; this is the state beside it, so the two never contradict each other in silence."""
+    if not b.on:
+        return ""
+    for h in health:
+        if h.service != b.service:
+            continue
+        if h.kind == H.SIGNIN_DEAD:
+            return "sign-in dead"
+        if h.kind == H.ALLOWANCE_OUT and h.out_model == b.model:
+            if h.reset_ts and (now is None or h.reset_ts > now):
+                return "allowance used up until " + dt.datetime.fromtimestamp(h.reset_ts).strftime("%a %-d %b")
+            return "allowance used up"
+    return ""
 
 
 def _day(ts: float) -> str:
@@ -395,7 +414,7 @@ def service_view(h: H.ServiceHealth, now: float, main: bool = False) -> ServiceV
             other = f" {model_name(h.answered_model)} there still answered {_when(h.answered)}."
         words = (f"{name}: the allowance for {model_name(h.model)} is used up{resets} "
                  f"(seen {_when(h.when)}). The sign-in itself works.{other}")
-        return ServiceView(h.service, h.state, RED, words, h.kind, False, lines, why, main)
+        return ServiceView(h.service, h.state, RED, words, h.kind, False, lines, why, main, h.model, h.reset_ts)
     if h.state == H.GOOD:
         return ServiceView(h.service, h.state, GREEN,
                            f"{name}: working, {model_name(h.answered_model)} answered {_when(h.answered)}",
@@ -438,6 +457,17 @@ class VoicePlace:
     problem: str = ""
 
 
+_SETTING_NAME = re.compile(r"\s*\((?:[a-z_]+\.)+[a-z_]+\)")        # "(voice.auto_enable)": a setting's name
+
+
+def plain_why(why: str) -> str:
+    """The Voice Desk grid's own reason, in ordinary words: no setting names."""
+    if "decides per window" in why:
+        return ("each open Hermes window keeps its own choice until it is closed, so the desk cannot switch it "
+                "from here")
+    return _SETTING_NAME.sub("", why)
+
+
 def voice_places(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader", now: float) -> dict:
     """agent key -> the VoicePlace lines, read with the Voice Desk grid's own code (same files, same reader rules).
     Empty when the grid's files are not known (tests that do not care)."""
@@ -461,7 +491,7 @@ def voice_places(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader"
                 continue
             try:
                 menu = onoff.menu(row.agent, place, cell, paths.grid)
-                can, why = bool(menu.options), menu.why_not
+                can, why = bool(menu.options), plain_why(menu.why_not)
             except Exception:                       # noqa: BLE001
                 can, why = False, "the switch could not be read"
             status = RED if cell.problem else _EVIDENCE_COLOUR.get(ev.status if ev else "na", GREY)
@@ -730,12 +760,16 @@ def find_override(turns: Optional[list[Turn]], ms: Optional[ModelSet], listed: t
     return Override(t.start_model, t.start_service, t.platform, t.ts)
 
 
-def recent_signin_failure(turns: Optional[list[Turn]], now: float) -> str:
+def recent_signin_failure(turns: Optional[list[Turn]], now: float, ms: Optional["ModelSet"] = None) -> str:
+    """The newest sign-in failure of the last day, unless a LATER reply began on the main service: once the main
+    service has answered again, an older failure is history, not today's state."""
     for t in reversed(turns or ()):
         if now - t.ts > OPEN_CHAT_SEC:
             break
         if t.signin_failed:
             return t.signin_failed
+        if ms is not None and ms.service and t.start_service == ms.service and not t.dropped:
+            return ""
     return ""
 
 
@@ -1084,7 +1118,7 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         views.append(AgentView(
             profile=profile, name=name, role=role, model=ms, model_locked=locked,
             last=last_reply(turns, ms, listed), drops_today=drops_on(turns, today), old_chats=stale,
-            signin_failed=recent_signin_failure(turns, now),
+            signin_failed=recent_signin_failure(turns, now, ms),
             override=find_override(turns, ms, listed, now),
             backups=listed if locked else with_off_backups(listed, desk.off.get(profile)), voice=voice,
             presence=presence(profile, name, turns, plug, members, voice, paths.shortcuts, now, stale, platforms),
@@ -1136,11 +1170,11 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
                            + " changed behind the desk's back (" + ", ".join(who)
                            + "): open the agent's tree to put it back or accept it"))
     if watch is not None and watch.paused:
-        out.append(Warning(YELLOW, "the watcher is paused (P resumes): the desk is not checking for changes "
+        out.append(Warning(YELLOW, "the watcher is paused (p resumes): the desk is not checking for changes "
                                    "made behind its back"))
     if desk and desk.waiting:
         out.append(Warning(YELLOW, _count(len(desk.waiting), "saved change is", "saved changes are")
-                           + " waiting for a restart: press R to review"))
+                           + " waiting for a restart: press r to review"))
     behind = [v.name for v in views if v.model_behind and not v.drifts]      # a drift line above already says it
     if behind:
         out.append(Warning(RED, "the model was changed behind the desk's back for: " + ", ".join(behind)))
@@ -1155,7 +1189,11 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
         out.append(Warning(RED, _count(len(dropped), "agent", "agents")
                            + " had the main model fail on the last reply and a backup answered"))
     dead_main = {v.profile for v in views for h in v.health if h.main and h.kind == H.SIGNIN_DEAD}
-    locked_out = [v for v in views if v.model and (v.signin_failed or v.profile in dead_main)]
+    good_main = {v.profile for v in views for h in v.health if h.main and h.state == H.GOOD}
+    # the same evidence as the row: a main service that is working now is not "could not sign in", whatever
+    # an older log line said
+    locked_out = [v for v in views if v.model and v.profile not in good_main
+                  and (v.signin_failed or v.profile in dead_main)]
     if locked_out:
         services = sorted({service_name(v.model.service) for v in locked_out})
         dead = [v for v in locked_out if v.profile in dead_main]
