@@ -1,0 +1,43 @@
+# Agent Control Desk: who the agents are to each other, and who may talk to whom.
+#
+# Version one of the desk only SHOWS these rules; nothing enforces them from this file yet. They are written
+# down here, in one place, so the Team Room can later read the same rules the desk shows (Peter, 2026-11-16:
+# merge the rules, not the windows). Keys under [agents.<name>] are Hermes profile folder names.
+
+# Profile folders that are not agents and must never become a row.
+ignore = ["default", "wanna_buffet"]
+
+# The order of the rows. A profile that is not listed here still gets a row, after these, by itself.
+order = ["orchestrator", "assistant", "builder", "tax_angel_esther", "wanna-buffet", "simba"]
+
+[defaults]
+speaks_in_team_room = true      # everyone may speak in the Team Room
+hands_out_work = false          # only the manager hands out work
+takes_work_from = "orchestrator"
+only_job_cards = false
+answers_when_named = false
+model_locked = false
+
+[agents.orchestrator]
+role = "the manager"
+hands_out_work = true
+takes_work_from = ""
+
+[agents.assistant]
+role = "the assistant"
+
+[agents.builder]
+role = "the builder"
+only_job_cards = true           # Builder is never started directly, only through a job card
+
+[agents.tax_angel_esther]
+role = "tax"
+
+[agents.wanna-buffet]
+role = "investing"
+
+[agents.simba]
+role = "the comedian"
+answers_when_named = true       # she answers when her name is in the line
+model_locked = true             # her model is shown, never changed from the desk
+takes_work_from = ""
