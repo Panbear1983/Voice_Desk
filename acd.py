@@ -985,10 +985,10 @@ def hidden_below(table: DataTable, agents: tuple) -> list[str]:
 
 
 # The letters are shown the way they are typed: plain lower-case keys, no Shift.
-GRID_KEYS = ("up/down agent   Enter open its tree   a assistants' voices   t voice test   l listener   "
-             "n add agent   d remove agent   u undo   r restart review   p pause watcher   c read again   q close")
-TREE_KEYS = (f"{CAN_CHANGE} = can change: up/down, Enter   left/right other agent   Esc grid   t voice test   "
-             "l listener   n add   d remove   u undo   r restart review   p pause watcher   c read again   q close")
+GRID_KEYS = ("up/down agent  Enter open its tree  a assistants' voices  t voice test  l listener  "
+             "n add  d remove  u undo  r restart review  p pause watcher  c read again  q close")
+TREE_KEYS = (f"{CAN_CHANGE} = can change: up/down, Enter  left/right agent  Esc grid  t voice test  "
+             "l listener  n add  d remove  u undo  r restart review  p pause watcher  c read again  q close")
 
 
 EDGE_WORDS = {1: "that was the last setting: nothing is below it. up goes back; Esc returns to the grid",

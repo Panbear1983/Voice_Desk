@@ -461,7 +461,10 @@ def listener_do(action: str, paths: E.EditPaths, *, svc: Any = None, confirmed: 
 
 def _for(since: float) -> str:
     secs = max(0, int(time.time() - since))
-    return f"{secs} seconds" if secs < 90 else f"{secs // 60} minutes" if secs < 5400 else f"{secs // 3600} hours"
+    if secs < 90:
+        return f"{secs} seconds"
+    n, unit = (secs // 60, "minute") if secs < 5400 else (secs // 3600, "hour")
+    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
 
 
 def listener_text_lines(view: ListenerView) -> list[tuple[str, str]]:
