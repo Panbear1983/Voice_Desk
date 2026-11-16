@@ -125,9 +125,9 @@ class StatusLineWraps(unittest.TestCase):
 
     def test_no_item_is_ever_split_across_two_lines(self):
         snap = self.snap()
+        # the failing light (the muted Mac output) is a red line in the warning strip, so it is not said again here
         items = ["watcher: reports only (automatic put-back is off)", "● voice engine OK", "● Hermes gateway up",
-                 "● speech queue on", "● Hermes fixes present (9/9)", "● Voice Desk watcher not running",
-                 "● Mac output: volume 94%, MUTED, MacBook Pro Speakers"]
+                 "● speech queue on", "● Hermes fixes present (9/9)", "● Voice Desk watcher not running"]
         for width in (198, 170, 120, 90, 60):
             rows = acd.systems_text(snap, width).plain.split("\n")
             self.assertTrue(all(len(r) <= width for r in rows), (width, rows))
@@ -137,7 +137,7 @@ class StatusLineWraps(unittest.TestCase):
     def test_one_line_when_it_fits_and_colours_are_kept(self):
         t = acd.systems_text(self.snap(), 400)
         self.assertNotIn("\n", t.plain)
-        self.assertIn(acd.COLOUR[D.RED], {str(s.style) for s in t.spans})
+        self.assertIn(acd.COLOUR[D.GREEN], {str(s.style) for s in t.spans})
 
     def test_flow_puts_an_item_wider_than_the_window_on_its_own_line(self):
         rows = acd.flow([Text("aaaa"), Text("b" * 30), Text("cc")], 10).plain.split("\n")

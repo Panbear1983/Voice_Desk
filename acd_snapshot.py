@@ -5,6 +5,8 @@
 
     .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v2       # version two: the pop-ups as well
     .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v3       # version three: Team Room switch, talk rules
+    .venv/bin/python acd_snapshot.py --out docs/acd_mockups --parity   # the parity build: the voice line, the
+                                                                       # listener, the voice test, add / remove
     .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v4       # version four: sign-in and allowance, the
                                                                        # assistants' voices, a voice switch, and a
                                                                        # drift pop-up drawn from a throw-away world
@@ -284,6 +286,76 @@ async def render_v4_drift(out: Path, size: tuple[int, int] = (190, 64), prefix: 
     return await _shots(out, prefix, size, make_app, {"drift_popup_demo": drift, "drift_tree_demo": drift_tree})
 
 
+async def render_parity(out: Path, agent: int = 1, size: tuple[int, int] = (200, 62), prefix: str = "parity",
+                        usage: bool = True) -> list[Path]:
+    """The parity build's pictures from the REAL files, read-only and never armed: the grid and a tree with the
+    voice line in the status line, the listener pop-up, and the confirm steps of the voice test and of removing
+    an agent. No answer is ever given to a confirm step here, so nothing is made, sent, removed or restarted."""
+    import acd_edit as E
+    import acd_health as H
+    import acd_parity as P
+    import acd_watch as W
+    paths = D.Paths.default()
+    reader = D.LogReader(paths.profiles)
+    edit = E.EditPaths.default(launcher_armed=False)
+    meter = H.UsageReader() if usage else None              # no keep file: a picture run writes only pictures
+    if meter is not None:
+        first = await asyncio.to_thread(lambda: D.collect(paths, reader, desk=E.record(edit)))
+        services: dict = {}
+        for v in first.agents:
+            for h in v.health:
+                services.setdefault(h.service, v.profile)
+        await asyncio.to_thread(meter.refresh, services)
+
+    def collector() -> D.Snapshot:
+        return D.collect(paths, reader, desk=E.record(edit), usage=(meter.cached() or None) if meter else None,
+                         watch=W.view(edit))
+
+    def make_app():
+        return acd.Desk(collector=collector, autostart=False, edit=edit, listener=P.RealListener(), watching=False)
+
+    async def grid(app, pilot):
+        pass
+
+    async def tree(app, pilot):
+        app.open_tree(agent)
+        await pilot.pause()
+
+    async def tree_end(app, pilot):
+        app.open_tree(agent)
+        await pilot.pause()
+        for _ in range(sum(1 for x in app.screen.settings if x) + 1):
+            await pilot.press("down")
+            await pilot.pause()
+
+    async def listener(app, pilot):
+        await pilot.press("l")
+        await pilot.pause()
+
+    async def voice_test(app, pilot):
+        await pilot.press("t")
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("enter")                               # "everyone": the confirm step, left unanswered
+        await pilot.pause()
+
+    async def remove(app, pilot):
+        for _ in range(agent):
+            await pilot.press("down")
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("enter")                               # the confirm step, left unanswered
+        await pilot.pause()
+
+    async def add(app, pilot):
+        await pilot.press("n")
+        await pilot.pause()
+
+    return await _shots(out, prefix, size, make_app, {
+        "grid": grid, "tree": tree, "tree_end": tree_end, "listener_popup": listener,
+        "voice_test_confirm": voice_test, "remove_confirm": remove, "add_first_step": add})
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
@@ -293,10 +365,16 @@ def main() -> None:
     ap.add_argument("--v2", action="store_true", help="draw version two's pictures (the pop-ups too); never armed")
     ap.add_argument("--v3", action="store_true", help="draw version three's pictures (Team Room switch, talk rules)")
     ap.add_argument("--v4", action="store_true", help="draw version four's pictures (sign-in, allowance, drift, voices)")
-    ap.add_argument("--no-usage", action="store_true", help="with --v4: do not run Hermes' usage check")
+    ap.add_argument("--parity", action="store_true",
+                    help="draw the parity build's pictures (voice line, listener, voice test, add / remove)")
+    ap.add_argument("--no-usage", action="store_true", help="with --v4 / --parity: do not run Hermes' usage check")
     a = ap.parse_args()
     w, h = (int(x) for x in a.size.lower().split("x"))
-    if a.v4:
+    if a.parity:
+        size = (w, h) if a.size != "190x58" else (200, 62)
+        made = asyncio.run(render_parity(a.out, agent=a.agent or 1, size=size,
+                                         prefix=a.prefix if a.prefix != "v1" else "parity", usage=not a.no_usage))
+    elif a.v4:
         size = (w, h) if a.size != "190x58" else (200, 78)
         made = asyncio.run(render_v4(a.out, agent=a.agent, size=size, prefix=a.prefix if a.prefix != "v1" else "v4",
                                      usage=not a.no_usage))

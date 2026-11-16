@@ -14,7 +14,14 @@ the speaking speed. S saves (after one confirm line that says exactly what will 
   tree   up / down  choose a setting    Enter  change it     left / right  other agent     Esc  back
   both   u  undo the newest change      r  restart review    c  read again now    q  close
          p  pause / resume the watcher  a  (grid) the voices of Claude, Gemini and Codex
+         t  silent voice test (one agent or everyone; made to files and checked, never played)
+         l  the listener: what the voice line is doing, mute / hush / new conversation / restart / stop
+         n  add an agent to the Voice Desk list      d  remove one (shows exactly what goes, asks first)
   (plain lower-case letters, no Shift; the hint line on screen shows them the same way)
+
+The last four are what only the old Voice Desk dashboard could do (acd_parity.py). They go through the same
+armed gate as every change; stopping or restarting the listener asks twice and is refused while someone is
+speaking or an agent is mid-reply. In the tree the arrow keys stop at the first and the last setting.
 
 Version four adds, per agent: whether each service it uses can still sign in and how much allowance is left
 (acd_health.py), anything changed behind the desk's back with "put it back" / "accept it" (acd_watch.py), and
@@ -26,29 +33,35 @@ never restarts anything itself: R only leaves a request for the existing restart
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import os
 import sys
 import textwrap
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.geometry import Region
+from textual.message import Message
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, OptionList, Static
+from textual.widgets import DataTable, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 import agents as A
+import gridedit
 import acd_data as D
 import acd_edit as E
 import acd_health as H
+import acd_parity as P
 import acd_watch as W
 
 REFRESH_SEC = 45
+LISTENER_SEC = 2                 # the voice line's small status file, for the status line
 DRY_LABEL = "dry run: changes are shown in full, nothing is written"
 ARMED_LABEL = "ARMED: changes are written (backup, read-back, undo)"
 READ_ONLY_LABEL = DRY_LABEL                 # the old name, kept for callers
@@ -284,6 +297,9 @@ def _leaves(prefix: str, label: str, status: Optional[str], words: str, width: i
     return out
 
 
+END_OF_TREE = "── end of {name}'s tree: nothing below this line ──"
+
+
 def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
     """One agent's whole tree as rows: (the lines, the name of the setting Enter changes there, or None)."""
     rows: list[tuple[list[Text], Optional[str]]] = []
@@ -411,6 +427,7 @@ def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
         lines = _leaves("   " + branch, r.label, colour, r.answer, 26, more=more)
         lines += _leaves(more, "", None, r.standing + (f"; {r.locked}" if r.locked else ""), 26, dim=True, more=more)
         add(lines, "talk")
+    add([Text(""), Text(END_OF_TREE.format(name=v.name), style=DIM), Text(" ")])     # a space: an empty last line is dropped
     return rows
 
 
@@ -435,6 +452,9 @@ def tree_text(v: D.AgentView) -> Text:
     return join([ln for lines, _ in tree_rows(v) for ln in lines])
 
 
+ROOM_HEADING = "TEAM ROOM (all agents)"       # the note under it is about the room, not the chosen agent
+
+
 def agent_list_text(snap: D.Snapshot, index: int) -> Text:
     out = [Text("AGENTS", style=DIM)]
     for i, v in enumerate(snap.agents):
@@ -444,7 +464,7 @@ def agent_list_text(snap: D.Snapshot, index: int) -> Text:
         t.append(" ")
         t.append(MARK, style=COLOUR.get(v.worst, DIM))
         out.append(t)
-    out += [Text(""), Text(snap.room_note, style=DIM)]
+    out += [Text(""), Text(ROOM_HEADING, style=DIM), Text(snap.room_note, style=DIM)]
     return join(out)
 
 
@@ -466,17 +486,33 @@ def others_text(snap: D.Snapshot) -> Text:
     return join(out)
 
 
-def systems_text(snap: Optional[D.Snapshot], width: int = 10_000) -> Text:
-    """One line: the watcher's mode, then the Voice Desk's own health strip (voice engine, gateway, queue ...)."""
+def listener_item(view: "P.ListenerView") -> Text:
+    """The voice line in a few words, for the status line: what the listener is doing and who is on the line."""
+    colour = COLOUR[D.RED] if not view.running or view.state == "error" else \
+        COLOUR[D.YELLOW] if view.state == "muted" else COLOUR[D.GREEN]
+    t = Text()
+    t.append("● ", style=colour)
+    t.append("voice line: " + view.words + (f" ({view.on_line} on the line)" if view.on_line and view.running else ""),
+             style=colour if not view.running else DIM)
+    return t
+
+
+def systems_text(snap: Optional[D.Snapshot], width: int = 10_000, listener: Optional["P.ListenerView"] = None) -> Text:
+    """One line: the voice line, the watcher's mode, then the Voice Desk's own health strip (voice engine,
+    gateway, queue ...). A light that is failing is not repeated here: it is already a red line above."""
     if snap is None:
         return Text()
     items: list[Text] = []
+    if listener is not None:
+        items.append(listener_item(listener))
     if snap.watch_mode:
         t = Text()
         t.append("watcher: ", style=DIM)
         t.append(snap.watch_mode, style=COLOUR[D.YELLOW] if snap.watch_paused else DIM)
         items.append(t)
     for ok, label, _detail in snap.lights:
+        if ok is False:                                 # already a red line in the warning strip: said once
+            continue
         if label.lower().startswith("watcher"):         # the Voice Desk's own watcher (voice switches), not the desk's
             label = "Voice Desk " + label.replace("(W resumes)", "").strip()
             label = label.replace("WATCHER PAUSED", "watcher paused")
@@ -784,6 +820,117 @@ class PickPopup(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+SILENT = "::silent"             # the pick-list's token for "no voice"
+
+
+class AskPopup(ModalScreen[Optional[str]]):
+    """One line to type (a name). Enter answers, Esc cancels. Returns the text, or None."""
+    CSS = _POPUP_CSS.format(name="AskPopup") + "#box-input { margin: 1 0; }"
+    BINDINGS = [Binding("escape", "cancel", "cancel")]
+
+    def __init__(self, title: str, note: str, value: str = "") -> None:
+        super().__init__()
+        self.title_words, self.note, self.value = title, note, value
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="box"):
+            yield Static(self.title_words, id="box-title")
+            yield Static(self.note, id="box-note")
+            yield Input(value=self.value, id="box-input")
+            yield Static("Enter goes on     Esc cancels, nothing is changed", id="box-keys")
+
+    def on_mount(self) -> None:
+        self.query_one("#box-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value.strip())
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+LISTENER_KEYS = ("m mute / unmute   h hush   n new conversation   x hand the microphone back   "
+                 "r restart   k stop   Esc close")
+
+
+class ListenerPopup(ModalScreen[None]):
+    """The voice line: what the listener is doing, and its controls (the old dashboard's second screen). It never
+    opens the microphone. It reads the listener's own small status file every two seconds while it is open."""
+    CSS = _POPUP_CSS.format(name="ListenerPopup") + "#box-body { height: auto; }"
+    BINDINGS = [Binding("escape", "close", "close"), Binding("m", "order('mute')", "mute"),
+                Binding("h", "order('hush')", "hush"), Binding("n", "order('new_thread')", "new"),
+                Binding("x", "order('release')", "hand back"), Binding("r", "order('restart')", "restart"),
+                Binding("k", "order('stop')", "stop")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="box"):
+            yield Static("The voice line (the listener)", id="box-title")
+            yield Static("", id="box-note")
+            yield Static("", id="box-body")
+            yield Static(LISTENER_KEYS, id="box-keys")
+
+    def on_mount(self) -> None:
+        self.loaded: Optional[bool] = None
+        self.show()
+        self.timer = self.set_interval(2, self.show)
+        self.ask_loaded()
+
+    @work(thread=True, exclusive=True, group="acd-listener-job")
+    def ask_loaded(self) -> None:
+        svc = self.app.listener_svc
+        try:
+            got = svc.loaded() if svc is not None else None
+        except Exception:                                # noqa: BLE001
+            got = None
+        self.app.call_from_thread(self.set_loaded, got)
+
+    def set_loaded(self, got: Optional[bool]) -> None:
+        self.loaded = got
+        self.show()
+
+    def view(self) -> Optional["P.ListenerView"]:
+        svc = self.app.listener_svc
+        if svc is None:
+            return None
+        return dataclasses.replace(P.listener_view(svc, ask_loaded=False), loaded=self.loaded)
+
+    def show(self) -> None:
+        v = self.view()
+        try:
+            note, body = self.query_one("#box-note", Static), self.query_one("#box-body", Static)
+        except Exception:                                # noqa: BLE001  the pop-up is closing
+            return
+        if v is None:
+            note.update("This desk was not given the listener, so there is nothing to show or control here.")
+            return
+        armed = self.app.is_armed
+        note.update(Text(("ARMED: an order is really sent." if armed else
+                          "Dry run: a key shows what would happen, nothing is sent.")
+                         + " Stop and restart stop the voice line, so the desk asks twice, and refuses while "
+                           "someone is speaking or an agent is mid-reply.",
+                         style=COLOUR[D.RED] if armed else COLOUR[D.YELLOW]))
+        out = []
+        for label, words in P.listener_text_lines(v):
+            t = Text()
+            t.append(label.ljust(14), style=DIM)
+            t.append(words, style=COLOUR[D.RED] if (label == "State" and not v.running)
+                     or (label == "Safe to stop" and v.busy) else "")
+            out.append(t)
+        body.update(join(out))
+
+    def action_order(self, action: str) -> None:
+        v = self.view()
+        if v is None:
+            return
+        if action == "mute" and v.muted:
+            action = "unmute"
+        self.app.listener_order(action)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 def results_text(results: list[E.Result]) -> tuple[str, Text]:
     """(title, body) for what a save did, or would do."""
     dry = any(r.dry for r in results)
@@ -813,7 +960,11 @@ _TOP_CSS = """
 #systems { height: auto; padding: 0 1; }
 #keys { height: 1; padding: 0 1; background: #161b22; color: #8b949e; dock: bottom; }
 """
-_SHARED_KEYS = [Binding("c", "app.reread", "read again", show=False), Binding("q", "app.quit", "close", show=False),
+_SHARED_KEYS = [Binding("t", "app.voice_test", "voice test", show=False),
+                Binding("l", "app.listener", "listener", show=False),
+                Binding("n", "app.add_agent", "add an agent", show=False),
+                Binding("d", "app.remove_agent", "remove an agent", show=False),
+                Binding("c", "app.reread", "read again", show=False), Binding("q", "app.quit", "close", show=False),
                 Binding("u", "app.undo", "undo", show=False), Binding("r", "app.restart_review", "restart", show=False),
                 Binding("p", "app.pause_watcher", "pause the watcher", show=False)]
 
@@ -834,10 +985,22 @@ def hidden_below(table: DataTable, agents: tuple) -> list[str]:
 
 
 # The letters are shown the way they are typed: plain lower-case keys, no Shift.
-GRID_KEYS = ("up/down choose agent   Enter open the agent's tree (change settings there)   a assistants' voices   "
-             "u undo   r restart review   p pause watcher   c read again   q close")
-TREE_KEYS = (f"{CAN_CHANGE} = can be changed: up/down choose, Enter change   left/right other agent   "
-             "Esc back to the grid   u undo   r restart review   p pause watcher   c read again   q close")
+GRID_KEYS = ("up/down agent   Enter open its tree   a assistants' voices   t voice test   l listener   "
+             "n add agent   d remove agent   u undo   r restart review   p pause watcher   c read again   q close")
+TREE_KEYS = (f"{CAN_CHANGE} = can change: up/down, Enter   left/right other agent   Esc grid   t voice test   "
+             "l listener   n add   d remove   u undo   r restart review   p pause watcher   c read again   q close")
+
+
+EDGE_WORDS = {1: "that was the last setting: nothing is below it. up goes back; Esc returns to the grid",
+              -1: "that was the first setting: nothing is above it. down goes on; Esc returns to the grid"}
+
+
+class QuietTable(DataTable):
+    """The grid's table, without the faint band that follows the mouse pointer: with the chosen row also
+    highlighted, that band looked like a second agent was selected. A click still chooses a row."""
+
+    def _set_hover_cursor(self, active: bool) -> None:
+        super()._set_hover_cursor(False)
 
 
 class GridScreen(Screen):
@@ -856,8 +1019,8 @@ class GridScreen(Screen):
         yield Static("reading every agent's settings and log ...", id="warnings")
         yield Static(legend_text(), id="legend")
         yield Static("", id="systems")
-        yield DataTable(id="grid", cursor_type="row", zebra_stripes=False,
-                        cursor_foreground_priority="renderable")     # the chosen row keeps its green and red
+        yield QuietTable(id="grid", cursor_type="row", zebra_stripes=False,
+                         cursor_foreground_priority="renderable")    # the chosen row keeps its green and red
         yield Static("", id="more")
         yield Static("", id="others")
         yield Static("", id="keys")
@@ -872,7 +1035,7 @@ class GridScreen(Screen):
         if columns_for(self.size.width, snap.agents if snap else ()) != self.shown:
             self.show(snap)
         elif snap is not None:
-            self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width()))
+            self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width(), self.app.listener_now))
         self.call_after_refresh(self.more_hint)
 
     def show(self, snap: Optional[D.Snapshot]) -> None:
@@ -891,7 +1054,7 @@ class GridScreen(Screen):
         if snap is None:
             return
         self.query_one("#warnings", Static).update(warnings_text(snap))
-        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width()))
+        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width(), self.app.listener_now))
         keep = table.cursor_row
         table.clear()
         for v in snap.agents:
@@ -921,6 +1084,59 @@ class GridScreen(Screen):
         self.app.open_tree(event.cursor_row)
 
 
+class TreeList(OptionList):
+    """The tree's list. Two differences from a plain list: the arrow keys STOP at the first and the last setting
+    (no silent jump to the other end), and each step also brings the plain lines around the new setting into
+    view, so nothing between two settings is ever skipped off screen."""
+
+    class Edge(Message):
+        """Up was pressed on the first setting, or down on the last one."""
+        def __init__(self, direction: int) -> None:
+            super().__init__()
+            self.direction = direction
+
+    def step(self, direction: int) -> None:
+        options = self.options
+        at = self.highlighted
+        j = (at if at is not None else (-1 if direction > 0 else len(options))) + direction
+        while 0 <= j < len(options) and options[j].disabled:
+            j += direction
+        if 0 <= j < len(options):
+            self.highlighted = j
+            self.call_after_refresh(self.show_around, j, direction)
+        else:
+            (self.scroll_end if direction > 0 else self.scroll_home)(animate=False)
+            self.post_message(self.Edge(direction))
+
+    def action_cursor_down(self) -> None:
+        self.step(1)
+
+    def action_cursor_up(self) -> None:
+        self.step(-1)
+
+    def show_around(self, j: int, direction: int) -> None:
+        """Bring the setting and the plain lines that follow it (going down) or come before it (going up) into
+        view. When they do not all fit, the setting itself wins."""
+        options = self.options
+        if not (0 <= j < len(options)) or not self.is_mounted:
+            return
+        k = j
+        while 0 <= k + direction < len(options) and options[k + direction].disabled:
+            k += direction
+        try:
+            first, last = min(j, k), max(j, k)
+            top = self._index_to_line[first]
+            height = self._index_to_line[last] + self._heights[last] - top
+        except KeyError:
+            return
+        room = self.scrollable_content_region.height
+        if height <= room:
+            self.scroll_to_region(Region(0, top, self.scrollable_content_region.width, height), force=True,
+                                  animate=False, immediate=True)
+        else:
+            self.scroll_to_highlight(top=direction > 0)
+
+
 class TreeScreen(Screen):
     """One agent's whole tree. Up and down move through its settings; Enter changes the highlighted one."""
     CSS = _TOP_CSS + """
@@ -946,7 +1162,7 @@ class TreeScreen(Screen):
         yield Static("", id="systems")
         with Horizontal(id="body"):
             yield Static("", id="agents")
-            yield OptionList(id="tree")
+            yield TreeList(id="tree")
         yield Static(TREE_KEYS, id="keys")
 
     def on_mount(self) -> None:
@@ -955,7 +1171,7 @@ class TreeScreen(Screen):
 
     def on_resize(self) -> None:
         if self.app.snapshot is not None:
-            self.query_one("#systems", Static).update(systems_text(self.app.snapshot, self.app.text_width()))
+            self.query_one("#systems", Static).update(systems_text(self.app.snapshot, self.app.text_width(), self.app.listener_now))
 
     def view(self) -> Optional[D.AgentView]:
         snap = self.app.snapshot
@@ -970,7 +1186,7 @@ class TreeScreen(Screen):
         if snap is None or v is None:
             return
         self.query_one("#warnings", Static).update(warnings_text(snap))
-        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width()))
+        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width(), self.app.listener_now))
         self.query_one("#agents", Static).update(agent_list_text(snap, self.index))
         tree = self.query_one("#tree", OptionList)
         keep = None if reset else tree.highlighted
@@ -998,9 +1214,14 @@ class TreeScreen(Screen):
         first = next((i for i, s in enumerate(self.settings) if s), None)
         tree.highlighted = keep if keep is not None and keep < len(options) and self.settings[keep] else first
 
+    def on_tree_list_edge(self, event: TreeList.Edge) -> None:
+        """Down on the last setting, or up on the first: the cursor stays put and the hint line says why."""
+        self.query_one("#keys", Static).update(Text(EDGE_WORDS[event.direction], style=COLOUR[D.YELLOW]))
+
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         """Headings above the first setting and notes under the last one are not settings, so the arrow keys would
         stop short of them: at either end, scroll the rest into view."""
+        self.query_one("#keys", Static).update(TREE_KEYS)
         chosen = [i for i, s in enumerate(self.settings) if s]
         if not chosen or event.option_index is None:
             return
@@ -1045,8 +1266,14 @@ class Desk(App):
                  edit: Optional[E.EditPaths] = None, loader: Optional[E.Loader] = None,
                  tester: Optional[Callable[[A.Agent, str, str], tuple[bool, str]]] = E.real_voice_test,
                  launcher_armed: bool = False, runner: Optional[Callable[[list], tuple]] = None,
-                 usage: Optional[H.UsageReader] = None, watching: bool = True) -> None:
+                 usage: Optional[H.UsageReader] = None, watching: bool = True, listener: Any = None,
+                 synth: Optional[Callable] = None, probe: Optional[Callable] = None) -> None:
         super().__init__()
+        # the voice line's own plumbing. A desk built with its own collector (a test, a picture) gets none unless
+        # it is handed one, so it can never reach the real listener by accident.
+        self.listener_svc = listener if listener is not None else (P.RealListener() if collector is None else None)
+        self.listener_now: Optional[P.ListenerView] = None
+        self.synth, self.probe = synth, probe                    # tests pass a fake voice maker
         self.runner = runner                                     # tests pass a fake Team Room command
         self.usage = usage                                       # the ONE shared allowance reader (None = not asked)
         self.watching = watching                                 # False = the watcher never acts from this desk
@@ -1060,7 +1287,7 @@ class Desk(App):
             reader = D.LogReader(paths.profiles)                 # ONE reader, kept for the life of the desk
             edit_paths = self.edit
             if self.usage is None and os.environ.get("ACD_USAGE", "on") != "off":
-                self.usage = H.UsageReader()
+                self.usage = H.UsageReader(keep=self.edit.state / "allowance_last_known.json")
             usage_reader = self.usage
 
             def collector() -> D.Snapshot:
@@ -1071,9 +1298,33 @@ class Desk(App):
 
     def on_mount(self) -> None:
         self.push_screen(GridScreen())
+        self.look_at_listener()
         if self.autostart:
             self.action_reread()
             self.set_interval(REFRESH_SEC, self.action_reread)
+            if self.listener_svc is not None:
+                self.set_interval(LISTENER_SEC, self.look_at_listener)
+
+    def look_at_listener(self) -> None:
+        """The voice line's state for the status line: ONE small file read, never the microphone, never a command."""
+        if self.listener_svc is None:
+            return
+        try:
+            now = P.listener_view(self.listener_svc, ask_loaded=False)
+        except Exception:                                # noqa: BLE001  a failed look must never take the desk down
+            return
+        if now == self.listener_now:
+            return
+        self.listener_now = now
+        if self.snapshot is None:
+            return
+        for screen in self.screen_stack:
+            if isinstance(screen, (GridScreen, TreeScreen)):
+                try:
+                    screen.query_one("#systems", Static).update(
+                        systems_text(self.snapshot, self.text_width(), now))
+                except Exception:                        # noqa: BLE001
+                    pass
 
     @property
     def is_armed(self) -> bool:
@@ -1488,6 +1739,187 @@ class Desk(App):
 
         self.push_screen(PickPopup("Claude, Gemini and Codex: voices", rows,
                                    note="Called by name through the Voice Desk. Pick a setting to change."), picked)
+
+    # -- what only the old dashboard could do: the voice test, add / remove an agent, the listener ------------------
+    def chosen(self) -> Optional[D.AgentView]:
+        """The agent under the cursor: the grid's row, or the tree's agent."""
+        snap = self.snapshot
+        if snap is None or not snap.agents:
+            return None
+        for screen in reversed(self.screen_stack):
+            if isinstance(screen, TreeScreen):
+                return screen.view()
+            if isinstance(screen, GridScreen):
+                row = screen.query_one("#grid", DataTable).cursor_row
+                return snap.agents[row] if 0 <= row < len(snap.agents) else None
+        return None
+
+    def dry_line(self) -> Text:
+        if self.is_armed:
+            return Text("The desk is ARMED: this is really done.", style=COLOUR[D.RED])
+        return Text(f"DRY RUN ({E.why_not_armed(self.edit)}): the desk only shows what would happen.",
+                    style=COLOUR[D.YELLOW])
+
+    def action_voice_test(self) -> None:
+        """t: the silent voice test, for the chosen agent or for everyone. Nothing is ever played."""
+        edit = self.edit
+        v = self.chosen()
+        rows: list[tuple[str, str]] = []
+        if v is not None and v.voice_key:
+            rows.append((v.voice_key, f"only {v.name}"))
+        rows.append(("*", "everyone in the Voice Desk list"))
+
+        def picked(token: Optional[str]) -> None:
+            if not token:
+                return
+            keys = None if token == "*" else [token]
+            try:
+                plan, silent = P.test_plan(edit, keys)
+            except (E.EditError, OSError, ValueError) as exc:
+                self.push_screen(NoticePopup("Voice test", Text(f"The Voice Desk list could not be read ({exc}).")))
+                return
+            body = [Text("One sentence is made in each voice to a throw-away file and checked for real sound."),
+                    Text("NOTHING IS PLAYED: no sound comes out of the Mac.", style="bold"), Text(""),
+                    Text("What would be said, and in which voice:", style=DIM)]
+            body += [Text("  " + ln) for ln in P.plan_lines(plan, silent)]
+            body += [Text(""), self.dry_line()]
+            self.push_screen(
+                NoticePopup("Voice test", join(body), ask="yes, run the silent test"),
+                lambda yes: self.run_jobs([lambda: P.test_voices(edit, keys, synth=self.synth, probe=self.probe)])
+                if yes else None)
+
+        self.push_screen(PickPopup("Voice test: who?", rows,
+                                   note="A silent test: the voices are made to files and checked, never played."),
+                         picked)
+
+    def action_add_agent(self) -> None:
+        """n: a new agent in the Voice Desk list: which one, its name, what it answers to, its voice, then one
+        confirm line that says exactly what is added."""
+        edit = self.edit
+        rows = [(prof, f"{name}: the Hermes agent \"{prof}\" on this Mac") for prof, name in P.addable(edit)]
+        rows.append((P.CLI, "another assistant that runs in a terminal (like Claude, Gemini or Codex)"))
+
+        def confirm(profile: Optional[str], display: str, names: str, voice: str) -> None:
+            body = [Text("This is added to the Voice Desk list, and nothing else is touched:"),
+                    Text(f"  name            {display}"),
+                    Text(f"  answers to      {', '.join(gridedit.parse_names(names, display))}"),
+                    Text(f"  voice           {D.voice_label(voice) if voice else 'silent: no voice'}"),
+                    Text("  it is           " + (f"the Hermes agent {profile}" if profile
+                                                 else "another terminal assistant")),
+                    Text(""), Text(P.NEEDS_AGENT, style=DIM), Text(""), self.dry_line()]
+            self.push_screen(
+                NoticePopup(f"Add {display}?", join(body), ask=f"yes, add {display}"),
+                lambda yes: self.run_jobs([lambda: P.add_agent(edit, display, names, voice or None, profile=profile)])
+                if yes else None)
+
+        def ask_voice(profile: Optional[str], display: str, names: str) -> None:
+            try:
+                cfg = A.load(edit.voice.toml)
+                options = E.voice_options(P.draft_agent(display, profile), "voice", cfg)
+            except Exception as exc:                     # noqa: BLE001
+                self.push_screen(NoticePopup("Add an agent", Text(f"The voices could not be listed ({exc}).")))
+                return
+            voices = [(tok or SILENT, label) for tok, label, _cur, off in options if not off]
+            if not any(tok == SILENT for tok, _ in voices):
+                voices.append((SILENT, "silent: no voice"))
+            self.push_screen(PickPopup(f"{display}: its English voice", voices,
+                                       note="One voice, silent if it fails. A Chinese voice can be added later in its tree."),
+                             lambda tok: confirm(profile, display, names, "" if tok == SILENT else tok) if tok else None)
+
+        def ask_names(profile: Optional[str], display: str) -> None:
+            self.push_screen(AskPopup(f"{display}: what it answers to",
+                                      "Every way the listener may hear the name, separated by commas. The name "
+                                      "itself is always one of them.", display.lower()),
+                             lambda text: ask_voice(profile, display, text) if text is not None else None)
+
+        def ask_name(token: Optional[str]) -> None:
+            if not token:
+                return
+            profile = None if token == P.CLI else token
+            start = next((name for prof, name in P.addable(edit) if prof == profile), "")
+
+            def named(text: Optional[str]) -> None:
+                if text is None:
+                    return
+                if not text:
+                    self.push_screen(NoticePopup("Add an agent", Text("A new agent needs a name. Nothing was added.")))
+                    return
+                ask_names(profile, text)
+
+            self.push_screen(AskPopup("New agent: its name", "The name shown on the desk and spoken back.", start), named)
+
+        self.push_screen(PickPopup("Add an agent to the Voice Desk list", rows,
+                                   note="Only the Voice Desk list gets a new block. No agent's own files change."),
+                         ask_name)
+
+    def action_remove_agent(self) -> None:
+        """d: take an agent out of the Voice Desk list, after a confirm line that shows exactly what goes."""
+        edit = self.edit
+        try:
+            listed = A.agents(A.load(edit.voice.toml))
+        except (OSError, ValueError) as exc:
+            self.push_screen(NoticePopup("Remove an agent", Text(f"The Voice Desk list could not be read ({exc}).")))
+            return
+        v = self.chosen()
+        first = v.voice_key if v is not None else ""
+        rows = sorted(((a.key, a.display) for a in listed), key=lambda r: r[0] != first)
+
+        def picked(key: Optional[str]) -> None:
+            if not key:
+                return
+            try:
+                plan = P.removal_plan(edit, key)
+            except Exception as exc:                     # noqa: BLE001
+                self.push_screen(NoticePopup("Remove an agent", Text(f"Nothing was removed ({exc}).")))
+                return
+            body = [Text(f"Exactly these {len(plan.block)} lines are removed from the Voice Desk list:")]
+            body += [Text("  - " + ln, style=COLOUR[D.RED]) for ln in plan.block]
+            body += [Text("")] + [Text(part) for part in textwrap.wrap(plan.stays, 92)]
+            body += [Text("u puts it back.", style=DIM), Text(""), self.dry_line()]
+            self.push_screen(
+                NoticePopup(f"Remove {plan.name} from the Voice Desk list?", join(body),
+                            ask=f"yes, remove {plan.name}"),
+                lambda yes: self.run_jobs([lambda: P.remove_agent(edit, key)]) if yes else None)
+
+        self.push_screen(PickPopup("Remove which agent from the Voice Desk list?", rows,
+                                   note="The next step shows exactly what would be removed, and asks first."), picked)
+
+    def action_listener(self) -> None:
+        """l: the voice line: what the listener is doing, and its controls."""
+        self.push_screen(ListenerPopup())
+
+    def listener_order(self, action: str) -> None:
+        edit, svc = self.edit, self.listener_svc
+        if svc is None:
+            return
+        if action not in P.NEEDS_TWO:
+            self.run_jobs([lambda: P.listener_do(action, edit, svc=svc)])
+            return
+        view = P.listener_view(svc, ask_loaded=False)
+        verb = "Restart" if action == "restart" else "Stop"
+        if view.busy:
+            self.push_screen(NoticePopup(f"{verb} the listener", join([
+                Text(f"Not now: {view.busy}.", style=COLOUR[D.RED]),
+                Text("The desk never stops or restarts the voice line in the middle of that. Try again when it is quiet.")])))
+            return
+        first = [Text(f"{verb} the listener?"), Text(P.STOPS_THE_LINE[0].upper() + P.STOPS_THE_LINE[1:] + ".",
+                                                      style=COLOUR[D.RED]),
+                 Text(P.ACTIONS[action][0].upper() + P.ACTIONS[action][1:] + "."), Text(""),
+                 Text("This is the first of two questions.", style=DIM)]
+        second = [Text("Second and last question.", style="bold"),
+                  Text(P.STOPS_THE_LINE[0].upper() + P.STOPS_THE_LINE[1:]
+                       + ": nobody can talk to an agent by voice until it is running again.", style=COLOUR[D.RED]),
+                  Text(""), self.dry_line()]
+
+        def again(yes: bool) -> None:
+            if yes:
+                self.push_screen(
+                    NoticePopup(f"{verb} the listener: are you sure?", join(second),
+                                ask=f"yes, {action} the listener now"),
+                    lambda sure: self.run_jobs([lambda: P.listener_do(action, edit, svc=svc, confirmed=2)])
+                    if sure else None)
+
+        self.push_screen(NoticePopup(f"{verb} the listener", join(first), ask="yes, go on"), again)
 
     def action_pause_watcher(self) -> None:
         """P: pause or resume the watcher. While paused it reports nothing and puts nothing back. The pause is the

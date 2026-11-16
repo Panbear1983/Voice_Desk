@@ -157,7 +157,9 @@ class DeskScreen(unittest.IsolatedAsyncioTestCase):
             keys = {b.key for b in app.BINDINGS} | {b.key for b in acd.GridScreen.BINDINGS} | \
                    {b.key for b in acd.TreeScreen.BINDINGS}
             # version four adds P (pause the watcher) and, on the grid, A (the assistants' voices)
-            self.assertEqual(keys, {"q", "c", "escape", "left", "right", "space", "u", "r", "p", "a"})
+            # the parity build adds T (voice test), L (listener), N (add an agent) and D (remove an agent)
+            self.assertEqual(keys, {"q", "c", "escape", "left", "right", "space", "u", "r", "p", "a",
+                                    "t", "l", "n", "d"})
 
     async def test_a_narrow_window_drops_columns_instead_of_scrolling_sideways(self):
         self.assertEqual(len(acd.columns_for(190)), 7)
