@@ -46,6 +46,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 GOOD, FAILING, UNKNOWN = "good", "failing", "unknown"
+# two allowances can carry the same name (two accounts of one service): say so in ordinary words
+TWIN_NOTE = "there are two allowances with this name; each is listed on its own line and they are never added together"
 SIGNIN_DEAD, ALLOWANCE_OUT = "signin_dead", "allowance_out"
 
 ANTHROPIC = "anthropic"
@@ -228,7 +230,7 @@ def parse_usage(service: str, data: object, now: float) -> Allowance:
     for w, name in zip(rows, names):
         used = w.get("used_percent")
         resets = _moment(w.get("resets_at"))
-        note = "one of two windows with this name; they are shown apart, never added up" if names.count(name) > 1 else ""
+        note = TWIN_NOTE if names.count(name) > 1 else ""
         if not name:
             out.append(Window("(no name)", None, resets, "this window has no name"))
         elif not _number(used) or not 0 <= used <= 100:

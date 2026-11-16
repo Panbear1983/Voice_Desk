@@ -340,7 +340,7 @@ class StatusAfterAChange(unittest.TestCase):
                                    "ok": True, "needs_restart": True})
         self.assertEqual(E.record(w.edit).waiting, ("an add-on was switched off",))
         snap = F.edit_collect(w)
-        self.assertTrue(any("1 saved change is waiting for a restart: press R" in x.text for x in snap.warnings))
+        self.assertTrue(any("1 saved change is waiting for a restart: press r" in x.text for x in snap.warnings))
         E.request_restart(w.edit, "x", now=dt.datetime.fromtimestamp(w.now - 50))
         self.assertEqual(len(E.record(w.edit).waiting), 1, "still waiting: the helper has not restarted yet")
         w.edit.restart_request.unlink()                   # the helper removes the request once it restarted

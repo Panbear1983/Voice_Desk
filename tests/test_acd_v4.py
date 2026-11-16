@@ -167,7 +167,7 @@ class AllowanceReader(unittest.TestCase):
         a = H.parse_usage(AGY, doc, NOW)
         by = {(w.label, i): w for i, w in enumerate(a.windows)}
         self.assertEqual((by[("Gemini (Weekly)", 0)].left, by[("Gemini (Weekly)", 1)].left), (64.0, 99.0))
-        self.assertIn("never added up", by[("Gemini (Weekly)", 0)].note)
+        self.assertIn("never added together", by[("Gemini (Weekly)", 0)].note)
         for label, i in (("Broken", 2), ("Over", 3), ("Past", 4)):
             self.assertIsNone(by[(label, i)].left, label)
         self.assertAlmostEqual(by[("No reset", 5)].left, 99.92)
@@ -404,7 +404,7 @@ class AssistantsVoices(unittest.TestCase):
         self.assertIn("Gemini's own voice file", by["gemini"].takes_effect)
         self.assertIn("the Voice Desk speaks for it", by["codex"].takes_effect)
         self.assertTrue(any(p.key == "terminal" and p.can_switch for p in by["claude"].voice_places))
-        self.assertIn("A changes their voices", acd.others_text(snap).plain)
+        self.assertIn("press a to change their voices", acd.others_text(snap).plain)
 
     def test_claudes_voice_goes_through_the_voice_desk_path_into_its_own_voice_file(self):
         w = F.edit_world(armed=True)
@@ -450,7 +450,7 @@ class VoicePlaces(unittest.TestCase):
         self.assertEqual(sorted(by), ["iphone", "mic", "terminal", "tg_dm", "tg_group"])
         self.assertTrue(by["tg_group"].can_switch and by["tg_dm"].can_switch and by["mic"].can_switch)
         self.assertFalse(by["terminal"].can_switch)                     # a Hermes window decides per window
-        self.assertIn("per window", by["terminal"].why_not)
+        self.assertIn("each open Hermes window keeps its own choice", by["terminal"].why_not)
         self.assertFalse(by["iphone"].can_switch)
         self.assertEqual(by["tg_group"].value, "Always")
         rows = acd.tree_rows(v)
@@ -579,7 +579,7 @@ class Screen(unittest.IsolatedAsyncioTestCase):
             await pilot.press("escape")
             await show(app, pilot)
             self.assertIn("paused", str(app.screen.query_one("#systems", Static).render()))
-            self.assertIn("the watcher is paused (P resumes)", str(app.screen.query_one("#warnings", Static).render()))
+            self.assertIn("the watcher is paused (p resumes)", str(app.screen.query_one("#warnings", Static).render()))
             await pilot.press("p")
             await pilot.pause()
             self.assertFalse(W.is_paused(w.edit))
