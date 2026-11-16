@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Control Desk mock-ups</title>
+<style>
+:root{
+  --page:#0b0d10; --term:#11151a; --line:#2a323c; --text:#d6dde6; --dim:#7d8896;
+  --head:#e9eef5; --sel:#1c2530; --green:#5fd38d; --yellow:#e8c95a; --blue:#6cb2ff; --red:#ff6f6f;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px 48px;background:var(--page);color:var(--text);
+  font:14px/1.5 "SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace}
+h1{font-size:18px;color:var(--head);margin:0 0 4px}
+.sub{color:var(--dim);margin:0 0 24px;max-width:1100px}
+h2{font-size:15px;color:var(--head);margin:32px 0 8px}
+.term{background:var(--term);border:1px solid var(--line);border-radius:6px;max-width:1280px;overflow:hidden}
+.bar{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:6px 12px;border-bottom:1px solid var(--line);color:var(--head)}
+.bar .ro{color:var(--yellow)}
+.warn{padding:6px 12px;border-bottom:1px solid var(--line)}
+.warn div{white-space:normal}
+.legend{padding:6px 12px;border-bottom:1px solid var(--line);color:var(--dim);display:flex;gap:20px;flex-wrap:wrap}
+.g{color:var(--green)}.y{color:var(--yellow)}.b{color:var(--blue)}.r{color:var(--red)}.d{color:var(--dim)}.h{color:var(--head)}
+.cols{display:grid;grid-template-columns:250px 1fr}
+.left{border-right:1px solid var(--line);padding:8px 0}
+.left .row{padding:3px 12px;display:flex;justify-content:space-between;gap:8px}
+.left .row.on{background:var(--sel);color:var(--head)}
+.left .cap,.right .cap{color:var(--dim);padding:2px 12px 6px}
+.right{padding:8px 0 12px}
+.tree{padding:0 12px;white-space:pre-wrap}
+.tree .br{color:var(--head)}
+.foot{padding:6px 12px;border-top:1px solid var(--line);color:var(--dim)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:1180px}
+th,td{text-align:left;vertical-align:top;padding:6px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:normal}
+td.n{color:var(--head);white-space:nowrap}
+.note{color:var(--dim);max-width:1100px;margin-top:10px}
+@media (max-width:760px){.cols{grid-template-columns:1fr}.left{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<h1>Agent Control Desk: two screen mock-ups</h1>
+<p class="sub">Drawn from the real settings and logs on this Mac, read on 16 November 2026. These are pictures of a possible screen, not a working program. Anything that could not be read is shown as "unknown".</p>
+
+<h2>Layout A: agents on the left, the chosen agent's tree on the right</h2>
+<div class="term">
+  <div class="bar"><span>AGENT CONTROL DESK</span><span class="ro">version one: shows everything, changes nothing</span><span class="d">Mon 16 Nov 23:20</span></div>
+  <div class="warn">
+    <div class="r">■ 5 agents had their main model fail on the last reply and a backup answered</div>
+    <div class="y">■ 4 open chats are still on an older setting (start a fresh chat to pick up the current one)</div>
+    <div class="y">■ DLS add-on is still switched on inside Jarvis</div>
+    <div class="d">■ (example only) 1 change waiting for a restart: press R to review</div>
+  </div>
+  <div class="legend">
+    <span><span class="g">■</span> live everywhere</span>
+    <span><span class="y">■</span> saved, waiting on a restart or a fresh chat</span>
+    <span><span class="b">■</span> temporary override</span>
+    <span><span class="r">■</span> failed, or changed behind the desk's back</span>
+  </div>
+  <div class="cols">
+    <div class="left">
+      <div class="cap">AGENTS</div>
+      <div class="row on"><span>&gt; Jarvis</span><span><span class="r">■</span><span class="y">■</span></span></div>
+      <div class="row"><span>&nbsp; Kylie</span><span><span class="r">■</span><span class="y">■</span></span></div>
+      <div class="row"><span>&nbsp; Builder</span><span><span class="r">■</span><span class="y">■</span></span></div>
+      <div class="row"><span>&nbsp; Esther</span><span><span class="r">■</span><span class="y">■</span></span></div>
+      <div class="row"><span>&nbsp; Wanna Buffet</span><span><span class="r">■</span><span class="y">■</span></span></div>
+      <div class="row"><span>&nbsp; Simba</span><span><span class="g">■</span></span></div>
+      <div class="cap" style="margin-top:14px">Jarvis leads the Team Room.<br>Six members saved 14 Nov.</div>
+    </div>
+    <div class="right">
+      <div class="cap">JARVIS (the manager)</div>
+<div class="tree"><span class="br">├─ Language model</span>
+│   ├─ Set to            <span class="g">■</span> Claude Sonnet 5.5, on the Claude subscription, medium effort
+│   ├─ Last reply        <span class="r">■</span> began on Claude Sonnet 5.5 through Antigravity, it failed,
+│   │                      Gemini 3.8 Flash answered  <span class="d">(terminal chat, 16 Nov 22:03)</span>
+│   ├─ Old chat          <span class="y">■</span> terminal chat opened 4 Nov is still on Antigravity, not the
+│   │                      Claude subscription. A fresh chat would use the current setting.
+│   ├─ Temporary         <span class="d">none right now</span>  <span class="b">■</span> <span class="d">a model typed in a chat or pinned on a job shows here</span>
+│   └─ Backups, in order
+│       ├─ 1  <span class="g">on </span>  Claude Sonnet 5.5 through Antigravity
+│       ├─ 2  <span class="g">on </span>  Gemini 3.8 Flash through Antigravity
+│       ├─ 3  <span class="g">on </span>  Claude Sonnet 5.5 on the Claude subscription
+│       └─ 4  <span class="d">off</span>  NVIDIA  <span class="d">(removed 13 Nov)</span>
+<span class="br">├─ Voice</span>
+│   ├─ English           <span class="g">■</span> Puck, the local voice, speed 1.2
+│   ├─ Chinese           <span class="d">曉臻 is set, but this agent is English only</span>
+│   └─ If the voice fails  stays silent, no stand-in voice
+<span class="br">├─ Where it shows up</span>
+│   ├─ Terminal chat           <span class="y">■</span> on, old chat on an older setting
+│   ├─ Telegram private chat   <span class="d">unknown (no Telegram replies in the current log)</span>
+│   ├─ Telegram team group     <span class="g">■</span> on
+│   ├─ Terminal Team Room      <span class="g">■</span> on, leads the room
+│   ├─ Voice on the Mac        <span class="g">■</span> on
+│   └─ Voice on the iPhone     <span class="d">unknown</span>
+<span class="br">└─ Who it may talk to</span>
+    ├─ Speaks in the Team Room        yes, like everyone
+    ├─ Hands out work                 yes, the only one who does
+    └─ Sends jobs to Builder          yes, by job card only</div>
+    </div>
+  </div>
+  <div class="foot">↑↓ choose agent &nbsp; Tab next branch &nbsp; R restart review &nbsp; Q quit &nbsp;&nbsp; <span class="d">(editing keys arrive in later versions)</span></div>
+</div>
+
+<h2>Layout B: a grid, one row per agent</h2>
+<div class="term">
+  <div class="bar"><span>AGENT CONTROL DESK</span><span class="ro">version one: shows everything, changes nothing</span><span class="d">Mon 16 Nov 23:20</span></div>
+  <div class="warn">
+    <div class="r">■ 5 agents had their main model fail on the last reply and a backup answered</div>
+    <div class="y">■ 4 open chats are still on an older setting</div>
+    <div class="y">■ DLS add-on is still switched on inside Jarvis</div>
+    <div class="d">■ (example only) 1 change waiting for a restart: press R to review</div>
+  </div>
+  <div class="legend">
+    <span><span class="g">■</span> live everywhere</span>
+    <span><span class="y">■</span> saved, waiting on a restart or a fresh chat</span>
+    <span><span class="b">■</span> temporary override</span>
+    <span><span class="r">■</span> failed, or changed behind the desk's back</span>
+  </div>
+  <div class="scroll">
+  <table>
+    <tr><th>Agent</th><th>Model set</th><th>Model that answered last</th><th>Backups</th><th>Voice</th><th>Where it shows up</th><th>Talks to</th></tr>
+    <tr>
+      <td class="n">Jarvis</td>
+      <td><span class="g">■</span> Claude Sonnet 5.5<br><span class="d">Claude subscription, medium</span></td>
+      <td><span class="r">■</span> Gemini 3.8 Flash<br><span class="y">■</span> <span class="d">old chat on Antigravity<br>terminal, 16 Nov 22:03</span></td>
+      <td><span class="g">on</span> Sonnet via Antigravity<br><span class="g">on</span> Gemini 3.8 Flash<br><span class="g">on</span> Sonnet, Claude sub.<br><span class="d">off NVIDIA</span></td>
+      <td><span class="g">■</span> Puck, local, 1.2<br><span class="d">English only</span></td>
+      <td><span class="y">■</span> terminal chat<br><span class="d">? Telegram private</span><br><span class="g">■</span> Telegram group<br><span class="g">■</span> Team Room<br><span class="g">■</span> Mac voice<br><span class="d">? iPhone voice</span></td>
+      <td>Everyone in the room.<br>Hands out work.</td>
+    </tr>
+    <tr>
+      <td class="n">Kylie</td>
+      <td><span class="g">■</span> Claude Opus 5.5<br><span class="d">Claude subscription, medium</span></td>
+      <td><span class="r">■</span> Gemini 3.8 Flash<br><span class="y">■</span> <span class="d">old chat on Antigravity<br>terminal, 16 Nov 19:14</span></td>
+      <td><span class="g">on</span> Opus via Antigravity<br><span class="g">on</span> Gemini 3.8 Flash<br><span class="g">on</span> Sonnet, Claude sub.<br><span class="g">on</span> NVIDIA</td>
+      <td><span class="g">■</span> Ava, speed 1.0<br><span class="d">Chinese: 曉臻</span></td>
+      <td><span class="y">■</span> terminal chat<br><span class="g">■</span> Telegram private<br><span class="g">■</span> Telegram group<br><span class="g">■</span> Team Room<br><span class="g">■</span> Mac voice<br><span class="d">? iPhone voice</span></td>
+      <td>Everyone in the room.<br>Takes work from Jarvis.</td>
+    </tr>
+    <tr>
+      <td class="n">Builder</td>
+      <td><span class="g">■</span> Claude Opus 5.5<br><span class="d">Claude subscription, high</span></td>
+      <td><span class="r">■</span> Gemini 4 Argon<br><span class="y">■</span> <span class="d">old chat on Antigravity<br>Team Room, 16 Nov 09:32</span></td>
+      <td><span class="g">on</span> Opus via Antigravity<br><span class="g">on</span> Gemini 4 Argon<br><span class="g">on</span> Sonnet, Claude sub.<br><span class="g">on</span> NVIDIA</td>
+      <td><span class="d">no voice</span></td>
+      <td><span class="g">■</span> terminal chat<br><span class="d">- Telegram private: none seen</span><br><span class="d">- Telegram group: off</span><br><span class="g">■</span> Team Room<br><span class="d">- Mac voice: none</span><br><span class="d">- iPhone voice: none</span></td>
+      <td>Everyone in the room.<br>Only takes job cards.</td>
+    </tr>
+    <tr>
+      <td class="n">Esther</td>
+      <td><span class="g">■</span> Claude Opus 5.5<br><span class="d">Claude subscription, medium</span></td>
+      <td><span class="r">■</span> Gemini 3.8 Flash<br><span class="y">■</span> <span class="d">old chat sitting on the backup<br>terminal, 16 Nov 10:27</span></td>
+      <td><span class="g">on</span> Gemini 3.8 Flash<br><span class="g">on</span> Sonnet, Claude sub.<br><span class="d">NVIDIA not listed</span></td>
+      <td><span class="g">■</span> Alloy<br><span class="d">Chinese: 曉雨</span></td>
+      <td><span class="y">■</span> terminal chat<br><span class="g">■</span> Telegram private<br><span class="g">■</span> Telegram group<br><span class="g">■</span> Team Room<br><span class="g">■</span> Mac voice<br><span class="d">? iPhone voice</span></td>
+      <td>Everyone in the room.<br>Takes work from Jarvis.</td>
+    </tr>
+    <tr>
+      <td class="n">Wanna Buffet</td>
+      <td><span class="g">■</span> Claude Opus 5.5<br><span class="d">Claude subscription, medium</span></td>
+      <td><span class="r">■</span> Gemini 3.8 Flash<br><span class="y">■</span> <span class="d">began on Antigravity<br>scheduled job, 16 Nov 23:15</span></td>
+      <td><span class="g">on</span> Opus via Antigravity<br><span class="g">on</span> Gemini 3.8 Flash<br><span class="g">on</span> NVIDIA<br><span class="g">on</span> small ChatGPT model</td>
+      <td><span class="g">■</span> Santa, local, 0.92<br><span class="d">Chinese: 雲哲</span></td>
+      <td><span class="g">■</span> terminal chat<br><span class="g">■</span> Telegram private<br><span class="g">■</span> Telegram group<br><span class="g">■</span> Team Room<br><span class="g">■</span> Mac voice<br><span class="d">? iPhone voice</span></td>
+      <td>Everyone in the room.<br>Takes work from Jarvis.</td>
+    </tr>
+    <tr>
+      <td class="n">Simba</td>
+      <td><span class="g">■</span> Grok 4.20 <span class="d">(locked)</span><br><span class="d">through OpenRouter</span></td>
+      <td><span class="g">■</span> Grok 4.20<br><span class="d">Team Room, 16 Nov 11:02</span></td>
+      <td><span class="d">none, by design</span></td>
+      <td><span class="g">■</span> Fenrir, local<br><span class="d">English only</span></td>
+      <td><span class="g">■</span> terminal chat<br><span class="g">■</span> Telegram private<br><span class="g">■</span> Telegram group<br><span class="g">■</span> Team Room<br><span class="g">■</span> Mac voice<br><span class="d">? iPhone voice</span></td>
+      <td>Everyone in the room.<br>Answers when named.</td>
+    </tr>
+  </table>
+  </div>
+  <div class="foot">↑↓ choose agent &nbsp; Enter open the agent's tree &nbsp; R restart review &nbsp; Q quit &nbsp;&nbsp; <span class="d">? = could not be read yet</span></div>
+</div>
+
+<p class="note">Also in today's voice list, but not Hermes agents: Claude, Gemini and Codex. They are left out of both layouts until it is decided whether the desk covers them.</p>
+</body>
+</html>

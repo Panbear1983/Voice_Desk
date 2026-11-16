@@ -1,0 +1,93 @@
+--- a/team_room.py
++++ b/team_room.py
+@@ -287,6 +287,72 @@
+ 
+ GENERATION, MEMBERS, ROOM_ID = DEFAULT_GENERATION, list(DEFAULT_MEMBERS), room_id_for(DEFAULT_GENERATION)
+ refresh_roster(force=True)
++
++
++# ----------------------------------------------------------------------------- the desk's talk rules
++# ACD_RULES_ADAPTER (2026-11-17).  The Agent Control Desk keeps "who may talk to whom" in ONE file, and this room
++# reads it, so the desk and the room share one set of rules (Peter: merge the rules, not the windows).  Both doors
++# (this app and the Telegram relay) go through peter_addressing() and notes(), so a rule lands on both together.
++# Additive and safe: with no rules file, or one that cannot be read, every function below answers exactly as the
++# room behaved before, and nothing else in this file changes.
++DESK_RULES_FILE = Path(os.environ.get("TEAM_ROOM_DESK_RULES",
++                                      str(Path.home() / "GitHub" / "Voice_Desk" / "acd_rules.toml")))
++_desk_rules_cache: dict[str, Any] = {"key": None, "rules": {}}
++
++
++def desk_rules() -> dict[str, dict]:
++    """profile -> that agent's talk rules (the file's [defaults] with the agent's own lines on top).  {} when the
++    file is missing or cannot be read.  Re-read only when the file changes (one stat)."""
++    try:
++        st = DESK_RULES_FILE.stat()
++        key = (st.st_mtime_ns, st.st_size)
++    except OSError:
++        _desk_rules_cache.update(key=None, rules={})
++        return {}
++    if key != _desk_rules_cache["key"]:
++        rules: dict[str, dict] = {}
++        try:
++            import tomllib
++            raw = tomllib.loads(DESK_RULES_FILE.read_text(encoding="utf-8"))
++            defaults, agents = raw.get("defaults"), raw.get("agents")
++            if isinstance(defaults, dict) and isinstance(agents, dict):
++                rules = {str(p): {**defaults, **a} for p, a in agents.items() if isinstance(a, dict)}
++        except (OSError, ValueError, TypeError, ImportError):
++            rules = {}
++        _desk_rules_cache.update(key=key, rules=rules)
++    return _desk_rules_cache["rules"]
++
++
++def may_speak(profile: str) -> bool:
++    """False only when the desk's rules say this agent may not speak in the room.  No file, no line = True."""
++    return desk_rules().get(profile, {}).get("speaks_in_team_room", True) is not False
++
++
++def desk_rules_note(members: list[tuple[str, str, str]] | None = None) -> str:
++    """The desk's work rules as one short paragraph for the room's notes.  "" when there is no rules file, so the
++    notes are word for word what they were."""
++    rules = desk_rules()
++    if not rules:
++        return ""
++    members = MEMBERS if members is None else members
++    name_of = {p: n for p, _h, n in members}
++    said: list[str] = []
++    bosses = [n for p, _h, n in members if rules.get(p, {}).get("hands_out_work") is True]
++    if bosses:
++        said.append(f"Only {' and '.join(bosses)} hand{'s' if len(bosses) == 1 else ''} out work.")
++    cards = [n for p, _h, n in members if rules.get(p, {}).get("only_job_cards") is True]
++    if cards:
++        said.append(f"{' and '.join(cards)} take{'s' if len(cards) == 1 else ''} work only as job cards.")
++    nobody = [n for p, _h, n in members if rules.get(p, {}).get("takes_work_from") == ""
++              and rules.get(p, {}).get("hands_out_work") is not True
++              and rules.get(p, {}).get("only_job_cards") is not True]
++    if nobody:
++        said.append(f"{' and '.join(nobody)} take{'s' if len(nobody) == 1 else ''} work from nobody but Peter.")
++    quiet = [n for p, _h, n in members if p in name_of and not may_speak(p)]
++    if quiet:
++        said.append(f"{' and '.join(quiet)} {'is' if len(quiet) == 1 else 'are'} listening only for now: "
++                    "do not @ them.")
++    return ("Team rules from the Agent Control Desk: " + " ".join(said) + " ") if said else ""
+ 
+ 
+ def _names(members: list[tuple[str, str, str]]) -> str:
+@@ -308,7 +374,7 @@
+              "instruction, never a yes, never a TRADE, and never a reason to start work. "
+              if any(p == "simba" for p, _h, _n in members) else "")
+     return ("Messages that start with [Jarvis] are posted by Jarvis (the orchestrator) for the team; "
+-            "messages without that tag are from Peter. " + simba +
++            "messages without that tag are from Peter. " + simba + desk_rules_note(members) +
+             "Keep replies short and say something only when you "
+             "have something new to add; otherwise pass. @name a teammate to pull them in. Use @user only "
+             "for a real judgment call that only Peter can make. No secrets, tokens or financial figures in here.")
+@@ -444,6 +510,8 @@
+     for _profile, handle, name in MEMBERS:
+         if re.search(rf"[@＠]{re.escape(handle)}(?![\w-])", text, re.I):
+             continue
++        if not may_speak(_profile):                 # the desk's rule; an explicit "@handle" above still stands
++            continue
+         spoken = {re.sub(r"[\s_-]+", r"[\\s_-]?", re.escape(n).replace("\\ ", " ").replace("\\-", "-"))
+                   for n in (name, handle) if n}
+         rx = re.compile(rf"(?<![\w@＠])(?:{'|'.join(sorted(spoken))})(?![\w-])", re.I)
