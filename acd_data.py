@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import agents as A
+import acd_health as H
 
 HOME = Path.home()
 REPO = Path(__file__).resolve().parent
@@ -134,6 +135,8 @@ class Paths:
     shortcuts: Path                 # the folder that holds the "Talk to <agent>.shortcut" files (names only)
     gateway_state: Optional[Path] = None   # the agents' own status file: which Telegram bots are connected
     team_room_code: Optional[Path] = None  # the Team Room's own program, read only to see if it follows the desk's rules
+    grid: Any = None                       # the Voice Desk grid's own files (gridstate.Paths): where a voice speaks
+    lights: Optional[Callable] = None      # the Voice Desk's health strip (syshealth.collect), read-only
 
     @classmethod
     def default(cls) -> "Paths":
@@ -145,7 +148,24 @@ class Paths:
             rules=Path(env("ACD_RULES", REPO / "acd_rules.toml")),
             shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Voice_Desk")),
             gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")),
-            team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")))
+            team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")),
+            grid=_grid_default(), lights=_lights_default())
+
+
+def _grid_default() -> Any:
+    try:
+        import gridstate
+        return gridstate.Paths.default()
+    except Exception:                               # noqa: BLE001  the desk still opens without the voice grid
+        return None
+
+
+def _lights_default() -> Optional[Callable]:
+    try:
+        import syshealth
+        return syshealth.collect
+    except Exception:                               # noqa: BLE001
+        return None
 
 
 # ---- an agent's log ------------------------------------------------------------------------------------
@@ -237,7 +257,9 @@ class LogReader:
         self.profiles = Path(profiles)
         self.tail_bytes = tail_bytes
         self._cache: dict[Path, tuple[tuple, list[Turn]]] = {}
+        self._events: dict[Path, list] = {}
         self.reads = 0                     # how many files were really read (a test checks this stays low)
+        self.grid_reader: Any = None       # the Voice Desk grid's own shared reader, made on first use
 
     def turns(self, profile: str) -> Optional[list[Turn]]:
         """The replies in the agent's current log, or None when there is no log to read."""
@@ -261,7 +283,13 @@ class LogReader:
             return None
         got = parse_log(text)
         self._cache[path] = (sig, got)
+        self._events[path] = H.parse_events(text)       # the same read: what it says about each service
         return got
+
+    def events(self, profile: str) -> list:
+        """What the agent's log says about each service (sign-in, allowance, answered). Same single read."""
+        self.turns(profile)
+        return self._events.get(self.profiles / profile / "logs" / "agent.log", [])
 
 
 # ---- what the desk shows ---------------------------------------------------------------------------------
@@ -312,6 +340,135 @@ class Presence:
     status: str = GREY
     can_switch: bool = False        # a clean switch that can be put back exists today (version three)
     why_not: str = ""               # when it cannot be switched from the desk: why, in plain words
+
+
+# ---- is each service working (version four) ----------------------------------------------------------------
+@dataclass(frozen=True)
+class ServiceView:
+    """One service an agent uses: can it sign in, is its allowance used up, how much is left."""
+    service: str
+    state: str                      # H.GOOD / H.FAILING / H.UNKNOWN
+    status: str                     # the colour
+    words: str                      # one plain sentence
+    kind: str = ""                  # H.SIGNIN_DEAD / H.ALLOWANCE_OUT
+    needs_peter: bool = False
+    allowance: tuple = ()           # plain lines: "Weekly: 25% left, resets Thu 19 Nov 06:35"
+    allowance_note: str = ""        # why there is no reading, when there is none
+    main: bool = False              # the agent's main service (not a backup's)
+
+
+def _day(ts: float) -> str:
+    return dt.datetime.fromtimestamp(ts).strftime("%a %-d %b %H:%M")
+
+
+def allowance_lines(a: Optional[H.Allowance]) -> tuple[tuple, str]:
+    """(the windows as plain lines, why there is no reading)."""
+    if a is None:
+        return (), "not read yet"
+    if not a.windows:
+        return (), a.problem or "unknown"
+    out = []
+    for w in a.windows:
+        if w.left is None:
+            out.append(f"{w.label}: unknown ({w.note})")
+            continue
+        resets = f", resets {_day(w.resets_at)}" if w.resets_at else ""
+        note = f" ({w.note})" if w.note else ""
+        out.append(f"{w.label}: {w.left:.0f}% left{resets}{note}")
+    return tuple(out), ""
+
+
+def service_view(h: H.ServiceHealth, now: float, main: bool = False) -> ServiceView:
+    name = service_name(h.service)
+    name = name[0].upper() + name[1:]
+    lines, why = allowance_lines(h.allowance)
+    if h.kind == H.SIGNIN_DEAD:
+        last = f" Its last answer was {_when(h.answered)}." if h.answered else ""
+        words = (f"{name}: the sign-in is dead (seen {_when(h.when)}). Hermes cannot sign in, so nothing reaches it; "
+                 f"only Peter signing in again fixes it.{last}")
+        return ServiceView(h.service, h.state, RED, words, h.kind, True, lines, why, main)
+    if h.kind == H.ALLOWANCE_OUT:
+        hrs = H.hours_until(h.reset_ts, now)
+        resets = f", resets in about {hrs} hours ({_day(h.reset_ts)})" if hrs else ", reset time not given"
+        other = ""
+        if h.answered and h.answered_model and h.answered_model != h.model:
+            other = f" {model_name(h.answered_model)} there still answered {_when(h.answered)}."
+        words = (f"{name}: the allowance for {model_name(h.model)} is used up{resets} "
+                 f"(seen {_when(h.when)}). The sign-in itself works.{other}")
+        return ServiceView(h.service, h.state, RED, words, h.kind, False, lines, why, main)
+    if h.state == H.GOOD:
+        return ServiceView(h.service, h.state, GREEN,
+                           f"{name}: working, {model_name(h.answered_model)} answered {_when(h.answered)}",
+                           allowance=lines, allowance_note=why, main=main)
+    return ServiceView(h.service, h.state, GREY, f"{name}: unknown, the log holds no reply or failure for it",
+                       allowance=lines, allowance_note=why, main=main)
+
+
+def services_of(ms: Optional["ModelSet"], listed: tuple) -> list[str]:
+    out = [ms.service] if ms and ms.service else []
+    for b in listed:
+        if b.on and b.service and b.service not in out:
+            out.append(b.service)
+    return out
+
+
+# ---- where a voice speaks (version four: the old Voice Desk grid's switches) --------------------------------
+VOICE_PLACE_NAME = {"terminal": "In its terminal window", "tg_dm": "Telegram private chat",
+                    "tg_group": "Telegram team group", "mic": "Voice Desk mic window / phone",
+                    "iphone": "iPhone (Siri)"}
+_EVIDENCE_COLOUR = {"ok": GREEN, "idle": GREY, "warn": YELLOW, "bad": RED, "na": GREY}
+
+
+def place_words(place: str) -> str:
+    """A place's name for the middle of a sentence ("in its terminal window", "Telegram team group")."""
+    name = VOICE_PLACE_NAME.get(place, place)
+    return name[0].lower() + name[1:] if name.startswith("In ") else name
+
+
+@dataclass(frozen=True)
+class VoicePlace:
+    """Spoken replies at one place: the setting, what the logs say really happened, and whether it can be switched."""
+    key: str
+    value: str                      # Off / Voice-back / Always / "—" / "?"
+    note: str                       # where the setting was read from, in plain words
+    status: str = GREY              # what the logs say: green spoke, grey idle, yellow mixed, red mismatch
+    evidence: str = ""              # the short line behind the colour
+    can_switch: bool = False
+    why_not: str = ""
+    problem: str = ""
+
+
+def voice_places(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader", now: float) -> dict:
+    """agent key -> the VoicePlace lines, read with the Voice Desk grid's own code (same files, same reader rules).
+    Empty when the grid's files are not known (tests that do not care)."""
+    if paths.grid is None or agents_cfg is None:
+        return {}
+    try:
+        import gridevidence
+        import gridstate as G
+        import onoff
+        if reader.grid_reader is None:
+            reader.grid_reader = gridevidence.LogReader(paths.grid.profiles)
+        rows = gridevidence.build(agents_cfg, paths.grid, reader.grid_reader, now)
+    except Exception:                               # noqa: BLE001  never let the voice grid take the desk down
+        return {}
+    out: dict = {}
+    for row in rows:
+        lines = []
+        for place in G.PLACE_KEYS:
+            cell, ev = row.cells[place], row.evidence.get(place)
+            if cell.value == G.NA:
+                continue
+            try:
+                menu = onoff.menu(row.agent, place, cell, paths.grid)
+                can, why = bool(menu.options), menu.why_not
+            except Exception:                       # noqa: BLE001
+                can, why = False, "the switch could not be read"
+            status = RED if cell.problem else _EVIDENCE_COLOUR.get(ev.status if ev else "na", GREY)
+            lines.append(VoicePlace(place, cell.label, cell.note, status, ev.headline if ev else "", can, why,
+                                    cell.problem))
+        out[row.agent.key] = tuple(lines)
+    return out
 
 
 # ---- who may talk to whom (version three) ---------------------------------------------------------------
@@ -378,6 +535,10 @@ class AgentView:
     talk_rules: tuple = ()                            # TalkRule lines: the same rules, with where each one stands
     room_lead: bool = False                           # leads the Team Room (cannot be taken out of it)
     in_room: Optional[bool] = None                    # a saved member of the Team Room (None = could not be read)
+    health: tuple = ()                                # ServiceView lines: sign-in and allowance of each service it uses
+    drifts: tuple = ()                                # acd_watch.Drift: settings changed behind the desk's back
+    voice_places: tuple = ()                          # VoicePlace lines: spoken replies, place by place
+    effect: Optional[str] = None                      # a voice effect, for the one voice that has one (Simba)
 
     @property
     def model_status(self) -> str:
@@ -391,6 +552,8 @@ class AgentView:
     def worst(self) -> str:
         """The colour of the row's marker: the most serious thing on it."""
         seen = {self.model_status, self.last.status if self.last else GREY}
+        if self.drifts or any(h.status == RED and h.main for h in self.health):
+            seen.add(RED)
         if self.old_chats:
             seen.add(YELLOW)
         if self.override:
@@ -408,6 +571,9 @@ class OtherAssistant:
     english: Optional[str]
     chinese: Optional[str]
     call_names: tuple[str, ...]
+    key: str = ""                   # its name in the Voice Desk list ([agents.<key>])
+    takes_effect: str = ""          # where a voice change lands, in plain words
+    voice_places: tuple = ()        # VoicePlace lines (Claude's and Gemini's own terminal voice, the mic window)
 
 
 @dataclass(frozen=True)
@@ -428,6 +594,11 @@ class Snapshot:
     armed: bool = False                               # False = changes are dry runs
     last_change: str = ""
     room_follows_rules: bool = False                  # the Team Room has the small adapter that reads the desk's rules
+    watch_mode: str = ""                              # the watcher: reports only / automatic put-back / paused
+    watch_paused: bool = False
+    watch_notes: tuple = ()                           # the newest lines of the watcher's own log
+    lights: tuple = ()                                # the Voice Desk's health strip: (ok, label, detail)
+    allowance_read: bool = False                      # the usage check has been run at least once
 
 
 # ---- small readers ---------------------------------------------------------------------------------------
@@ -837,10 +1008,22 @@ def judge_pending(pending: Optional[dict], ms: Optional[ModelSet], turns: Option
     return f"saved {_when(since)}, no reply on it logged yet: {PENDING_NOTE}", ""
 
 
+TAKES_EFFECT = {
+    "claude": "lands in Claude Code's own voice file; Claude speaks with it from its next reply",
+    "gemini": "lands in Gemini's own voice file; its hook reads that file before every reply",
+    "codex": "Codex has no speech of its own: the Voice Desk speaks for it and reads this list directly",
+}
+NOT_VERIFIED = "set in the list, not verified to take effect"
+
+
 def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Callable[[Path], Any] = hermes_yaml,
-            now: Optional[float] = None, desk: Optional[DeskRecord] = None) -> Snapshot:
+            now: Optional[float] = None, desk: Optional[DeskRecord] = None, usage: Optional[dict] = None,
+            watch: Any = None) -> Snapshot:
     """Read every source once and return what the desk shows. Never raises for a bad file: a file that cannot
-    be read becomes an error on that agent (or a line in `problems`), and the rest is still shown."""
+    be read becomes an error on that agent (or a line in `problems`), and the rest is still shown.
+
+    usage: service -> acd_health.Allowance (the newest readings of the shared UsageReader; None = not read).
+    watch: acd_watch.WatchView (what drifted from the desk's own record; None = the watcher was not asked)."""
     import time
     now = time.time() if now is None else now
     reader = reader or LogReader(paths.profiles)
@@ -862,7 +1045,13 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
     lead = str(members.get("lead") or "") if members else ""
     in_room = None if members is None else {m.get("profile") for m in members["members"] if isinstance(m, dict)}
     desk = desk or DeskRecord()
-    keys = {a.profile: a.key for a in (A.agents(agents_cfg) if agents_cfg else ()) if a.profile}
+    listed_agents = A.agents(agents_cfg) if agents_cfg else []
+    keys = {a.profile: a.key for a in listed_agents if a.profile}
+    effects = {a.profile: a.effect for a in listed_agents if a.profile and a.effect}
+    places = voice_places(paths, agents_cfg, reader, now)
+    drifted: dict = {}
+    for d in (watch.drifts if watch is not None else ()):
+        drifted.setdefault(d.profile, []).append(d)
 
     profiles = discover_profiles(paths.profiles, rules)
     names = {p: display_name(p, agents_cfg, members) for p in profiles}
@@ -888,6 +1077,10 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         stale = old_chats(turns, ms, listed, now)
         pending, behind = judge_pending(desk.pending.get(profile), ms, turns)
         locked = bool(r.get("model_locked"))
+        events = reader.events(profile)
+        health = tuple(service_view(H.judge(s, events, now, (usage or {}).get(s) if usage is not None else None),
+                                    now, main=bool(ms) and s == ms.service)
+                       for s in services_of(ms, listed))
         views.append(AgentView(
             profile=profile, name=name, role=role, model=ms, model_locked=locked,
             last=last_reply(turns, ms, listed), drops_today=drops_on(turns, today), old_chats=stale,
@@ -899,10 +1092,19 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
             model_note=str(r.get("model_note") or ""), model_pending=pending, model_behind=behind,
             backups_locked=locked, talk_rules=talk_rules(profile, rules, names, lead, adapter),
             room_lead=bool(lead) and profile == lead,
-            in_room=None if in_room is None else profile in in_room))
+            in_room=None if in_room is None else profile in in_room,
+            health=health, drifts=tuple(drifted.get(profile, ())),
+            voice_places=places.get(keys.get(profile, ""), ()), effect=effects.get(profile)))
 
-    others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names)
-                   for a in (A.agents(agents_cfg) if agents_cfg else ()) if not a.profile)
+    others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names, a.key,
+                                  TAKES_EFFECT.get(a.target, NOT_VERIFIED), places.get(a.key, ()))
+                   for a in listed_agents if not a.profile)
+    lights: tuple = ()
+    if paths.lights is not None and paths.grid is not None:
+        try:
+            lights = tuple((x.ok, x.label, x.detail) for x in paths.lights(paths.grid))
+        except Exception:                           # noqa: BLE001  a failed look must never take the desk down
+            lights = ()
     if members is None:
         room = "The Team Room members file could not be read."
     else:
@@ -910,9 +1112,13 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         saved = str(members.get("saved") or "")[:10]
         room = f"{lead} leads the Team Room. {len(members['members'])} members saved{' ' + saved if saved else ''}."
     views_t = tuple(views)
-    return Snapshot(views_t, others, warnings(views_t, problems, desk), room, now, tuple(problems),
+    return Snapshot(views_t, others, warnings(views_t, problems, desk, watch, lights), room, now, tuple(problems),
                     waiting=tuple(desk.waiting), armed=desk.armed, last_change=desk.last_change,
-                    room_follows_rules=adapter)
+                    room_follows_rules=adapter,
+                    watch_mode=watch.mode if watch is not None else "",
+                    watch_paused=bool(watch.paused) if watch is not None else False,
+                    watch_notes=tuple(watch.notes) if watch is not None else (),
+                    lights=lights, allowance_read=usage is not None and bool(usage))
 
 
 def _count(n: int, one: str, many: str) -> str:
@@ -920,13 +1126,22 @@ def _count(n: int, one: str, many: str) -> str:
 
 
 def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
-             desk: Optional[DeskRecord] = None) -> tuple[Warning, ...]:
+             desk: Optional[DeskRecord] = None, watch: Any = None, lights: tuple = ()) -> tuple[Warning, ...]:
     """The strip at the top. Real conditions only; when nothing is wrong it says so."""
     out = [Warning(RED, p) for p in problems]
+    drifted = [d for v in views for d in v.drifts]
+    if drifted:
+        who = sorted({d.name for d in drifted})
+        out.append(Warning(RED, _count(len(drifted), "setting was", "settings were")
+                           + " changed behind the desk's back (" + ", ".join(who)
+                           + "): open the agent's tree to put it back or accept it"))
+    if watch is not None and watch.paused:
+        out.append(Warning(YELLOW, "the watcher is paused (P resumes): the desk is not checking for changes "
+                                   "made behind its back"))
     if desk and desk.waiting:
         out.append(Warning(YELLOW, _count(len(desk.waiting), "saved change is", "saved changes are")
                            + " waiting for a restart: press R to review"))
-    behind = [v.name for v in views if v.model_behind]
+    behind = [v.name for v in views if v.model_behind and not v.drifts]      # a drift line above already says it
     if behind:
         out.append(Warning(RED, "the model was changed behind the desk's back for: " + ", ".join(behind)))
     fresh = [v.name for v in views if v.model_pending]
@@ -939,11 +1154,24 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
     if dropped:
         out.append(Warning(RED, _count(len(dropped), "agent", "agents")
                            + " had the main model fail on the last reply and a backup answered"))
-    locked_out = [v for v in views if v.signin_failed and v.model]
+    dead_main = {v.profile for v in views for h in v.health if h.main and h.kind == H.SIGNIN_DEAD}
+    locked_out = [v for v in views if v.model and (v.signin_failed or v.profile in dead_main)]
     if locked_out:
         services = sorted({service_name(v.model.service) for v in locked_out})
+        dead = [v for v in locked_out if v.profile in dead_main]
+        more = (". The saved sign-in is dead: only Peter signing in again fixes it"
+                if dead and len(dead) == len(locked_out) else "")
         out.append(Warning(RED, f"{' and '.join(services)} could not sign in for "
-                           + _count(len(locked_out), "agent", "agents") + ": replies begin on a backup"))
+                           + _count(len(locked_out), "agent", "agents") + ": replies begin on a backup" + more))
+    used_up: dict = {}
+    for v in views:
+        for h in v.health:
+            if h.kind == H.ALLOWANCE_OUT:
+                used_up.setdefault(h.service, []).append(v.name)
+    for service, who in used_up.items():
+        name = service_name(service)
+        out.append(Warning(RED, f"{name[0].upper() + name[1:]}: an allowance is used up for "
+                           + _count(len(who), "agent", "agents") + " (the tree says which model and when it resets)"))
     stale = sum(v.old_chats for v in views)
     if stale:
         out.append(Warning(YELLOW, _count(stale, "open chat is", "open chats are")
@@ -957,6 +1185,9 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
     for v in views:
         if DLS_PLUGIN in v.addons:
             out.append(Warning(YELLOW, f"the DLS add-on is still switched on inside {v.name}"))
+    for ok, label, detail in lights:
+        if ok is False:
+            out.append(Warning(RED, f"voice system: {label}" + (f" ({detail[:120]})" if detail else "")))
     if not out:
         out.append(Warning(GREEN, "nothing needs attention"))
     return tuple(out)

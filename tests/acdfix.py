@@ -206,7 +206,42 @@ def edit_world(armed: bool = False, launcher: bool = True):
                        gateway_state=g.root / "gateway_state.json")
     if armed:
         E.set_armed(edit, True)
-    return SimpleNamespace(root=g.root, paths=paths, edit=edit, now=NOW, profiles=profiles, toml=g.toml)
+    return SimpleNamespace(root=g.root, paths=paths, edit=edit, now=NOW, profiles=profiles, toml=g.toml,
+                           grid=g.paths)        # version four: the Voice Desk grid's own fake files (gridstate.Paths)
+
+
+def with_grid(w):
+    """The same world, with the desk told where the Voice Desk grid's (fake) files are: w.paths and w.edit both
+    gain them, so the voice switches of the old dashboard can be read and switched. No lights (no osascript)."""
+    import dataclasses
+    w.paths = dataclasses.replace(w.paths, grid=w.grid)
+    w.edit = dataclasses.replace(w.edit, grid=w.grid)
+    return w
+
+
+def quota(ts: float, session: str, model: str, service: str = AGY, resets: str = "86h46m59s") -> str:
+    return failed(ts, session, model, service, "Antigravity model error: Individual quota reached. Please upgrade "
+                  f"your subscription to increase your limits. Resets in {resets}.")
+
+
+def dead_token(ts: float) -> str:
+    return (f"{stamp(ts)} WARNING agent.credential_pool: Anthropic OAuth refresh token for claude_code is terminally "
+            "invalid (Anthropic token refresh failed: HTTP 400 invalid_grant (Refresh token not found or invalid)); "
+            "the credential leaves rotation. Re-run 'hermes auth add anthropic' to sign in again.")
+
+
+def not_configured(ts: float, session: str, service: str = "anthropic") -> str:
+    return (f"{stamp(ts)} WARNING [{session}] agent.chat_completion_helpers: Fallback to {service} failed: "
+            "provider not configured")
+
+
+def usage_json(read_at: float, windows: list) -> str:
+    """One `hermes usage --json` document. windows: (label, used percent, resets at as a moment or None)."""
+    iso = lambda ts: dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat()        # noqa: E731
+    return json.dumps({"provider": "x", "source": "test", "title": "t", "plan": None, "fetched_at": iso(read_at),
+                       "windows": [{"label": label, "used_percent": used, "resets_at": iso(r) if r else None,
+                                    "detail": None} for label, used, r in windows],
+                       "details": [], "unavailable_reason": None})
 
 
 ROOM_HANDLE = {"orchestrator": "jarvis", "assistant": "kylie", "tax_angel_esther": "esther"}

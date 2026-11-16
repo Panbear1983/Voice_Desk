@@ -1,4 +1,4 @@
-"""Agent Control Desk, version two: the screen.
+"""Agent Control Desk, version four: the screen.
 
     ./acd.sh              every change is a dry run: shown in full, nothing written
     ./acd.sh --armed      changes are written, but only if the desk's own armed switch is also on (acd_edit.py)
@@ -13,6 +13,11 @@ the speaking speed. S saves (after one confirm line that says exactly what will 
   grid   up / down  choose an agent     Enter  open the agent's tree
   tree   up / down  choose a setting    Enter  change it     left / right  other agent     Esc  back
   both   U  undo the newest change      R  restart review    C  read again now    Q  close
+         P  pause / resume the watcher  A  (grid) the voices of Claude, Gemini and Codex
+
+Version four adds, per agent: whether each service it uses can still sign in and how much allowance is left
+(acd_health.py), anything changed behind the desk's back with "put it back" / "accept it" (acd_watch.py), and
+the old Voice Desk grid's own switches for spoken replies, place by place (the grid's own code does the switch).
 
 It is an overseer, never a lifeline: it reads gently (ONE background read every 45 seconds for all agents),
 every change goes through acd_edit.py (backup, atomic write, read back, auto-restore, history, undo), and it
@@ -21,6 +26,7 @@ never restarts anything itself: R only leaves a request for the existing restart
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sys
 import textwrap
 from dataclasses import dataclass, field
@@ -38,6 +44,8 @@ from textual.widgets.option_list import Option
 import agents as A
 import acd_data as D
 import acd_edit as E
+import acd_health as H
+import acd_watch as W
 
 REFRESH_SEC = 45
 DRY_LABEL = "dry run: changes are shown in full, nothing is written"
@@ -123,10 +131,17 @@ def cell_model_set(v: D.AgentView) -> Text:
     out = [line(v.model_status, D.model_name(v.model.model) + lock),
            Text(f"  {D.service_name(v.model.service, short=True)}", style=DIM),
            Text(f"  {effort_words(v.model.effort)}", style=DIM)]
-    if v.model_behind:
+    if v.drifts:
+        out.append(line(D.RED, "changed behind the desk"))
+    elif v.model_behind:
         out.append(Text("  changed somewhere else", style=DIM))
     elif v.model_pending:
         out.append(Text("  saved, not live everywhere", style=DIM))
+    main = next((h for h in v.health if h.main), None)
+    if main is not None:
+        words = {H.SIGNIN_DEAD: "sign-in dead", H.ALLOWANCE_OUT: "allowance used up"}.get(
+            main.kind, "signed in, working" if main.state == H.GOOD else "sign-in unknown")
+        out.append(line(main.status, words) if main.state != H.UNKNOWN else Text("? " + words, style=DIM))
     return join(out)
 
 
@@ -286,7 +301,7 @@ def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
         add(_leaves("│  ├─ ", "Set to", v.model_status,
                     f"{D.model_name(v.model.model)}, on {D.service_name(v.model.service)}, "
                     f"{effort_words(v.model.effort)}{lock}{note}"), "model")
-        if v.model_behind:
+        if v.model_behind and not any(d.key == "model" for d in v.drifts):
             add(_leaves("│  ├─ ", "Changed", D.RED, v.model_behind))
         if v.model_pending:
             add(_leaves("│  ├─ ", "Not live yet", D.YELLOW, v.model_pending))
@@ -297,10 +312,24 @@ def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
                     f"{v.last.note} ({where(v.last.where)}, {when(v.last.when)})"))
     else:
         add(_leaf("│  ├─ ", "Last reply", Text("unknown: no reply in the current log", style=DIM)))
-    if v.signin_failed and v.model:
+    if v.health:
+        add(Text("│  ├─ Services it uses: sign-in and allowance", style=""))
+        for h in v.health:
+            add(_leaves("│  │     ", "", h.status if h.state != H.UNKNOWN else None, h.words, 0,
+                        dim=h.state == H.UNKNOWN, more="│  │     "))
+            if h.allowance:
+                for ln in h.allowance:
+                    add(_leaves("│  │         ", "", None, "allowance: " + ln, 0, dim=True, more="│  │         "))
+            elif h.allowance_note:
+                add(_leaves("│  │         ", "", None, "allowance: unknown (" + h.allowance_note + ")", 0, dim=True,
+                            more="│  │         "))
+    elif v.signin_failed and v.model:
         add(_leaves("│  ├─ ", "Sign-in", D.RED,
                     f"{D.service_name(v.model.service)} could not sign in during the last day "
                     f"({D.plain_reason(v.signin_failed)})"))
+    for i, d in enumerate(v.drifts):
+        add(_leaves("│  ├─ ", "Changed", D.RED, d.sentence + (f" ({d.note})" if d.note else "")
+                    + " Enter: put it back, or accept it."), f"drift:{i}")
     add(_leaf("│  ├─ ", "Drops today", Text(
         f"{v.drops_today} to a backup" if v.drops_today else "none", style="" if v.drops_today else DIM)))
     if v.old_chats:
@@ -334,9 +363,17 @@ def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
         add(_leaf("│  ├─ ", "Chinese", Text(chinese, style=DIM if v.voice.english_only else "")), "voice_zh")
         speed = E.speed_word(v.voice.speed) + (f" ({v.voice.speed:g})" if v.voice.speed is not None else "")
         add(_leaf("│  ├─ ", "Speed", Text(speed, style=DIM if v.voice.speed is None else "")), "speed")
-        add(_leaf("│  └─ ", "If the voice fails", Text("stays silent, no stand-in voice"), 20))
+        if v.effect:
+            add(_leaf("│  ├─ ", "Effect", Text(str(v.effect))), "effect")
+        add(_leaf("│  ├─ " if v.voice_places else "│  └─ ", "If the voice fails",
+                  Text("stays silent, no stand-in voice"), 20))
     else:
-        add(Text("│  └─ no voice in the Voice Desk list", style=DIM))
+        add(Text("│  ├─ no voice in the Voice Desk list" if v.voice_places else
+                 "│  └─ no voice in the Voice Desk list", style=DIM))
+    if v.voice_places:
+        add(Text("│  └─ Spoken replies, place by place (the setting, then what the logs say really happened)"))
+        for ln, setting in place_rows(v.voice_places, "│        "):
+            add(ln, setting)
 
     add(Text("├─ Where it shows up", style="bold"))
     for i, p in enumerate(v.presence):
@@ -366,6 +403,22 @@ def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
     return rows
 
 
+def place_rows(places: tuple, pad: str) -> list[tuple[list[Text], Optional[str]]]:
+    """The voice switches of one agent as tree rows: (the lines, the setting Enter changes there or None)."""
+    out = []
+    for i, p in enumerate(places):
+        branch = "└─ " if i == len(places) - 1 else "├─ "
+        more = pad + ("   " if i == len(places) - 1 else "│  ")
+        words = p.value + (f"   ({p.evidence})" if p.evidence else "")
+        lines = _leaves(pad + branch, D.VOICE_PLACE_NAME.get(p.key, p.key), p.status, words, 31, more=more)
+        if p.problem:
+            lines += _leaves(more, "", D.RED, p.problem, 31, more=more)
+        if not p.can_switch and p.why_not:
+            lines += _leaves(more, "", None, p.why_not, 31, dim=True, more=more)
+        out.append((lines, f"vplace:{p.key}" if p.can_switch else None))
+    return out
+
+
 def tree_text(v: D.AgentView) -> Text:
     """The whole tree of one agent as one text (what the tree screen shows, line for line)."""
     return join([ln for lines, _ in tree_rows(v) for ln in lines])
@@ -387,16 +440,38 @@ def agent_list_text(snap: D.Snapshot, index: int) -> Text:
 def others_text(snap: D.Snapshot) -> Text:
     if not snap.others:
         return Text("")
-    out = [Text("Called by name through the Voice Desk (voice and call names only)", style=DIM)]
+    out = [Text("Called by name through the Voice Desk (voice and call names only; A changes their voices)", style=DIM)]
     for o in snap.others:
         t = Text()
         t.append(f"  {o.name.ljust(8)}", style="bold")
         t.append(f"voice {D.voice_label(o.english)}")
         if o.chinese:
             t.append(f", Chinese {D.voice_label(o.chinese)}")
+        own = next((p for p in o.voice_places if p.key == "terminal"), None)
+        if own is not None:
+            t.append(f"   speaks in its own window: {own.value}")
         t.append("   answers to: " + ", ".join(o.call_names), style=DIM)
         out.append(t)
     return join(out)
+
+
+def systems_text(snap: Optional[D.Snapshot]) -> Text:
+    """One line: the watcher's mode, then the Voice Desk's own health strip (voice engine, gateway, queue ...)."""
+    t = Text()
+    if snap is None:
+        return t
+    if snap.watch_mode:
+        t.append("watcher: ", style=DIM)
+        t.append(snap.watch_mode, style=COLOUR[D.YELLOW] if snap.watch_paused else DIM)
+    for ok, label, _detail in snap.lights:
+        if label.lower().startswith("watcher"):         # the Voice Desk's own watcher (voice switches), not the desk's
+            label = "Voice Desk " + label.replace("(W resumes)", "").strip()
+            label = label.replace("WATCHER PAUSED", "watcher paused")
+        t.append("   ")
+        colour = DIM if ok is None else COLOUR[D.GREEN] if ok else COLOUR[D.RED]
+        t.append("● ", style=colour)
+        t.append(label, style=colour if ok is False else DIM)
+    return t
 
 
 # ---- the pop-ups -------------------------------------------------------------------------------------------
@@ -647,6 +722,37 @@ class NoticePopup(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class PickPopup(ModalScreen[Optional[str]]):
+    """A short list to pick one line from. Enter picks, Esc closes. Returns the line's token, or None."""
+    CSS = _POPUP_CSS.format(name="PickPopup")
+    BINDINGS = [Binding("escape", "cancel", "close")]
+
+    def __init__(self, title: str, rows: list[tuple[str, str]], note: str = "") -> None:
+        super().__init__()
+        self.title_words, self.rows, self.note = title, rows, note
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="box"):
+            yield Static(self.title_words, id="box-title")
+            yield Static(self.note, id="box-note")
+            yield OptionList(*[Option(label, disabled=not token) for token, label in self.rows], id="box-list")
+            yield Static("Up / Down move   Enter open   Esc close", id="box-keys")
+
+    def on_mount(self) -> None:
+        lst = self.query_one("#box-list", OptionList)
+        lst.focus()
+        lst.highlighted = next((i for i, (token, _) in enumerate(self.rows) if token), None)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        token = self.rows[event.option_index][0]
+        if token:
+            self.dismiss(token)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 def results_text(results: list[E.Result]) -> tuple[str, Text]:
     """(title, body) for what a save did, or would do."""
     dry = any(r.dry for r in results)
@@ -673,10 +779,12 @@ _TOP_CSS = """
 #title { height: 1; background: #161b22; padding: 0 1; }
 #warnings { height: auto; padding: 0 1; }
 #legend { height: 1; padding: 0 1; background: #161b22; }
+#systems { height: auto; padding: 0 1; }
 #keys { height: 1; padding: 0 1; background: #161b22; color: #8b949e; dock: bottom; }
 """
 _SHARED_KEYS = [Binding("c", "app.reread", "read again", show=False), Binding("q", "app.quit", "close", show=False),
-                Binding("u", "app.undo", "undo", show=False), Binding("r", "app.restart_review", "restart", show=False)]
+                Binding("u", "app.undo", "undo", show=False), Binding("r", "app.restart_review", "restart", show=False),
+                Binding("p", "app.pause_watcher", "pause the watcher", show=False)]
 
 
 class GridScreen(Screen):
@@ -687,12 +795,13 @@ class GridScreen(Screen):
     #grid > .datatable--header { background: #161b22; color: #8b949e; }
     #others { height: auto; padding: 1 1 0 1; }
     """
-    BINDINGS = list(_SHARED_KEYS)
+    BINDINGS = [Binding("a", "app.assistants", "assistants' voices", show=False), *_SHARED_KEYS]
 
     def compose(self) -> ComposeResult:
         yield Static("", id="title")
         yield Static("reading every agent's settings and log ...", id="warnings")
         yield Static(legend_text(), id="legend")
+        yield Static("", id="systems")
         yield DataTable(id="grid", cursor_type="row", zebra_stripes=False)
         yield Static("", id="others")
         yield Static("", id="keys")
@@ -718,12 +827,13 @@ class GridScreen(Screen):
             self.shown = cols
         hidden = len(COLUMNS) - len(cols)
         self.query_one("#keys", Static).update(
-            "up/down choose agent   Enter open the agent's tree (change settings there)   U undo   R restart review   "
-            "C read again   Q close" + (f"   ({hidden} columns hidden: window is narrow, the tree has them)"
-                                         if hidden else "   ? = could not be read yet"))
+            "up/down choose agent   Enter open the agent's tree (change settings there)   A assistants' voices   "
+            "U undo   R restart review   P pause watcher   C read again   Q close"
+            + (f"   ({hidden} columns hidden: window is narrow, the tree has them)" if hidden else ""))
         if snap is None:
             return
         self.query_one("#warnings", Static).update(warnings_text(snap))
+        self.query_one("#systems", Static).update(systems_text(snap))
         keep = table.cursor_row
         table.clear()
         for v in snap.agents:
@@ -759,11 +869,13 @@ class TreeScreen(Screen):
         yield Static("", id="title")
         yield Static("", id="warnings")
         yield Static(legend_text(), id="legend")
+        yield Static("", id="systems")
         with Horizontal(id="body"):
             yield Static("", id="agents")
             yield OptionList(id="tree")
         yield Static(f"{CAN_CHANGE} = can be changed: up/down choose, Enter change   left/right other agent   "
-                     "Esc back to the grid   U undo   R restart review   C read again   Q close", id="keys")
+                     "Esc back to the grid   U undo   R restart review   P pause watcher   C read again   Q close",
+                     id="keys")
 
     def on_mount(self) -> None:
         self.query_one("#tree", OptionList).focus()
@@ -782,6 +894,7 @@ class TreeScreen(Screen):
         if snap is None or v is None:
             return
         self.query_one("#warnings", Static).update(warnings_text(snap))
+        self.query_one("#systems", Static).update(systems_text(snap))
         self.query_one("#agents", Static).update(agent_list_text(snap, self.index))
         tree = self.query_one("#tree", OptionList)
         keep = None if reset else tree.highlighted
@@ -843,9 +956,12 @@ class Desk(App):
     def __init__(self, collector: Optional[Callable[[], D.Snapshot]] = None, autostart: bool = True,
                  edit: Optional[E.EditPaths] = None, loader: Optional[E.Loader] = None,
                  tester: Optional[Callable[[A.Agent, str, str], tuple[bool, str]]] = E.real_voice_test,
-                 launcher_armed: bool = False, runner: Optional[Callable[[list], tuple]] = None) -> None:
+                 launcher_armed: bool = False, runner: Optional[Callable[[list], tuple]] = None,
+                 usage: Optional[H.UsageReader] = None, watching: bool = True) -> None:
         super().__init__()
         self.runner = runner                                     # tests pass a fake Team Room command
+        self.usage = usage                                       # the ONE shared allowance reader (None = not asked)
+        self.watching = watching                                 # False = the watcher never acts from this desk
         self.snapshot: Optional[D.Snapshot] = None
         self.autostart = autostart
         self.edit = edit or E.EditPaths.default(launcher_armed=launcher_armed)
@@ -855,7 +971,14 @@ class Desk(App):
             paths = D.Paths.default()
             reader = D.LogReader(paths.profiles)                 # ONE reader, kept for the life of the desk
             edit_paths = self.edit
-            collector = lambda: D.collect(paths, reader, desk=E.record(edit_paths))     # noqa: E731
+            if self.usage is None and os.environ.get("ACD_USAGE", "on") != "off":
+                self.usage = H.UsageReader()
+            usage_reader = self.usage
+
+            def collector() -> D.Snapshot:
+                got = usage_reader.cached() if usage_reader is not None else None
+                return D.collect(paths, reader, desk=E.record(edit_paths), usage=got or None,
+                                 watch=W.view(edit_paths))
         self.collector = collector
 
     def on_mount(self) -> None:
@@ -884,12 +1007,44 @@ class Desk(App):
 
     @work(thread=True, exclusive=True, group="acd-read")
     def read_in_background(self) -> None:
+        self.watch_step()
         try:
             snap = self.collector()
         except Exception as e:                       # noqa: BLE001  a failed read must never take the desk down
             self.call_from_thread(self.read_failed, f"{type(e).__name__}: {e}")
             return
         self.call_from_thread(self.apply_snapshot, snap)
+
+    def watch_step(self) -> None:
+        """The watcher's own look, on the same slow timer as the read. It runs only on an ARMED desk (an unarmed
+        desk writes nothing at all), and it changes a setting only when automatic put-back is switched on too."""
+        if not self.watching or not self.is_armed:
+            return
+        snap = self.snapshot
+        overrides = {v.profile: v.override.model for v in snap.agents if v.override} if snap else {}
+        try:
+            self.last_watch = W.run_once(self.edit, act=True, loader=self.loader or E.default_loader(),
+                                         overrides=overrides)
+        except Exception:                            # noqa: BLE001  the watcher must never take the desk down
+            self.last_watch = None
+
+    def usage_services(self) -> dict:
+        """service -> one agent that uses it (whose sign-in the usage check is asked as)."""
+        out: dict = {}
+        for v in (self.snapshot.agents if self.snapshot else ()):
+            for h in v.health:
+                out.setdefault(h.service, v.profile)
+        return out
+
+    @work(thread=True, exclusive=True, group="acd-usage")
+    def read_usage_in_background(self) -> None:
+        """Hermes' own usage check, at most once per service every ten minutes, never on the screen's thread."""
+        try:
+            ran = self.usage.refresh(self.usage_services()) if self.usage is not None else 0
+        except Exception:                            # noqa: BLE001
+            ran = 0
+        if ran:
+            self.call_from_thread(self.action_reread)
 
     def read_failed(self, why: str) -> None:
         for screen in self.screen_stack:
@@ -902,23 +1057,30 @@ class Desk(App):
         for screen in self.screen_stack:
             if isinstance(screen, (GridScreen, TreeScreen)):
                 screen.show(snap)
+        if self.usage is not None and self.autostart and self.usage.due(self.usage_services()):
+            self.read_usage_in_background()
 
     def open_tree(self, index: int) -> None:
         if self.snapshot and self.snapshot.agents:
             self.push_screen(TreeScreen(index))
 
     # -- changing a setting ------------------------------------------------------------------------------------
-    def voice_agent(self, v: D.AgentView) -> tuple[Optional[A.Agent], dict]:
+    def voice_agent(self, v) -> tuple[Optional[A.Agent], dict]:
         try:
             cfg = A.load(self.edit.voice.toml)
         except (OSError, ValueError):
             return None, {}
-        return next((a for a in A.agents(cfg) if a.key == v.voice_key), None), cfg
+        key = getattr(v, "voice_key", "") or getattr(v, "key", "")
+        return next((a for a in A.agents(cfg) if a.key == key), None), cfg
 
     def open_setting(self, v: D.AgentView, setting: str) -> None:
         build = {"model": self.model_popup, "backups": self.backups_popup, "voice": self.voice_popup,
-                 "voice_zh": self.voice_popup, "speed": self.voice_popup, "team_room": self.team_room_popup,
-                 "talk": self.talk_popup}.get(setting)
+                 "voice_zh": self.voice_popup, "speed": self.voice_popup, "effect": self.voice_popup,
+                 "team_room": self.team_room_popup, "talk": self.talk_popup}.get(setting)
+        if setting.startswith("drift:"):
+            build = self.drift_popup
+        elif setting.startswith("vplace:"):
+            build = self.place_popup
         if not build:
             return
         popup, jobs_for = build(v, setting)
@@ -982,14 +1144,78 @@ class Desk(App):
         return EditPopup(f"{v.name}: backups", [group], describe, dry=dry,
                          note="A backup answers only when the model before it fails. Space switches one on or off."), jobs
 
-    def voice_popup(self, v: D.AgentView, setting: str):
+    def drift_popup(self, v: D.AgentView, setting: str):
+        """Something changed a setting behind the desk's back: put it back, or accept it."""
+        edit, loader, dry = self.edit, self.loader, not self.is_armed
+        i = int(setting.split(":", 1)[1])
+        if i >= len(v.drifts):
+            return EditPopup(f"{v.name}: changed", [], lambda c: [], locked="That change is no longer there.", dry=dry), \
+                lambda c: []
+        d = v.drifts[i]
+        group = Group("answer", "What should the desk do?", "radio", [
+            Opt("put", f"put it back: {d.words(d.want)} again (what the desk set)"),
+            Opt("accept", f"accept it: keep {d.words(d.have)}, and the desk expects that from now on")])
+
+        def describe(c: dict) -> list[str]:
+            if c.get("answer") == "put":
+                return [f"{v.name}'s {d.what} is put back to {d.words(d.want)}, through the desk's own safe path "
+                        "(backup, read back, U undoes it)."]
+            if c.get("answer") == "accept":
+                return [f"{v.name}'s {d.what} stays {d.words(d.have)}. Only the desk's own record changes; "
+                        "no agent's settings file is touched."]
+            return []
+
+        def jobs(c: dict) -> list:
+            if c.get("answer") == "put":
+                return [lambda: W.put_back(d, edit, loader=loader)]
+            if c.get("answer") == "accept":
+                return [lambda: W.accept(d, edit)]
+            return []
+
+        return EditPopup(f"{v.name}: {d.what} was changed behind the desk's back", [group], describe,
+                         note=d.sentence, dry=dry), jobs
+
+    def place_popup(self, v, setting: str):
+        """Spoken replies at one place: the old Voice Desk grid's own switch (its code does the change)."""
+        edit, dry = self.edit, not self.is_armed
+        place = setting.split(":", 1)[1]
+        key = getattr(v, "voice_key", "") or getattr(v, "key", "")
+        name = D.place_words(place)
+        try:
+            title, options, why = E.voice_place_menu(key, place, edit)
+        except Exception as e:                           # noqa: BLE001
+            title, options, why = "", [], f"the switch could not be read ({type(e).__name__})"
+        if not options:
+            return (EditPopup(f"{v.name}: spoken replies, {name}", [], lambda c: [], dry=dry,
+                              locked=(why or "nothing to switch here")[:1].upper() + (why or "nothing to switch here")[1:]),
+                    lambda c: [])
+        labels = {tok: label for tok, label, _ in options}
+        group = Group("place", title or name, "radio", [Opt(tok, label, cur) for tok, label, cur in options])
+
+        def describe(c: dict) -> list[str]:
+            if "place" not in c:
+                return []
+            return [f"{v.name}: spoken replies, {name}: {labels[c['place']]}.",
+                    "The Voice Desk's own switch code makes the change: every file is backed up, written, read back "
+                    "and put back at once if it does not read back."]
+
+        def jobs(c: dict) -> list:
+            return [lambda: E.set_voice_place(key, place, c["place"], edit)] if "place" in c else []
+
+        return EditPopup(f"{v.name}: spoken replies, {name}", [group], describe, dry=dry,
+                         note="This is the same switch the Voice Desk dashboard had."), jobs
+
+    def voice_popup(self, v, setting: str):
         edit, dry = self.edit, not self.is_armed
         agent, cfg = self.voice_agent(v)
         if agent is None:
             return (EditPopup(f"{v.name}: voice", [], lambda c: [], dry=dry,
                               locked=f"{v.name} has no voice in the Voice Desk list, so there is nothing to change."),
                     lambda c: [])
-        if setting == "speed":
+        if setting == "effect":
+            opts = [Opt(tok, label, cur, disabled) for tok, label, cur, disabled in E.voice_options(agent, "effect", cfg)]
+            groups = [Group("effect", f"Voice effect on {D.voice_label(agent.voice)}", "radio", opts)]
+        elif setting == "speed":
             now = E.speed_word(agent.speed)
             opts = [Opt(word, f"{word} ({value:g})", word == now) for word, value in E.SPEEDS]
             groups = [Group("speed", "Speaking speed" + ("" if any(o.now for o in opts) else f" (now: {now})"),
@@ -1006,6 +1232,8 @@ class Desk(App):
             for key, tok in c.items():
                 if key == "speed":
                     out.append(f"{v.name}'s speaking speed changes from {E.speed_word(agent.speed)} to {tok}.")
+                elif key == "effect":
+                    out.append(f"{v.name}'s voice effect changes from {agent.effect or 'none'} to {tok}.")
                 else:
                     before = agent.voice if key == "voice" else agent.voice_zh
                     lang = "English" if key == "voice" else "Chinese"
@@ -1019,8 +1247,11 @@ class Desk(App):
                     for key, tok in c.items()]
 
         tester = (lambda lang, voice: self.tester(agent, lang, voice)) if self.tester else None
-        return EditPopup(f"{v.name}: voice", groups, describe, tester=tester, dry=dry,
-                         note="Only the voices this agent's own speaker can make are listed. One voice, silent if it fails."), jobs
+        note = "Only the voices this agent's own speaker can make are listed. One voice, silent if it fails."
+        lands = getattr(v, "takes_effect", "")
+        if lands:
+            note += f" Where it lands: {lands}."
+        return EditPopup(f"{v.name}: voice", groups, describe, tester=tester, dry=dry, note=note), jobs
 
     def team_room_popup(self, v: D.AgentView, _setting: str):
         """In or out of the Team Room: ONE switch for the terminal room and the Telegram group together."""
@@ -1136,6 +1367,63 @@ class Desk(App):
         if results:
             title, body = results_text(results)
             self.push_screen(NoticePopup(title, body))
+        self.action_reread()
+
+    def action_assistants(self) -> None:
+        """Claude, Gemini and Codex: pick one of their voice settings, then the usual pop-up opens."""
+        snap = self.snapshot
+        if snap is None or not snap.others:
+            self.push_screen(NoticePopup("Assistants' voices", Text("No assistant is in the Voice Desk list.")))
+            return
+        rows: list[tuple[str, str]] = []
+        for o in snap.others:
+            rows.append(("", f"{o.name}   ({o.takes_effect})"))
+            rows.append((f"{o.key}|voice", f"    English voice: {D.voice_label(o.english)}"))
+            rows.append((f"{o.key}|voice_zh", f"    Chinese voice: {D.voice_label(o.chinese)}"))
+            for p in o.voice_places:
+                if p.can_switch:
+                    rows.append((f"{o.key}|vplace:{p.key}",
+                                 f"    Spoken replies, {D.place_words(p.key)}: {p.value}"))
+        by_key = {o.key: o for o in snap.others}
+
+        def picked(token: Optional[str]) -> None:
+            if not token:
+                return
+            key, setting = token.split("|", 1)
+            build = self.place_popup if setting.startswith("vplace:") else self.voice_popup
+            popup, jobs_for = build(by_key[key], setting)
+            self.push_screen(popup, lambda changes: self.run_jobs(jobs_for(changes)) if changes else None)
+
+        self.push_screen(PickPopup("Claude, Gemini and Codex: voices", rows,
+                                   note="Called by name through the Voice Desk. Pick a setting to change."), picked)
+
+    def action_pause_watcher(self) -> None:
+        """P: pause or resume the watcher. While paused it reports nothing and puts nothing back. The pause is the
+        desk's own small file, so, like every other change, it is written only on an armed desk."""
+        edit = self.edit
+        paused = not W.is_paused(edit)
+        word = "paused" if paused else "resumed"
+        if not self.is_armed:
+            self.push_screen(NoticePopup("Watcher", join([
+                Text(f"DRY RUN, nothing written ({E.why_not_armed(edit)}). This would happen: the watcher is {word}"
+                     + (": it reports nothing and puts nothing back until P is pressed again." if paused else ".")),
+                Text("On a desk that is not armed the watcher only reports, and never changes a setting.", style=DIM)])))
+            return
+        try:
+            W.set_paused(edit, paused)
+        except OSError as e:
+            self.push_screen(NoticePopup("Watcher", Text(f"The pause could not be saved ({e.strerror or e}).")))
+            return
+        out = [Text("The watcher is PAUSED: it reports nothing and puts nothing back. P resumes it." if paused else
+                    "The watcher is running again: it reports what was changed behind the desk's back.")]
+        if edit.grid is not None:
+            try:
+                import watcher as voice_watcher
+                voice_watcher.set_paused(edit.grid, paused)
+                out.append(Text(f"The Voice Desk's own watcher (the voice switches) was {word} as well.", style=DIM))
+            except Exception as e:                       # noqa: BLE001
+                out.append(Text(f"The Voice Desk's own watcher could not be {word} ({type(e).__name__}).", style=DIM))
+        self.push_screen(NoticePopup("Watcher", join(out)))
         self.action_reread()
 
     def action_undo(self) -> None:

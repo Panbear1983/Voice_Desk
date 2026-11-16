@@ -84,11 +84,14 @@ NEEDS = {
              "from its next session.",
     "rule": "No restart needed. The desk shows it at once. The Team Room follows a rule only where its line says so; "
             "a rule marked 'recorded, not yet enforced' changes nothing in the room yet.",
+    "voice_place": "No restart needed for most places: the Telegram team group, Claude's and Gemini's own windows "
+                   "and the mic window read their switch before every line. A Telegram private chat follows from "
+                   "Peter's next message when the agents' system has the live-reload fix; the result says so.",
     "team_room": "No restart needed in the normal case: the Team Room makes its next room through the agents' system "
                  "and switches the Telegram side in the same step. The chat on screen starts fresh; the old lines "
                  "stay in the saved history.",
 }
-UNDOABLE = ("model", "effort", "backup", "voice", "rule", "team_room")
+UNDOABLE = ("model", "effort", "backup", "voice", "rule", "team_room", "voice_place")
 _DESK_NOTE = re.compile(r"^[ \t]*# \d{4}-\d\d-\d\d " + re.escape(WHO) + r": ")
 
 
@@ -109,6 +112,7 @@ class EditPaths:
     members: Optional[Path] = None          # the Team Room's saved member list (read, never written by the desk)
     team_room_cmd: Optional[Path] = None    # the Team Room's own command (its add / kick does both doors)
     gateway_state: Optional[Path] = None    # the agents' own status file: which agent has a Telegram bot
+    grid: Any = None                        # the Voice Desk grid's own files (gridstate.Paths): the voice switches
 
     @classmethod
     def default(cls, launcher_armed: bool = False) -> "EditPaths":
@@ -122,7 +126,7 @@ class EditPaths:
                    config_backups=Path(env("ACD_CONFIG_BACKUPS", HOME / ".hermes/profile-backups")),
                    voice=vp, launcher_armed=launcher_armed, members=base.members,
                    team_room_cmd=Path(env("ACD_TEAM_ROOM_CMD", HOME / ".local/bin/team-room")),
-                   gateway_state=base.gateway_state)
+                   gateway_state=base.gateway_state, grid=base.grid)
 
     @property
     def armed_file(self) -> Path:
@@ -715,7 +719,7 @@ def set_backup(profile: str, provider: str, model: str, on: bool, paths: EditPat
 
 
 # ---- voice -------------------------------------------------------------------------------------------------------
-VOICE_FIELDS = ("voice", "voice_zh", "speed")
+VOICE_FIELDS = ("voice", "voice_zh", "speed", "effect")
 
 
 def speed_word(speed: Optional[float]) -> str:
@@ -733,6 +737,9 @@ def voice_options(agent: A.Agent, field_name: str, cfg: dict) -> list[tuple[str,
     out = []
     for o in options:
         if o.token == voicepick.OTHER:
+            continue
+        if field_name == "effect":                      # the named samples and starting points; never a typed recipe
+            out.append((o.token, o.label, o.current, False))
             continue
         if o.token == voicepick.SILENT:
             out.append(("", "silent: no voice for this language", o.current, False))
@@ -779,12 +786,15 @@ def _voice_do(agent_key: str, field_name: str, value: Any, vp: voiceedit.EditPat
         return _speed_change(agent_key, value, vp, now)
     cfg = A.load(vp.toml)
     agent = voiceedit._find_agent(cfg, agent_key)
-    before = agent.voice if field_name == "voice" else agent.voice_zh
+    before = {"voice": agent.voice, "voice_zh": agent.voice_zh, "effect": agent.effect}[field_name]
     res = voiceedit.change(agent_key, field_name, value or None, vp, now=now, kind="undo" if undo else "change")
     if not res.ok:
         return Result(False, "Not changed. " + res.message)
     if res.entry is None:
         return Result(True, res.message)
+    if field_name == "effect":
+        return Result(True, f"{agent.display}'s voice effect changes from {before or 'none'} to {value or 'none'}",
+                      entry={"before": before, "after": value or None})
     lang = "English" if field_name == "voice" else "Chinese"
     return Result(True, f"{agent.display}'s {lang} voice changes from {D.voice_label(before)} to "
                         f"{D.voice_label(value or None)}", entry={"before": before, "after": value or None})
@@ -889,6 +899,95 @@ def real_voice_test(agent: A.Agent, lang: str, voice: str) -> tuple[bool, str]:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+
+
+# ---- spoken replies, place by place (version four: the old Voice Desk grid's switches) -----------------------------
+def _plan_words(change: dict) -> str:
+    """One planned file change of the Voice Desk's own switch code, in plain words."""
+    where = _file_words(Path(str(change.get("path", ""))))
+    kind = change.get("t")
+    if kind == "marker":
+        return f"{where}: the marker file is {'made' if change.get('after') else 'taken away'}"
+    if kind == "jsonlist":
+        bits = [f"add {x}" for x in change.get("add", ())] + [f"take out {x}" for x in change.get("remove", ())]
+        return f"{where}: {change.get('key')}: " + ", ".join(bits)
+    return f"{where}: {change.get('key')}: {change.get('before')!r} -> {change.get('after')!r}"
+
+
+def voice_place_menu(agent_key: str, place: str, paths: EditPaths) -> tuple[str, list, str]:
+    """(title, [(token, label, is today's)], why it cannot be switched). The Voice Desk grid's own menu."""
+    import gridstate as G
+    import onoff
+    if paths.grid is None:
+        return "", [], "the Voice Desk's own files are not known to the desk"
+    agent = voiceedit._find_agent(A.load(paths.voice.toml), agent_key)
+    cell = G.CELL_FUNCS[place](agent, paths.grid)
+    menu = onoff.menu(agent, place, cell, paths.grid)
+    return menu.title, [(o.token, o.label, o.current) for o in menu.options if not o.disabled], menu.why_not
+
+
+def set_voice_place(agent_key: str, place: str, token: str, paths: EditPaths, *,
+                    now: Optional[_dt.datetime] = None) -> Result:
+    """Switch spoken replies at one place, with the Voice Desk grid's OWN switch code (onoff.set_cell): the same
+    files, the same backup, read-back and put-back. Not armed = the plan is shown and nothing is written."""
+    import gridstate as G
+    import onoff
+    import onoff_hermes
+    now = _now(now)
+    if paths.grid is None:
+        return Result(False, "Not changed. The Voice Desk's own files are not known to the desk.")
+    try:
+        agent = voiceedit._find_agent(A.load(paths.voice.toml), agent_key)
+        if not onoff.can_switch(agent, place):
+            why = onoff.menu(agent, place, G.Cell(G.UNKNOWN), paths.grid).why_not or "this place has no switch"
+            raise EditError(why[0].upper() + why[1:])
+        before = "queue" if place == "mic" else G.CELL_FUNCS[place](agent, paths.grid).value
+        if place == "tg_group":
+            changes, note = onoff._plan_tg_group(agent, token, paths.grid)
+        elif place == "terminal":
+            changes, note = (onoff._plan_claude(agent, token, paths.grid, paths.voice)
+                             if G.kind_of(agent) == G.CLAUDE else onoff_hermes.plan_gemini(agent, token, paths.grid))
+        elif place == "tg_dm":
+            changes, note = onoff_hermes.plan_tg_dm(agent, token, paths.grid)
+        else:
+            changes, note = onoff._plan_mic(token, paths.grid)
+    except (EditError, onoff.SwitchError, voiceedit.EditError, OSError, ValueError, KeyError) as exc:
+        return Result(False, f"Not changed. {exc}")
+    who = "Voice Desk (all agents)" if place == "mic" else agent.display
+    what = f"{who}: spoken replies, {D.place_words(place)}, change to {onoff._label(place, token)}"
+    if not changes:
+        return Result(True, f"{who}: already {onoff._label(place, token)} there; nothing to change")
+    lines = ["+ " + _plan_words(c) for c in changes]
+    needs = NEEDS["voice_place"] + (note if note else "")
+    if not armed(paths):
+        return Result(True, f"DRY RUN, nothing written ({why_not_armed(paths)}). This would happen: {what}",
+                      dry=True, lines=lines, needs=needs)
+    res = onoff.set_cell(agent_key, place, token, paths.grid, paths.voice, now=now)
+    if not res.ok:
+        return Result(False, "Not changed. " + res.message, lines=lines)
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    entry = {"id": f"{stamp}-{agent_key}-place-{place}", "ts": now.timestamp(), "who": WHO, "kind": "voice_place",
+             "agent": agent_key, "place": place, "what": what, "before": before, "after": token, "ok": True,
+             "switch": res.entry}
+    _append_history(paths, entry)
+    return Result(True, "Saved: " + what, lines=lines, needs=needs, entry=entry)
+
+
+def undo_voice_place(last: dict, paths: EditPaths, *, now: Optional[_dt.datetime] = None) -> Result:
+    import onoff
+    now = _now(now)
+    if not armed(paths):
+        return Result(True, f"DRY RUN, nothing written ({why_not_armed(paths)}). This would happen: undo of: "
+                            f"{last.get('what')}", dry=True)
+    res = onoff.undo(dict(last.get("switch") or {}), paths.voice, paths.grid)
+    if not res.ok:
+        return Result(False, "Not undone. " + res.message)
+    entry = {"id": f"{now:%Y%m%d-%H%M%S}-{last.get('agent')}-place-undo", "ts": now.timestamp(), "who": WHO,
+             "kind": "voice_place", "agent": last.get("agent"), "place": last.get("place"),
+             "what": "undo of: " + str(last.get("what")), "before": last.get("after"), "after": last.get("before"),
+             "ok": True, "undoes": last["id"], "switch": res.entry}
+    _append_history(paths, entry)
+    return Result(True, "Undone: " + str(last.get("what")), needs=NEEDS["voice_place"], entry=entry)
 
 
 # ---- the talk rules (version three) ------------------------------------------------------------------------------
@@ -1170,6 +1269,8 @@ def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Option
                           loader=loader, undoes=last["id"])
     if kind == "rule":
         return change_rules(last["profile"], dict(last["before"]), paths, now=now, undoes=last["id"])
+    if kind == "voice_place":
+        return undo_voice_place(last, paths, now=now)
     if kind == "team_room":
         return set_team_room(last["profile"], bool(last["before"]), paths, now=now, loader=loader, runner=runner,
                              undoes=last["id"], handle=str(last.get("handle") or ""), name=str(last.get("name") or ""))

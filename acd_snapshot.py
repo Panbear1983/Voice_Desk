@@ -5,6 +5,9 @@
 
     .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v2       # version two: the pop-ups as well
     .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v3       # version three: Team Room switch, talk rules
+    .venv/bin/python acd_snapshot.py --out docs/acd_mockups --v4       # version four: sign-in and allowance, the
+                                                                       # assistants' voices, a voice switch, and a
+                                                                       # drift pop-up drawn from a throw-away world
 
 Nothing appears on the screen and nothing is written except the pictures (the desk is never armed here, so a
 save inside a picture run is a dry run). Used for checks and for the
@@ -173,6 +176,114 @@ async def render_v3(out: Path, collector: Optional[Callable[[], D.Snapshot]] = N
     return made
 
 
+async def _shots(out: Path, prefix: str, size: tuple[int, int], make_app, steps_by_name: dict) -> list[Path]:
+    made: list[Path] = []
+    out.mkdir(parents=True, exist_ok=True)
+    for name, steps in steps_by_name.items():
+        app = make_app()
+        snap = await asyncio.to_thread(app.collector)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            app.apply_snapshot(snap)
+            await pilot.pause()
+            await steps(app, pilot)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            path = out / f"{prefix}_{name}.svg"
+            path.write_text(app.export_screenshot(title=f"Agent Control Desk: {name.replace('_', ' ')}"), encoding="utf-8")
+            made.append(path)
+    return made
+
+
+async def _setting(app, pilot, agent: int, name: str) -> bool:
+    app.open_tree(agent)
+    await pilot.pause()
+    if name not in app.screen.settings:
+        return False
+    app.screen.query_one("#tree").highlighted = app.screen.settings.index(name)
+    await pilot.press("enter")
+    await pilot.pause()
+    return True
+
+
+async def render_v4(out: Path, agent: int = 0, size: tuple[int, int] = (200, 78), prefix: str = "v4",
+                    usage: bool = True) -> list[Path]:
+    """Version four's pictures from the REAL files, read-only and never armed: the grid with login health, one
+    agent's tree with the sign-in and allowance rows, the assistants' section, and one voice-switch pop-up.
+    With usage=True Hermes' own usage check is run ONCE per service first (a status check, no model call)."""
+    import acd_edit as E
+    import acd_health as H
+    import acd_watch as W
+    paths = D.Paths.default()
+    reader = D.LogReader(paths.profiles)
+    edit = E.EditPaths.default(launcher_armed=False)
+    meter = H.UsageReader() if usage else None
+    if meter is not None:
+        first = await asyncio.to_thread(lambda: D.collect(paths, reader, desk=E.record(edit)))
+        services: dict = {}
+        for v in first.agents:
+            for h in v.health:
+                services.setdefault(h.service, v.profile)
+        await asyncio.to_thread(meter.refresh, services)
+
+    def collector() -> D.Snapshot:
+        return D.collect(paths, reader, desk=E.record(edit), usage=(meter.cached() or None) if meter else None,
+                         watch=W.view(edit))
+
+    def make_app():
+        return acd.Desk(collector=collector, autostart=False, edit=edit)
+
+    async def grid(app, pilot):
+        pass
+
+    async def tree(app, pilot):
+        app.open_tree(agent)
+        await pilot.pause()
+
+    async def assistants(app, pilot):
+        await pilot.press("a")
+        await pilot.pause()
+
+    async def place(app, pilot):
+        await _setting(app, pilot, 1, "vplace:tg_group")
+
+    return await _shots(out, prefix, size, make_app, {"grid": grid, "tree": tree, "assistants": assistants,
+                                                      "voice_place_popup": place})
+
+
+async def render_v4_drift(out: Path, size: tuple[int, int] = (190, 64), prefix: str = "v4") -> list[Path]:
+    """The drift pop-up, drawn from a THROW-AWAY world (nothing has drifted on the real system, and the desk has
+    never been armed there). The world lives in a temp folder; nothing real is read or written."""
+    import datetime as dt
+    import acd_edit as E
+    import acd_watch as W
+    from tests import acdfix as F
+    w = F.edit_world(armed=True)
+    when = dt.datetime(2026, 11, 17, 10, 0, 0)
+    E.change_model("assistant", "claude-sonnet-5-5", w.edit, loader=F.lines_loader, now=when)
+    cfg = w.profiles / "assistant" / "config.yaml"
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace("default: claude-sonnet-5-5", "default: claude-haiku-5-5", 1),
+                   encoding="utf-8")
+    now = when.timestamp() + 900
+
+    def collector() -> D.Snapshot:
+        return D.collect(w.paths, yaml_loader=F.lines_loader, now=now, desk=E.record(w.edit),
+                         watch=W.view(w.edit, now=now))
+
+    def make_app():
+        return acd.Desk(collector=collector, autostart=False, edit=w.edit, loader=F.lines_loader, tester=None,
+                        watching=False)
+
+    async def drift(app, pilot):
+        await _setting(app, pilot, 1, "drift:0")
+
+    async def drift_tree(app, pilot):
+        app.open_tree(1)
+        await pilot.pause()
+
+    return await _shots(out, prefix, size, make_app, {"drift_popup_demo": drift, "drift_tree_demo": drift_tree})
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
@@ -181,9 +292,16 @@ def main() -> None:
     ap.add_argument("--prefix", default="v1")
     ap.add_argument("--v2", action="store_true", help="draw version two's pictures (the pop-ups too); never armed")
     ap.add_argument("--v3", action="store_true", help="draw version three's pictures (Team Room switch, talk rules)")
+    ap.add_argument("--v4", action="store_true", help="draw version four's pictures (sign-in, allowance, drift, voices)")
+    ap.add_argument("--no-usage", action="store_true", help="with --v4: do not run Hermes' usage check")
     a = ap.parse_args()
     w, h = (int(x) for x in a.size.lower().split("x"))
-    if a.v3:
+    if a.v4:
+        size = (w, h) if a.size != "190x58" else (200, 78)
+        made = asyncio.run(render_v4(a.out, agent=a.agent, size=size, prefix=a.prefix if a.prefix != "v1" else "v4",
+                                     usage=not a.no_usage))
+        made += asyncio.run(render_v4_drift(a.out, prefix=a.prefix if a.prefix != "v1" else "v4"))
+    elif a.v3:
         made = asyncio.run(render_v3(a.out, agent=a.agent or 1, size=(w, h),
                                      prefix=a.prefix if a.prefix != "v1" else "v3"))
     elif a.v2:
