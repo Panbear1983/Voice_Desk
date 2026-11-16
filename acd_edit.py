@@ -91,7 +91,7 @@ NEEDS = {
                  "and switches the Telegram side in the same step. The chat on screen starts fresh; the old lines "
                  "stay in the saved history.",
 }
-UNDOABLE = ("model", "effort", "backup", "voice", "rule", "team_room", "voice_place")
+UNDOABLE = ("model", "effort", "backup", "voice", "rule", "team_room", "voice_place", "agent")
 _DESK_NOTE = re.compile(r"^[ \t]*# \d{4}-\d\d-\d\d " + re.escape(WHO) + r": ")
 
 
@@ -1271,6 +1271,9 @@ def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Option
         return change_rules(last["profile"], dict(last["before"]), paths, now=now, undoes=last["id"])
     if kind == "voice_place":
         return undo_voice_place(last, paths, now=now)
+    if kind == "agent":                                   # an agent added to, or taken out of, the Voice Desk list
+        import acd_parity
+        return acd_parity.undo_agent(last, paths, now=now)
     if kind == "team_room":
         return set_team_room(last["profile"], bool(last["before"]), paths, now=now, loader=loader, runner=runner,
                              undoes=last["id"], handle=str(last.get("handle") or ""), name=str(last.get("name") or ""))

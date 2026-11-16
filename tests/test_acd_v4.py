@@ -199,10 +199,15 @@ class AllowanceReader(unittest.TestCase):
         self.assertEqual(asked[1], ["hermes", "-p", "wanna-buffet", "usage", "--provider", "openai-codex", "--json"])
         got = r.cached()
         self.assertEqual(got["openai-codex"].windows[0].left, 25.0)
-        self.assertIn("no sign-in for it", got["anthropic"].problem)
+        # Hermes prints one sentence for three causes, so the desk never claims the sign-in is missing
+        self.assertIn("got no allowance reading", got["anthropic"].problem)
+        self.assertNotIn("has no sign-in", got["anthropic"].problem)
         self.assertEqual(r.refresh(want), 0)                              # too soon: not asked again
         clock[0] += 16 * 60
-        self.assertIn("more than 15 minutes old", r.cached()["openai-codex"].problem)   # stale = unknown
+        old = r.cached()["openai-codex"]                                  # stale = never shown as fresh ...
+        self.assertFalse(old.usable(clock[0]))
+        self.assertIn("last known, read 16 minutes ago", old.old_note)   # ... but the last known numbers stay
+        self.assertEqual(old.windows[0].left, 25.0)
         self.assertEqual(r.refresh(want), 2)
         self.assertEqual(r.calls, 4)
 

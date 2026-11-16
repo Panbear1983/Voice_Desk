@@ -189,6 +189,7 @@ class Allowance:
     windows: tuple[Window, ...] = ()
     read_at: Optional[float] = None
     problem: str = ""               # why there is no reading at all, in plain words
+    old_note: str = ""              # the windows are the LAST KNOWN reading, not a fresh one: its age and why
 
     def usable(self, now: float) -> bool:
         return bool(self.windows) and self.read_at is not None and 0 <= now - self.read_at <= STALE_SEC
@@ -265,21 +266,36 @@ class UsageReader:
     usage check, at most once per service every REFRESH_SEC, and is meant to run off the screen's thread."""
 
     def __init__(self, runner: Optional[Runner] = _run, clock: Callable[[], float] = time.time,
-                 refresh_sec: float = REFRESH_SEC, hermes: Optional[str] = None) -> None:
+                 refresh_sec: float = REFRESH_SEC, hermes: Optional[str] = None,
+                 keep: Optional[Path] = None) -> None:
         self.runner, self.clock, self.refresh_sec = runner, clock, refresh_sec
         self.hermes = hermes or hermes_bin()
         self._got: dict[str, Allowance] = {}
+        self._good: dict[str, Allowance] = {}       # the last reading that had real numbers, per service
         self._tried: dict[str, float] = {}
         self.calls = 0                      # how many checks were really run (a test keeps this low)
+        self.keep = keep                    # a small file of the last good readings, so a new desk still has them
+        if keep is not None:
+            self._good = load_kept(keep)
 
     def cached(self, now: Optional[float] = None) -> dict:
-        """service -> the newest reading, already judged for staleness. Never runs anything."""
+        """service -> the newest reading. A reading that is too old, or a check that failed after a good one, is
+        never shown as fresh and never thrown away: the LAST KNOWN numbers stay, labelled with their age and the
+        reason there is nothing newer. Never runs anything."""
         now = self.clock() if now is None else now
         out = {}
-        for service, got in self._got.items():
-            if got.windows and not got.usable(now):
-                got = Allowance(service, read_at=got.read_at, problem="the last reading is more than 15 minutes old")
-            out[service] = got
+        for service in set(self._got) | set(self._good):
+            got = self._got.get(service)
+            if got is not None and got.usable(now):
+                out[service] = got
+                continue
+            good = self._good.get(service)
+            why = ("" if got is None else got.problem if not got.windows
+                   else "the last reading is more than 15 minutes old")
+            if good is not None and good.windows and good.read_at is not None and good.read_at <= now:
+                out[service] = last_known(good, now, why)
+            elif got is not None:
+                out[service] = got if not got.windows else Allowance(service, read_at=got.read_at, problem=why)
         return out
 
     def due(self, services: dict) -> list:
@@ -302,12 +318,83 @@ class UsageReader:
             except ValueError:
                 data = None
             if data is None:
-                why = ("Hermes has no sign-in for it, so it cannot ask" if "no credential" in (out or "")
-                       else "the usage check failed")
-                self._got[service] = Allowance(service, problem=why)
+                self._got[service] = Allowance(service, problem=why_no_reading(out or ""))
             else:
-                self._got[service] = parse_usage(service, data, self.clock())
+                got = parse_usage(service, data, self.clock())
+                self._got[service] = got
+                if any(w.left is not None for w in got.windows):
+                    self._good[service] = got
+                    if self.keep is not None:
+                        save_kept(self.keep, self._good)
         return ran
+
+
+NO_ANSWER = "Hermes got no allowance reading for it this time"
+
+
+def why_no_reading(said: str) -> str:
+    """Why a usage check gave no numbers, in plain words. Hermes prints ONE sentence for three different causes
+    ("no credential is configured for it, the provider has no usage endpoint, or the fetch failed"), so that
+    sentence alone never proves the sign-in is missing: the desk must not say so."""
+    low = said.lower()
+    if "no account usage available" in low or "fetch failed" in low:
+        return NO_ANSWER + " (Hermes does not say which: no sign-in, no allowance page, or the look-up failed)"
+    return "the usage check failed"
+
+
+def age_words(seconds: float) -> str:
+    minutes = max(1, round(seconds / 60))
+    if minutes < 90:
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    hours = round(minutes / 60)
+    if hours < 48:
+        return f"{hours} hours ago"
+    return f"{round(hours / 24)} days ago"
+
+
+def last_known(good: Allowance, now: float, why: str) -> Allowance:
+    """The last good reading, kept on screen but marked as old: when it was read and why there is nothing newer.
+    A window whose reset time has passed since is no longer true, so it reads unknown."""
+    windows = tuple(w if w.left is None or w.resets_at is None or w.resets_at > now
+                    else Window(w.label, None, w.resets_at, "it has reset since this was read")
+                    for w in good.windows)
+    note = "last known, read " + age_words(now - (good.read_at or now))
+    if why:
+        note += "; no newer reading: " + why
+    return Allowance(good.service, windows, good.read_at, old_note=note)
+
+
+def load_kept(path: Path) -> dict:
+    """The last good readings a desk before this one saved. A missing or damaged file is simply nothing."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out: dict = {}
+    for service, row in (data.items() if isinstance(data, dict) else ()):
+        try:
+            windows = tuple(Window(str(w["label"]), float(w["left"]) if w.get("left") is not None else None,
+                                   float(w["resets_at"]) if w.get("resets_at") is not None else None,
+                                   str(w.get("note") or "")) for w in row["windows"])
+            out[str(service)] = Allowance(str(service), windows, float(row["read_at"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def save_kept(path: Path, good: dict) -> None:
+    """Best effort: the readings are a convenience, so a failed save is never an error."""
+    body = {s: {"read_at": a.read_at, "windows": [{"label": w.label, "left": w.left, "resets_at": w.resets_at,
+                                                  "note": w.note} for w in a.windows]}
+            for s, a in good.items() if a.read_at is not None}
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(body, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 # ---- one service's health ---------------------------------------------------------------------------------

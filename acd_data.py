@@ -394,6 +394,8 @@ def allowance_lines(a: Optional[H.Allowance]) -> tuple[tuple, str]:
         resets = f", resets {_day(w.resets_at)}" if w.resets_at else ""
         note = f" ({w.note})" if w.note else ""
         out.append(f"{w.label}: {w.left:.0f}% left{resets}{note}")
+    if a.old_note:                                  # not a fresh reading: say so first, then the last known numbers
+        out.insert(0, a.old_note)
     return tuple(out), ""
 
 
