@@ -175,7 +175,7 @@ class LadderFacts(unittest.TestCase):
         self.assertIn("extras", [r.key for r in acd.rows_of(snap)])
         cell = acd.cell_at("extras", v)
         self.assertEqual((cell.status, cell.setting), (D.YELLOW, "extras"))
-        self.assertIn("Claude Sonnet 5.5", cell.words)
+        self.assertEqual(cell.words, "Sonnet 5.5 (Claude)")
         self.assertEqual(acd.cell_at("extras", F.agent(snap, "orchestrator")).words, "none")
         self.assertNotIn("extras", [r.key for r in acd.rows_of(F.edit_collect(F.edit_world()))])    # nobody has one
 
@@ -189,15 +189,15 @@ class LadderFacts(unittest.TestCase):
         kylie, jarvis = F.agent(snap, "assistant"), F.agent(snap, "orchestrator")
         lad = D.ladder(kylie)
         self.assertEqual(lad.answered, "ag_gemini")
-        self.assertEqual(lad.below, "rung 2 (Gemini 3.8 Flash on Antigravity)")
+        self.assertEqual(lad.below, "rung 2b (Gemini 3.8 Flash on Antigravity)")
         self.assertTrue(acd.cell_at("rung:ag_gemini", kylie).marker)
         self.assertFalse(acd.cell_at("rung:ag_claude", kylie).marker)
         self.assertTrue(acd.cell_text(acd.cell_at("rung:ag_gemini", kylie)).plain.startswith(
-            f"{acd.MARK} {acd.ANSWERED} Gemini 3.8 Flash"))
+            f"{acd.MARK} {acd.ANSWERED} Gemini Flash"))
         self.assertEqual((D.ladder(jarvis).answered, D.ladder(jarvis).below), (D.MAIN_RUNG, ""))
         self.assertTrue(acd.cell_at("rung:main", jarvis).marker)
         texts = [x.text for x in snap.warnings]
-        self.assertTrue(any("1 agent had the main model fail on the last reply and a backup answered: Kylie on rung 2 "
+        self.assertTrue(any("1 agent had the main model fail on the last reply and a backup answered: Kylie on rung 2b "
                             "(Gemini 3.8 Flash on Antigravity)" in x for x in texts), texts)
 
     def test_a_rung_whose_allowance_is_used_up_is_red_with_the_day_it_comes_back(self):
@@ -206,9 +206,10 @@ class LadderFacts(unittest.TestCase):
               F.quota(w.now - 59, "k1", "claude-opus-5-5", resets="86h46m59s"),
               F.fallback(w.now - 58, "k1", "claude-opus-5-5", "gemini-3.8-flash", AGY))
         v = F.agent(F.edit_collect(w), "assistant")
-        day = dt.datetime.fromtimestamp(w.now - 59 + 86 * 3600 + 46 * 60 + 59).strftime("%a %-d %b")
+        back = dt.datetime.fromtimestamp(w.now - 59 + 86 * 3600 + 46 * 60 + 59)
         cell = acd.cell_at("rung:ag_claude", v)
-        self.assertEqual((cell.status, cell.words), (D.RED, f"Claude Opus 5.5, used up until {day}"))
+        self.assertEqual((cell.status, cell.words), (D.RED, f"Opus, back {back.strftime('%-d %b')}"))
+        self.assertIn(f"used up until {back.strftime('%a %-d %b')}", " ".join(cell.detail))    # the strip has it in full
         self.assertEqual(acd.cell_at("rung:ag_gemini", v).status, D.GREEN)
 
     def test_simba_is_locked_on_her_model_and_her_ladder_rows_are_grey(self):
@@ -262,7 +263,7 @@ class LadderChanges(unittest.TestCase):
         self.assertEqual(listed(w), [(AGY, "claude-opus-5-5"), (AGY, "gemini-3.8-flash")])
         v = F.agent(F.edit_collect(w), "assistant")
         cell = acd.cell_at("rung:nvidia", v)
-        self.assertEqual((cell.status, cell.words), (D.GREY, "off (NVIDIA Nemotron 3.5 Lightning)"))
+        self.assertEqual((cell.status, cell.words), (D.GREY, "off (Nemotron 3.5)"))
         r = E.set_rung("assistant", "nvidia", NV, w.edit, loader=L, now=WHEN + dt.timedelta(minutes=1))
         self.assertTrue(r.ok and not r.dry, r.message)
         self.assertEqual(listed(w)[-1], ("nvidia", NV))
@@ -435,13 +436,14 @@ class TableFacts(unittest.TestCase):
         for key in ("signin", "last", "drops"):
             cell = acd.cell_at(key, v)
             self.assertEqual((cell.setting, cell.fixed), ("", acd.FACT), key)
-        self.assertTrue(acd.cell_at("last", v).words.startswith("Claude Opus 5.5, "))
+        self.assertTrue(acd.cell_at("last", v).words.startswith("Opus 5.5, "))
         self.assertEqual((acd.cell_at("drops", v).words, acd.cell_at("drops", v).status), ("0", D.GREEN))
         strip = acd.strip_text(acd.Row("last", "Who answered last"), v, acd.cell_at("last", v)).plain
         self.assertIn("Kylie, Who answered last:", strip)
-        self.assertIn("No menu here: a fact read from the logs", strip)
+        self.assertIn("Nothing to change here: a fact read from the logs", strip)
         strip = acd.strip_text(acd.Row("model", "Model"), v, acd.cell_at("model", v)).plain
-        self.assertTrue(strip.endswith("Enter opens the choices."))
+        self.assertTrue(" ".join(strip.split()).endswith("Enter opens the choices."))
+        self.assertLessEqual(len(strip.splitlines()), acd.STRIP_LINES)
 
     def test_a_speed_the_voice_cannot_take_is_shown_as_fixed_and_has_no_menu(self):
         snap = F.edit_collect(F.with_grid(F.edit_world()))
@@ -470,8 +472,8 @@ class TableFacts(unittest.TestCase):
         self.assertGreaterEqual(wide, narrow)
         cell = acd.Cell(D.GREEN, "a very long sentence that cannot fit into the column")
         cut = acd.cell_text(cell, 20).plain
-        self.assertEqual(len(cut), 20)
-        self.assertTrue(cut.endswith("…"))
+        self.assertEqual(cut, f"{acd.MARK} a very long…")                      # cut BETWEEN two words, never inside one
+        self.assertLessEqual(len(cut), 20)
         self.assertEqual(acd.cell_text(acd.Cell()).plain, "")                  # a row that does not apply is blank
 
 
@@ -499,7 +501,7 @@ class TheTable(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(shown(app, "model", "Kylie"), f"{acd.MARK} Claude Opus 5.5")
             self.assertEqual(shown(app, "effort", "Kylie"), f"{acd.MARK} medium")
             self.assertEqual(shown(app, "rung:codex", "Kylie"), f"{acd.MARK} off")
-            self.assertEqual(shown(app, "rung:main", "Kylie"), f"{acd.MARK} {acd.ANSWERED} Claude Opus 5.5")
+            self.assertEqual(shown(app, "rung:main", "Kylie"), f"{acd.MARK} {acd.ANSWERED} Opus 5.5")
             self.assertEqual(shown(app, "rung:nvidia", "Simba"), f"{acd.MARK} none")
             self.assertEqual(shown(app, "voice", "Kylie"), f"{acd.MARK} Ava")
             self.assertEqual(shown(app, "presence:team_room", "Jarvis"), f"{acd.MARK} in, leads it")
@@ -647,6 +649,7 @@ class TheTable(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p.name for p in made],
                          ["table_full.svg", "table_narrow.svg", "table_cell_menu.svg", "table_confirm_line.svg",
                           "table_ladder_menu.svg", "table_row_wide_confirm.svg", "table_standard_ladder.svg",
+                          "table_standard_ladder_narrow.svg", "table_right_end.svg", "table_blank_cell.svg",
                           "table_listener_popup.svg"])
         self.assertIn("LANGUAGE", made[0].read_text(encoding="utf-8"))
         self.assertIn("language", made[2].read_text(encoding="utf-8"))          # "Kylie: language model"
@@ -1117,11 +1120,12 @@ class EveryAgentAtOnce(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, acd.NoticePopup)
             words = " ".join(notice(app).split())
             self.assertIn("Put every agent on the standard ladder?", words)
-            self.assertIn("1 the main model 2 Antigravity (Claude, then Gemini) 3 ChatGPT 4 NVIDIA Nemotron", words)
+            self.assertIn("1 the main model 2a Antigravity: Claude 2b Antigravity: Gemini 3 ChatGPT 4 NVIDIA Nemotron", words)
             for name in ("Jarvis", "Kylie", "Esther", "Wanna Buffet"):
                 self.assertIn(name, words)
-            self.assertNotIn("Simba", words)
-            self.assertIn("- before: Claude Opus 5.5 via Antigravity, then Gemini 3.8 Flash via Antigravity", words)
+            self.assertIn("Simba is left out: no backups by design", words)
+            self.assertNotIn("Simba - before", words)
+            self.assertIn("- before: 2a Opus 5.5 · 2b Gemini Flash", words)
             self.assertIn("adds rung 3, ChatGPT: GPT 5.4 mini", words)
             self.assertIn("DRY RUN", words)
             self.assertEqual(F.tree_hashes(w.root), before, "showing the plan wrote something")

@@ -129,10 +129,10 @@ class LoginHealth(unittest.TestCase):
         self.assertEqual(reader.reads, 2, "an unchanged log is not read again")
         story = acd.column_story(snap, v)
         self.assertIn("the sign-in is dead", story)
-        self.assertIn("allowance: unknown (not read yet)", story)
-        self.assertEqual(acd.cell_at("signin", v).words, "Claude sub., sign-in dead")
+        self.assertIn("Allowance: unknown (not read yet)", story)
+        self.assertEqual(acd.cell_at("signin", v).words, "sign-in dead")
         self.assertEqual(acd.cell_at("signin", v).status, D.RED)
-        self.assertEqual(acd.cell_at("signin", F.agent(snap, "simba")).words, "OpenRouter, signed in")
+        self.assertEqual(acd.cell_at("signin", F.agent(snap, "simba")).words, "OpenRouter")
 
     def test_an_agent_with_no_log_says_unknown(self):
         w = F.make_world()
@@ -140,7 +140,7 @@ class LoginHealth(unittest.TestCase):
         v = F.agent(F.collect(w), "assistant")
         self.assertEqual(health(v, "anthropic").state, H.UNKNOWN)
         cell = acd.cell_at("signin", v)
-        self.assertEqual((cell.words, cell.status), ("Claude sub., sign-in unknown", D.GREY))
+        self.assertEqual((cell.words, cell.status), ("sign-in unknown", D.GREY))
 
 
 # ---- the allowance reader (the DLS rules) --------------------------------------------------------------------
@@ -227,7 +227,7 @@ class AllowanceReader(unittest.TestCase):
         snap = D.collect(w.paths, yaml_loader=F.loader, now=w.now, usage=usage)
         v = F.agent(snap, "assistant")
         self.assertTrue(health(v, "openai-codex").allowance[0].startswith("Weekly: 25% left, resets "))
-        self.assertIn("allowance: Weekly: 25% left", acd.column_story(snap, v))
+        self.assertIn("Allowance: Weekly: 25% left", acd.column_story(snap, v))
         self.assertTrue(snap.allowance_read)
 
 

@@ -732,7 +732,7 @@ LADDER_MODELS = {      # rung -> (service, the models offered on it)
     "codex": ("openai-codex", ("gpt-5.4-mini",)),
     "nvidia": ("nvidia", ("nvidia/nemotron-3.5-lightning-30b-a3b", "nvidia/nemotron-3-ultra-550b-a55b")),
 }
-RUNG_NAME = {"ag_claude": "rung 2 (Antigravity, Claude first)", "ag_gemini": "rung 2 (Antigravity, then Gemini)",
+RUNG_NAME = {"ag_claude": "rung 2a (Antigravity, Claude)", "ag_gemini": "rung 2b (Antigravity, Gemini)",
              "codex": "rung 3 (ChatGPT)", "nvidia": "rung 4 (NVIDIA)"}
 
 
@@ -951,10 +951,10 @@ def plan_standard_ladder(paths: EditPaths, profiles: Optional[list[str]] = None,
         if "ag_claude" not in want:
             model = main_model if main_model in LADDER_MODELS["ag_claude"][1] else LADDER_MODELS["ag_claude"][1][0]
             want["ag_claude"] = (D.AGY, model)
-            notes.append(f"adds rung 2, Claude on Antigravity: {D.model_name(model)} (the same as its main model)")
+            notes.append(f"adds rung 2a, Claude on Antigravity: {D.model_name(model)} (the same as its main model)")
         if "ag_gemini" not in want:
             want["ag_gemini"] = (D.AGY, "gemini-3.8-flash")
-            notes.append("adds rung 2, Gemini on Antigravity: Gemini 3.8 Flash")
+            notes.append("adds rung 2b, Gemini on Antigravity: Gemini 3.8 Flash")
         if "codex" not in want:
             want["codex"] = tuple(codex)
             notes.append(f"adds rung 3, ChatGPT: {D.model_name(codex[1])}")

@@ -42,7 +42,7 @@ class BannerFollowsTheRows(unittest.TestCase):
         dead_then(w, "assistant", F.turn(w.now - 60, "new", "claude-opus-5-5", "anthropic"))
         snap = F.collect(w)
         v = F.agent(snap, "assistant")
-        self.assertEqual(acd.cell_at("signin", v).words, "Claude sub., signed in")
+        self.assertEqual(acd.cell_at("signin", v).words, "Claude sub.")
         self.assertEqual(v.signin_failed, "")
         texts = [x.text for x in snap.warnings]
         self.assertFalse(any("could not sign in" in x for x in texts), texts)
@@ -97,7 +97,7 @@ class BackupsSayWhenTheyCannotAnswer(unittest.TestCase):
         self.assertEqual(D.backup_trouble(v.health, second, w.now), "")      # same service, another model: fine
         self.assertEqual(D.backup_trouble(v.health, third, w.now), "")
         cell = acd.cell_at("rung:ag_claude", v)                             # the model stays shown: it is the setting
-        self.assertEqual((cell.words, cell.status), (f"Claude Opus 5.5, used up until {day}", D.RED))
+        self.assertEqual((cell.words, cell.status), (f"Opus, back {day.split(' ', 1)[1]}", D.RED))
         self.assertEqual(acd.cell_at("rung:ag_gemini", v).status, D.GREEN)   # the same service, another model: fine
         self.assertEqual(acd.cell_at("rung:nvidia", v).status, D.GREEN)
         story = acd.column_story(F.collect(w), v)

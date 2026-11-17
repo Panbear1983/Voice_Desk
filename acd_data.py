@@ -88,6 +88,27 @@ def model_name(model: Optional[str]) -> str:
     return model
 
 
+SERVICE_TINY = {"anthropic": "Claude", "antigravity-subscription-directsdk": "Antigravity", "nvidia": "NVIDIA",
+                "openai-codex": "ChatGPT", "openrouter": "OpenRouter"}
+
+
+def short_model(model: Optional[str]) -> str:
+    """A model's name cut down for a table cell: "Opus 5.5", "Sonnet 5.5", "Gemini Flash", "Nemotron 3.5". The
+    maker's name and the small print are left to the strip under the table, which has the full name."""
+    name = model_name(model)
+    for brand in ("Claude ", "NVIDIA "):
+        if name.startswith(brand):
+            name = name[len(brand):]
+    name = re.sub(r"^Gemini [\d.]+ Flash$", "Gemini Flash", name)
+    name = re.sub(r"^(Nemotron [\d.]+) Lightning$", r"\1", name)
+    return name
+
+
+def model_family(model: Optional[str]) -> str:
+    """The one word a person calls it by: "Opus", "Sonnet", "Gemini", "Nemotron", "GPT", "Grok"."""
+    return short_model(model).split(" ")[0]
+
+
 def service_name(service: Optional[str], short: bool = False) -> str:
     if not service:
         return "unknown"
@@ -602,14 +623,14 @@ MAIN_RUNG = "main"
 EXTRA_RUNG = "extra"
 # (key, the row's name, the service). Rung 2 has two lines: Claude on Antigravity first, Gemini there second.
 LADDER = (
-    ("ag_claude", "2  Antigravity: Claude first", AGY),
-    ("ag_gemini", "2  Antigravity: then Gemini", AGY),
+    ("ag_claude", "2a Antigravity: Claude", AGY),
+    ("ag_gemini", "2b Antigravity: Gemini", AGY),
     ("codex", "3  ChatGPT (Codex)", "openai-codex"),
     ("nvidia", "4  NVIDIA Nemotron", "nvidia"),
 )
 LADDER_KEYS = tuple(k for k, _, _ in LADDER)
 RUNG_LABEL = {MAIN_RUNG: "1  Main model", EXTRA_RUNG: "Extra, not on the ladder", **{k: label for k, label, _ in LADDER}}
-RUNG_WORDS = {MAIN_RUNG: "rung 1", "ag_claude": "rung 2", "ag_gemini": "rung 2", "codex": "rung 3", "nvidia": "rung 4",
+RUNG_WORDS = {MAIN_RUNG: "rung 1", "ag_claude": "rung 2a", "ag_gemini": "rung 2b", "codex": "rung 3", "nvidia": "rung 4",
               EXTRA_RUNG: "an extra backup that is not on the ladder"}
 NOT_STANDARD = "not in the standard order"
 
