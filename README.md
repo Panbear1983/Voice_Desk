@@ -1,8 +1,10 @@
 <div align="center">
 
-# Voice Desk
+# Agent Control Desk
 
-**Talk to Claude Code, Gemini, Codex and your Hermes agents like a phone call. One voice line, hands-free, on your Mac and your iPhone.**
+**One desk for every AI agent on your Mac: see and change each agent's language model, backups, voice, where it shows up and who it may talk to. And one voice line to talk to all of them, hands-free, on your Mac and your iPhone.**
+
+<sub>Formerly Voice Desk. The voice line is still here, unchanged; the control desk grew on top of it.</sub>
 
 <table>
 <tr>
@@ -53,7 +55,39 @@ desk, the same conversation continues on your iPhone through Siri.
 
 ---
 
-## See it
+## The control desk
+
+One table. Each row is a setting, each column is an agent. Every cell starts with a light, so you can
+read the whole team at a glance, and Enter on a cell opens a small menu of the choices for that one setting.
+
+<img src="docs/img/acd_table.png" alt="The Agent Control Desk: a table with one column per agent and one row per setting, each cell starting with a coloured light" width="100%">
+
+<table>
+<tr>
+<td width="50%"><img src="docs/img/acd_menu.png" alt="A floating menu open on one cell, listing the models that agent can use"><br><b>Change one thing.</b> Enter opens the choices for that cell. Pick one, read the one-line confirmation, Enter again saves it.</td>
+<td width="50%"><img src="docs/img/acd_ladder.png" alt="The standard fallback ladder preview, showing before and after for each agent"><br><b>The fallback ladder.</b> When the main service runs out, each agent steps down the same fixed order of backups. The desk marks which rung answered last and when a used-up rung returns.</td>
+</tr>
+</table>
+
+- **The lights.** Green is live everywhere. Yellow is saved but waiting on a restart or a fresh chat. Blue is a
+  temporary override. Red has failed, run out, or was changed behind the desk's back. Grey is off or does not apply.
+- **The rows.** Language model, the fallback ladder, voice, where the agent shows up (terminal, Telegram, the
+  shared Team Room, the microphone), and who it may talk to.
+- **Safe to press.** Out of the box every change is a dry run: shown in full, nothing written. Real changes need
+  two switches on. Each one is backed up first, written, read back through the agent's own tools, restored
+  automatically if the read-back disagrees, and kept in a history you can undo.
+- **It never restarts anything on its own.** When a change needs an agent restarted, the desk says so and waits.
+- **It tells you when the settings lie.** If something else changed a setting, or an agent has quietly been
+  answering on a backup, the cell turns red or a banner appears.
+
+```bash
+./acd.sh            # look, and try changes as dry runs
+./acd.sh --armed    # changes are written, if the desk's own switch is also on
+```
+
+---
+
+## See the voice line
 
 The window is deliberately tiny: a coloured light that tells you what's happening, a
 live mic meter, and the transcript. These are screenshots of the real app, replaying a
