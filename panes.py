@@ -25,13 +25,30 @@ import settings as S
 
 # The Hermes status bar, the last line of the window (hermes_cli/cli_status_bar_mixin.py
 # _get_voice_status_fragments):
-#   " ● REC  Ctrl+B to stop "                         recording
+#   " ● REC  Ctrl+B to stop "  / " ● REC "            recording (wide / narrow window)
 #   " ◉ Transcribing... " / " ◉ STT "                  turning speech into text
 #   " 🎤 Voice mode | TTS on | Continuous — Ctrl+B …"  a voice chat is on (thinking or speaking too)
 #   " 🎤 Voice mode | TTS on — Ctrl+B to record"       voice mode on, nobody talking
+#   " 🎤 Ctrl+B "                                      the same in a narrow window (< 64 columns):
+#                                                      no "Voice mode", never "Continuous"
 #   (no voice segment)                                 voice mode off (an end phrase turns it off)
+# While a turn runs, the input box's top rule carries the spinner ("── ⠹ Working… · 3s ───") and the
+# empty input line says "type to redirect this turn" (classic layout: "msg=interrupt · ..."). That
+# is "busy", never "off": her voice mode is still on (seen live 2026-11-17 in Jarvis's window).
 ACTIVE = ("recording", "transcribing", "conversation")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_SPINNER_RULE = re.compile(r"^──\s*[\u2800-\u28ff]")          # cli_modern_layout._SPIN frames
+_TITLED_RULE = re.compile(r"^─ .+ ─$")                         # "─ Esther online status reply ─"
+_BUSY_HINTS = ("type to redirect this turn", "type to steer this turn", "type to queue a message",
+               "msg=interrupt")
+# Hermes sets "recording" (the ● REC bar) BEFORE it opens the microphone, and prints this line only
+# once the audio stream really started (cli_voice_mixin._voice_start_recording). A recorder that
+# hangs while opening leaves ● REC on screen with no recording behind it (Kylie 2026-11-17: Voice
+# Desk said "Kylie is listening" twice, Hermes never logged "Voice recording started").
+_REC_CONFIRMED = "● Recording"
+_REC_ENDED = ("Silence detected", "Transcribing", "Recording cancelled", "Voice recording failed",
+              "Voice mode disabled", "Voice mode enabled", "Stop phrase", "No speech detected")
+STATE_LINES = 24                 # enough for a narrow window's footer plus the rows just above it
 
 
 def _herdr(*args: str, timeout: float = 5.0) -> subprocess.CompletedProcess:
@@ -53,8 +70,13 @@ def find(profile: str) -> Optional[str]:
 
 
 def screen_tail(pane: str, lines: int = 6, ansi: bool = False) -> Optional[str]:
-    """The bottom of the window, or None if herdr cannot read it (pane closed)."""
-    args = ["pane", "read", pane, "--source", "visible", "--lines", str(lines)] + (["--format", "ansi"] if ansi else [])
+    """The bottom of the window, or None if herdr cannot read it (pane closed).
+
+    Source "recent" is the bottom of the terminal whatever Peter is looking at. "visible" was the
+    scrolled viewport: with the window scrolled up to read a long answer it showed old text and no
+    status bar, which read as "voice off" (checked live 2026-11-17 on a pane scrolled 48 rows up:
+    visible showed its start-up banner, recent showed the prompt at the bottom)."""
+    args = ["pane", "read", pane, "--source", "recent", "--lines", str(lines)] + (["--format", "ansi"] if ansi else [])
     try:
         r = _herdr(*args)
     except (OSError, subprocess.TimeoutExpired):
@@ -62,8 +84,23 @@ def screen_tail(pane: str, lines: int = 6, ansi: bool = False) -> Optional[str]:
     return r.stdout if r.returncode == 0 else None
 
 
+def _is_rule(row: str) -> bool:
+    s = row.strip()
+    return s.startswith("──") or bool(_TITLED_RULE.match(s))
+
+
+def _split(tail: str) -> tuple[list, list, Optional[str]]:
+    """(rows above the input box, rows below its top rule, the top rule itself or None)."""
+    rows = [r for r in tail.splitlines() if r.strip()]
+    rules = [i for i, r in enumerate(rows) if _is_rule(r)]
+    if not rules:
+        return rows[:-3], rows[-3:], None
+    i = rules[-1]
+    return rows[:i], rows[i + 1:], rows[i].strip()
+
+
 def state_of(tail: Optional[str]) -> str:
-    """recording | transcribing | conversation | voice-idle | off | gone  (from the status bar)
+    """recording | transcribing | conversation | busy | voice-idle | off | unclear | gone
 
     Hermes now renders a second footer row below the voice status bar (model/context/usage
     stats, e.g. " claude-fable-5-1 · 147K/1M · ..."), so the voice bar is not always the very
@@ -73,29 +110,52 @@ def state_of(tail: Optional[str]) -> str:
 
     Only rows BELOW the input box's top rule count (the input line, the voice bar, the stats
     row). Above it is scrollback, and "Voice mode disabled." there must not read as voice on,
-    or rearm() never turns voice back on after an end phrase (seen live 2026-11-09)."""
+    or rearm() never turns voice back on after an end phrase (seen live 2026-11-09).
+
+    busy: a turn is running (spinner in the top rule, or the busy hint on the input line). Never
+    "off", whatever the bar shows (Kylie 2026-11-17: a busy turn was taken for an end phrase).
+    unclear: no input box to judge by (no rule and no voice bar, or nothing under the rule, as in
+    a half-drawn frame). Never "off" either: "off" needs a drawn input box with no voice bar."""
     if tail is None:
         return "gone"
-    rows = [r for r in tail.splitlines() if r.strip()]
-    if not rows:
+    if not [r for r in tail.splitlines() if r.strip()]:
         return "gone"                          # an empty read is a herdr hiccup, not "voice off"
-    rules = [i for i, r in enumerate(rows) if r.strip().startswith("──")]
-    footer = rows[rules[-1] + 1:] if rules else rows[-3:]
+    _, footer, rule = _split(tail)
     footer = [r for r in footer if not r.strip().startswith("Voice mode")]   # Hermes' own messages
     for bar in reversed(footer):
         if "● REC" in bar:
             return "recording"
         if "◉ Transcribing" in bar or "◉ STT" in bar:
             return "transcribing"
+    if (rule and _SPINNER_RULE.match(rule)) or any(h in r for r in footer for h in _BUSY_HINTS):
+        return "busy"
+    for bar in reversed(footer):
         if "Voice mode" in bar and "Continuous" in bar:
             return "conversation"
         if "Voice mode" in bar or bar.strip().startswith("🎤"):
-            return "voice-idle"
+            return "voice-idle"                # the narrow bar " 🎤 Ctrl+B" lands here too
+    if rule is None or not footer:
+        return "unclear"
     return "off"
 
 
+def recording_confirmed(tail: Optional[str]) -> bool:
+    """Is the window really recording? ● REC on the bar AND Hermes' own "● Recording..." line just
+    above the input box, with no later sign that recording ended (silence, transcribing, failure)."""
+    if state_of(tail) != "recording":
+        return False
+    above, _, _ = _split(tail or "")
+    for row in reversed(above[-8:]):           # nothing is printed while it records: the line stays near
+        s = row.strip()
+        if s.startswith(_REC_CONFIRMED):
+            return True
+        if any(s.startswith(m) or m in s for m in _REC_ENDED):
+            return False
+    return False
+
+
 def state(pane: str) -> str:
-    return state_of(screen_tail(pane))
+    return state_of(screen_tail(pane, lines=STATE_LINES))
 
 
 def stopped_by_phrase(tail: Optional[str]) -> bool:
@@ -159,27 +219,71 @@ def has_draft(ansi_tail: Optional[str]) -> bool:
     return not after.startswith("\x1b[3m")               # italic = the placeholder, not typed text
 
 
+def _look(pane: str) -> tuple[str, Optional[str]]:
+    """(state, tail), read again a few times while the frame is unclear (half drawn)."""
+    now, tail = "unclear", None
+    for _ in range(3):
+        tail = screen_tail(pane, lines=STATE_LINES)
+        now = state_of(tail)
+        if now != "unclear":
+            break
+        time.sleep(0.15)
+    return now, tail
+
+
+def _await_rec(pane: str, wait_sec: float) -> str:
+    """After a Ctrl+B: started | mic-stuck | busy | ignored."""
+    deadline = time.monotonic() + wait_sec
+    stuck_deadline = deadline + wait_sec          # ● REC is up: give the recorder a little longer to open
+    while True:
+        now, tail = _look(pane)
+        if recording_confirmed(tail):
+            return "started"
+        if now in ("busy", "transcribing"):
+            return "busy"                         # a turn is running: Hermes ignores Ctrl+B mid-turn
+        t = time.monotonic()
+        if now == "recording":
+            if t > stuck_deadline:
+                return "mic-stuck"
+        elif t > deadline:
+            return "ignored"
+        time.sleep(0.2)
+
+
 def start(pane: str, wait_sec: float = S.PANE_START_SEC) -> str:
     """Press Ctrl+B in the window (turning voice mode on first if it is off) and confirm it is
-    recording. Returns started | busy | draft | no-voice | gone."""
-    now = state(pane)
+    recording. Returns started | busy | draft | no-voice | no-rec | mic-stuck | gone.
+
+    "started" only when the window really records: ● REC on the bar and Hermes' own "● Recording..."
+    line (Kylie 2026-11-17: Voice Desk twice said "Kylie is listening" while her mic never opened).
+    Ctrl+B ignored -> pressed once more, then "no-rec". ● REC that never confirms -> "mic-stuck",
+    without a second press (on a recording window Ctrl+B means stop)."""
+    now, tail = _look(pane)
     if now == "gone":
         return "gone"
-    if now in ACTIVE:
-        return "started"                       # already talking there
+    if now == "recording":
+        return "started" if recording_confirmed(tail) else "mic-stuck"   # already recording there (or stuck)
+    if now in ("transcribing", "busy", "unclear"):
+        return "busy"                          # mid-turn: the caller tries again when she is free
     if now == "off":
         if not stash_draft(pane):
             return "draft"                     # the stash did not take: never type into Peter's message
         _type_line(pane, "/voice on")
         deadline = time.monotonic() + wait_sec
-        while state(pane) == "off":
+        while _look(pane)[0] not in ("voice-idle", "conversation"):   # /voice on runs as a busy command
             if time.monotonic() > deadline:
                 return "no-voice"
             time.sleep(0.2)
-    _herdr("pane", "send-keys", pane, "ctrl+b")
-    deadline = time.monotonic() + wait_sec
-    while time.monotonic() < deadline:
-        if state(pane) in ACTIVE:
-            return "started"
-        time.sleep(0.2)
-    return "busy"                               # Hermes ignores Ctrl+B while it is mid-answer
+    for attempt in range(2):
+        if attempt:
+            again, _ = _look(pane)
+            if again == "recording":           # the first press opened it late: wait for it, no second press
+                got = _await_rec(pane, wait_sec)
+                return "no-rec" if got == "ignored" else got
+            if again not in ("voice-idle", "conversation"):
+                return "busy"                  # something changed since the first press: do not toggle it
+        _herdr("pane", "send-keys", pane, "ctrl+b")
+        got = _await_rec(pane, wait_sec)
+        if got != "ignored":
+            return got
+    return "no-rec"

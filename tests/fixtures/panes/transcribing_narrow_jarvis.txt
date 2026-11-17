@@ -1,0 +1,6 @@
+Silence detected, auto-stopping
+...
+───────────────────────────────
+◉ transcribing...
+ ◉ STT
+ ☤ agy-claude · 1.1d

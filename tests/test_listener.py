@@ -913,6 +913,47 @@ def test_switchboard() -> None:
     fp.rearmed = []
     lst._rearm_windows()
     report("switchboard: ... not on every tick (PANE_REARM_SEC)", fp.rearmed == [])
+
+    # Kylie 2026-11-17: "Kylie is listening" while her mic never opened, then "voice mode off (end phrase)"
+    # while she was only busy. Never say listening unless the window records; a busy turn is not an end phrase.
+    for result, words in (("no-rec", "could not start"), ("mic-stuck", "stuck")):
+        fp.start_result = result
+        fp.bar["wH:pR"] = "voice-idle"
+        lst.player.played.clear()
+        what = lst.handle("Hello Kylie")
+        report(f"switchboard: start() says {result} -> says so, not 'is listening', and the room mic stays ours",
+               what == "no-window" and lst.handed is None and any(words in p for p in lst.player.played),
+               f"{what} {lst.handed} {lst.player.played}")
+    fp.start_result = "started"
+    fp.bar["wH:pR"] = "voice-idle"
+    lst.handle("Hello Kylie")
+    for st in ("busy", "unclear", "busy", "voice-idle", "busy"):
+        fp.bar["wH:pR"] = st                    # Peter typed to her: a busy turn, the odd half-drawn read
+        lst._watch_hand()
+    report("switchboard: a busy turn inside the grace keeps the chat and is never an end phrase",
+           lst.handed == "wH:pR" and not lst._hand_off_seen)
+    clock.advance(S.PANE_IDLE_GRACE_SEC + 1)
+    logged: list = []
+    real_log = L.log
+    L.log = lambda m: (logged.append(m), real_log(m))
+    try:
+        for _ in range(S.PANE_END_POLLS):
+            lst._watch_hand()
+    finally:
+        L.log = real_log
+    report("switchboard: ... past the grace it ends as 'voice chat over', not 'voice mode off (end phrase)'",
+           lst.handed is None and any("voice chat over" in m for m in logged)
+           and not any("end phrase" in m for m in logged), str(logged))
+    fp.start_result = "busy"
+    fp.bar["wH:pR"] = "busy"
+    lst.handle("Hello Kylie")
+    clock.advance(S.PANE_RETRY_SEC + 0.1)
+    fp.start_result = "no-rec"
+    lst.player.played.clear()
+    lst._watch_hand()
+    report("switchboard: busy, then the mic would not open -> says so and listens for a name again",
+           lst.handed is None and any("could not start" in p for p in lst.player.played), str(lst.player.played))
+    fp.start_result = "started"
     S.PANE_MODE = False
 
 

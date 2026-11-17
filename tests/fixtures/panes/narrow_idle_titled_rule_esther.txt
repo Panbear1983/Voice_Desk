@@ -1,0 +1,24 @@
+You are talking to the TAX
+ANGEL ESTHER profile. Type
+your message or /help for
+commands.
+✦ Tip: The skills audit log at
+~/.hermes/skills/.hub/audit.lo
+g tracks every install and
+removal operation.
+
+
+Voice mode enabled (TTS enable
+d)
+  Ctrl+B to start/stop recordi
+ng
+  Say "that's all" to end the
+voice chat.
+  /voice tts  to toggle speech
+ output
+  /voice off  to disable voice
+ mode
+─ Esther online status reply ─
+🎤 type or Ctrl+B to record
+ 🎤 Ctrl+B
+ ☤ agy · 1s · …r_Tax (main)

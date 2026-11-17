@@ -458,10 +458,18 @@ class Listener:
             self.settle()
             return "handed"
         log(f"switchboard: {name} ({pane}) would not start voice ({result})")
-        self.speak(f"{name}'s window has unsent typing, so I left it alone." if result == "draft"
-                   else f"I could not start {name}'s microphone.", after="asleep")
+        self.speak(self._no_start_line(name, result), after="asleep")
         self.settle()
         return "no-window"
+
+    @staticmethod
+    def _no_start_line(name: str, result: str) -> str:
+        """What Peter hears when a window would not record: never "is listening" (Kylie 2026-11-17)."""
+        if result == "draft":
+            return f"{name}'s window has unsent typing, so I left it alone."
+        if result == "mic-stuck":
+            return f"{name}'s microphone is stuck. That window needs voice switched off and on again."
+        return f"I could not start {name}'s microphone."
 
     def _watch_hand(self) -> None:
         """Called by the ticker while a window has the conversation: open its mic when it is free
@@ -483,7 +491,10 @@ class Listener:
                 self._hand_pending, self._hand_quiet = False, 0
                 self._hand_active_at, self._hand_off_seen = self.clock(), False
                 log(f"switchboard: {pane} is listening")
-            elif result in ("gone", "no-voice", "draft"):
+            elif result in ("gone", "no-voice", "draft", "no-rec", "mic-stuck"):
+                if result in ("no-rec", "mic-stuck"):     # say it, never a silent "listening" that is not
+                    log(f"switchboard: {pane} would not start voice ({result})")
+                    self.speak(self._no_start_line(self.brain.name(self.brain.target()), result))
                 self._take_back(f"window {result}")
             return                                 # busy: try again in PANE_RETRY_SEC
         st = self.panes.state(pane)
@@ -494,9 +505,10 @@ class Listener:
             return
         if st == "off":                            # an end phrase switched her voice off (rearm may switch it back on)
             self._hand_off_seen = True
-        if st == "voice-idle" and not self._hand_off_seen:
+        if st in ("voice-idle", "busy", "unclear") and not self._hand_off_seen:
             # Between recordings: keep the chat for PANE_IDLE_GRACE_SEC after her last recording or
             # reply. A narrow window's bar shows voice-idle even mid-chat, so her spoken reply counts.
+            # A busy turn or a half-drawn frame is never "voice off" (Kylie 2026-11-17).
             if self.foreign.playing():
                 self._hand_active_at = now
             if now - self._hand_active_at < S.PANE_IDLE_GRACE_SEC:
