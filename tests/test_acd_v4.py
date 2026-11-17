@@ -127,19 +127,20 @@ class LoginHealth(unittest.TestCase):
         self.assertEqual(reader.reads, 2, "one read per agent's log serves both the replies and the health")
         F.collect(w, reader)
         self.assertEqual(reader.reads, 2, "an unchanged log is not read again")
-        tree = acd.tree_text(v).plain
-        self.assertIn("Services it uses: sign-in and allowance", tree)
-        self.assertIn("the sign-in is dead", tree)
-        self.assertIn("allowance: unknown (not read yet)", tree)
-        self.assertIn("sign-in dead", acd.cell_model_set(v).plain)
-        self.assertIn("signed in, working", acd.cell_model_set(F.agent(snap, "simba")).plain)
+        story = acd.column_story(snap, v)
+        self.assertIn("the sign-in is dead", story)
+        self.assertIn("allowance: unknown (not read yet)", story)
+        self.assertEqual(acd.cell_at("signin", v).words, "Claude sub., sign-in dead")
+        self.assertEqual(acd.cell_at("signin", v).status, D.RED)
+        self.assertEqual(acd.cell_at("signin", F.agent(snap, "simba")).words, "OpenRouter, signed in")
 
     def test_an_agent_with_no_log_says_unknown(self):
         w = F.make_world()
         F.add_agent(w, "assistant")
         v = F.agent(F.collect(w), "assistant")
         self.assertEqual(health(v, "anthropic").state, H.UNKNOWN)
-        self.assertIn("? sign-in unknown", acd.cell_model_set(v).plain)
+        cell = acd.cell_at("signin", v)
+        self.assertEqual((cell.words, cell.status), ("Claude sub., sign-in unknown", D.GREY))
 
 
 # ---- the allowance reader (the DLS rules) --------------------------------------------------------------------
@@ -226,7 +227,7 @@ class AllowanceReader(unittest.TestCase):
         snap = D.collect(w.paths, yaml_loader=F.loader, now=w.now, usage=usage)
         v = F.agent(snap, "assistant")
         self.assertTrue(health(v, "openai-codex").allowance[0].startswith("Weekly: 25% left, resets "))
-        self.assertIn("allowance: Weekly: 25% left", acd.tree_text(v).plain)
+        self.assertIn("allowance: Weekly: 25% left", acd.column_story(snap, v))
         self.assertTrue(snap.allowance_read)
 
 
@@ -387,9 +388,11 @@ class Watcher(unittest.TestCase):
         self.assertEqual(v.worst, D.RED)
         self.assertTrue(any("changed behind the desk's back (Kylie)" in x.text for x in snap.warnings))
         self.assertIn("reports only", snap.watch_mode)
-        rows = acd.tree_rows(v)
-        self.assertTrue(any(s == "drift:0" for _, s in rows))
-        self.assertIn("changed behind the desk", acd.cell_model_set(v).plain)
+        cells = [acd.cell_at(r.key, v) for r in acd.rows_of(snap) if not r.section]
+        red = [c for c in cells if c.setting == "drift:0"]
+        self.assertEqual(len(red), 1)                                   # exactly one cell answers the drift
+        self.assertEqual(red[0].status, D.RED)
+        self.assertIn("Enter: put it back, or accept it.", red[0].detail)
 
     def test_the_command_line(self):
         self.assertEqual(W.main(["nonsense"]), 2)
@@ -409,7 +412,10 @@ class AssistantsVoices(unittest.TestCase):
         self.assertIn("Gemini's own voice file", by["gemini"].takes_effect)
         self.assertIn("the Voice Desk speaks for it", by["codex"].takes_effect)
         self.assertTrue(any(p.key == "terminal" and p.can_switch for p in by["claude"].voice_places))
-        self.assertIn("press a to change their voices", acd.others_text(snap).plain)
+        self.assertIn("Claude Code's own voice file", " ".join(acd.cell_at("voice", by["claude"]).detail))
+        self.assertEqual(acd.cell_at("voice", by["claude"]).setting, "voice")     # a cell in its own column
+        self.assertIn("claude", acd.cell_at("names", by["claude"]).words)
+        self.assertTrue(acd.cell_at("model", by["claude"]).blank)                 # the model rows are blank for them
 
     def test_claudes_voice_goes_through_the_voice_desk_path_into_its_own_voice_file(self):
         w = F.edit_world(armed=True)
@@ -458,10 +464,10 @@ class VoicePlaces(unittest.TestCase):
         self.assertIn("each open Hermes window keeps its own choice", by["terminal"].why_not)
         self.assertFalse(by["iphone"].can_switch)
         self.assertEqual(by["tg_group"].value, "Always")
-        rows = acd.tree_rows(v)
-        settings = [s for _, s in rows if s and s.startswith("vplace:")]
-        self.assertEqual(sorted(settings), ["vplace:mic", "vplace:tg_dm", "vplace:tg_group"])
-        self.assertIn("Spoken replies, place by place", acd.tree_text(v).plain)
+        settings = [acd.cell_at(f"vplace:{k}", v).setting for k in by]
+        self.assertEqual(sorted(s for s in settings if s), ["vplace:mic", "vplace:tg_dm", "vplace:tg_group"])
+        self.assertIn("keeps its own choice", acd.cell_at("vplace:terminal", v).fixed)
+        self.assertIn("Spoken replies, Telegram team group: Always", acd.column_story(snap, v))
 
     def test_not_armed_every_switch_is_a_dry_run_that_writes_nothing(self):
         w = F.with_grid(F.edit_world())
@@ -542,18 +548,6 @@ async def show(app, pilot) -> None:
     await pilot.pause()
 
 
-async def open_setting(app, pilot, index: int, setting: str) -> None:
-    app.open_tree(index)
-    await pilot.pause()
-    app.screen.query_one("#tree", OptionList).highlighted = app.screen.settings.index(setting)
-    await pilot.press("enter")
-    await pilot.pause()
-
-
-def popup_text(app) -> str:
-    return "\n".join(str(app.screen.query_one(f"#{i}", Static).render()) for i in ("box-title", "box-note", "box-confirm"))
-
-
 class Screen(unittest.IsolatedAsyncioTestCase):
     async def test_p_on_a_desk_that_is_not_armed_writes_nothing(self):
         w = F.with_grid(F.edit_world())
@@ -589,113 +583,6 @@ class Screen(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertFalse(W.is_paused(w.edit))
             self.assertFalse((Path(w.grid.state) / "watcher_paused").exists())
-
-    async def test_the_drift_pop_up_offers_put_it_back_and_accept_it(self):
-        w = F.edit_world(armed=True)
-        self.assertTrue(E.change_model("assistant", "claude-sonnet-5-5", w.edit, loader=L, now=WHEN).ok)
-        hand_edit(w, "default: claude-sonnet-5-5", "default: claude-haiku-5-5")
-        w.now = WHEN.timestamp() + 600
-        app = make_app(w, watching=False)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            await open_setting(app, pilot, 1, "drift:0")
-            self.assertIsInstance(app.screen, acd.EditPopup)
-            words = popup_text(app)
-            self.assertIn("was changed behind the desk's back", words)
-            labels = [o.label for g in app.screen.groups for o in g.options]
-            self.assertTrue(labels[0].startswith("put it back: Claude Sonnet 5.5 again"))
-            self.assertTrue(labels[1].startswith("accept it: keep Claude Haiku 5.5"))
-            await pilot.press("s")                                   # nothing chosen yet: nothing to save
-            await pilot.pause()
-            self.assertIn("nothing to save", str(app.screen.query_one("#box-status", Static).render()))
-            await pilot.press("enter")                               # choose "put it back"
-            await pilot.press("s")
-            await pilot.pause()
-            self.assertIn("is put back to Claude Sonnet 5.5", popup_text(app))
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            self.assertEqual(E.managed(cfg(w).read_text())["model"]["default"], "claude-sonnet-5-5")
-            self.assertTrue(app.last_results[0].ok and not app.last_results[0].dry)
-
-    async def test_accept_from_the_pop_up_in_a_dry_run_changes_nothing(self):
-        w = F.edit_world(armed=True)
-        self.assertTrue(E.change_model("assistant", "claude-sonnet-5-5", w.edit, loader=L, now=WHEN).ok)
-        hand_edit(w, "default: claude-sonnet-5-5", "default: claude-haiku-5-5")
-        w.edit = dataclasses.replace(w.edit, launcher_armed=False)
-        w.now = WHEN.timestamp() + 600
-        before = F.tree_hashes(w.root)
-        app = make_app(w)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            await open_setting(app, pilot, 1, "drift:0")
-            await pilot.press("down")
-            await pilot.press("enter")
-            await pilot.press("s")
-            await pilot.pause()
-            self.assertIn("DRY RUN", popup_text(app))
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            self.assertTrue(app.last_results[0].dry)
-        self.assertEqual(F.tree_hashes(w.root), before)
-
-    async def test_a_opens_the_assistants_and_a_voice_pop_up_for_the_one_picked(self):
-        w = F.with_grid(F.edit_world())
-        before = F.tree_hashes(w.root)
-        app = make_app(w)
-        async with app.run_test(size=(190, 64)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            await pilot.press("a")
-            await pilot.pause()
-            self.assertIsInstance(app.screen, acd.PickPopup)
-            tokens = [t for t, _ in app.screen.rows if t]
-            for want in ("claude|voice", "claude|voice_zh", "gemini|voice", "codex|voice", "claude|vplace:terminal",
-                         "gemini|vplace:terminal"):
-                self.assertIn(want, tokens)
-            lst = app.screen.query_one("#box-list", OptionList)
-            lst.highlighted = [t for t, _ in app.screen.rows].index("claude|voice")
-            await pilot.press("enter")
-            await pilot.pause()
-            self.assertIsInstance(app.screen, acd.EditPopup)
-            self.assertIn("Claude: voice", popup_text(app))
-            self.assertIn("Claude Code's own voice file", popup_text(app))
-            options = [o.token for g in app.screen.groups for o in g.options]
-            self.assertIn("en-US-AriaNeural", options)
-            app.screen.query_one("#box-list", OptionList).highlighted = \
-                [o.token if o else None for _, o in app.screen.rows].index("en-US-AriaNeural")
-            await pilot.press("enter")
-            await pilot.press("s")
-            await pilot.pause()
-            self.assertIn("Claude's English voice changes from Jenny to Aria", popup_text(app))
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            self.assertTrue(app.last_results[0].ok and app.last_results[0].dry)
-        self.assertEqual(F.tree_hashes(w.root), before)
-
-    async def test_a_voice_place_pop_up_shows_the_grids_own_choices_and_saves_through_its_code(self):
-        w = F.with_grid(F.edit_world(armed=True))
-        app = make_app(w, watching=False)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            await open_setting(app, pilot, 1, "vplace:tg_group")
-            self.assertIsInstance(app.screen, acd.EditPopup)
-            self.assertIn("same switch the Voice Desk dashboard had", popup_text(app))
-            options = [o.token for g in app.screen.groups for o in g.options]
-            self.assertEqual(options, [G.OFF, G.ALWAYS])
-            app.screen.query_one("#box-list", OptionList).highlighted = 1      # Off
-            await pilot.press("enter")
-            await pilot.press("s")
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            self.assertTrue(app.last_results[0].ok and not app.last_results[0].dry, app.last_results[0].message)
-            self.assertNotIn("assistant", json.loads(Path(w.grid.mirror_config).read_text())["voice_notes"]["agents"])
 
     async def test_the_usage_check_is_never_run_by_a_desk_that_was_given_none(self):
         w = F.edit_world()

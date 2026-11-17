@@ -129,6 +129,17 @@ def expected(history: list[dict]) -> dict:
             out[(e["profile"], str(e.get("key")))] = {"want": e.get("after"), "ts": e.get("ts", 0)}
         elif kind in ("model", "effort"):
             out[(e["profile"], kind)] = {"want": e.get("after"), "ts": e.get("ts", 0)}
+        elif kind == "ladder":
+            # the desk wrote the whole list: every backup it knew of for this agent is now expected off, and
+            # exactly the ones on the new list are expected on
+            ts = e.get("ts", 0)
+            for (prof, key) in list(out):
+                if prof == e["profile"] and key.startswith("backup|"):
+                    out[(prof, key)] = {"want": False, "ts": ts}
+            for pair in e.get("before") or ():
+                out[(e["profile"], f"backup|{pair[0]}|{pair[1]}")] = {"want": False, "ts": ts}
+            for pair in e.get("after") or ():
+                out[(e["profile"], f"backup|{pair[0]}|{pair[1]}")] = {"want": True, "ts": ts}
         elif kind == "backup" and e.get("model"):
             out[(e["profile"], f"backup|{e.get('provider') or ''}|{e['model']}")] = {
                 "want": bool(e.get("after")), "ts": e.get("ts", 0)}

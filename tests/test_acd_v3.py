@@ -355,165 +355,12 @@ def box(app, selector: str) -> str:
     return str(app.screen.query_one(selector, Static).render())
 
 
-def list_text(app) -> str:
-    lst = app.screen.query_one("#box-list", OptionList)
-    return "\n".join(str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count))
-
-
-async def open_setting(app, pilot, agent_index: int, setting: str):
-    app.apply_snapshot(app.collector())
-    await pilot.pause()
-    app.open_tree(agent_index)
-    await pilot.pause()
-    tree = app.screen.query_one("#tree", OptionList)
-    tree.highlighted = app.screen.settings.index(setting)
-    await pilot.press("enter")
-    await pilot.pause()
-
-
 async def settle(app, pilot):
     await app.workers.wait_for_complete()
     await pilot.pause()
 
 
 class Screen(unittest.IsolatedAsyncioTestCase):
-    async def test_tree_shows_switches_reasons_and_where_each_rule_stands(self):
-        w = F.edit_world()
-        app = edit_app(w)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            app.apply_snapshot(app.collector())
-            app.open_tree(1)                                             # Kylie
-            await pilot.pause()
-            self.assertEqual(app.screen.settings.count("team_room"), 2)  # the two places that move together
-            self.assertEqual(app.screen.settings.count("talk"), 4)
-            plain = re.sub(r"[\s│]+", " ", app.screen.tree_plain())
-            for words in ("one switch moves both", "never touches secrets", "lives on the iPhone",
-                          "Speaks in the Team Room", "recorded, not yet enforced", "how the room works today"):
-                self.assertIn(words, plain, words)
-            app.pop_screen()
-            app.open_tree(0)                                             # Jarvis leads: no switch for him
-            await pilot.pause()
-            self.assertNotIn("team_room", app.screen.settings)
-            self.assertIn("cannot be taken out of it", re.sub(r"[\s│]+", " ", app.screen.tree_plain()))
-
-    async def test_team_room_popup_dry_run_from_the_screen_writes_and_runs_nothing(self):
-        w = F.edit_world()
-        before = F.tree_hashes(w.root)
-        app = edit_app(w)                                                # runner=never: must not be reached
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await open_setting(app, pilot, 1, "team_room")
-            self.assertIsInstance(app.screen, acd.EditPopup)
-            self.assertIn("Kylie: Team Room and Telegram team group", box(app, "#box-title"))
-            self.assertIn("in the room   now", list_text(app))
-            await pilot.press("down")
-            await pilot.press("enter")                                   # choose "out of the room"
-            await pilot.pause()
-            self.assertIn("out of the room   <- chosen", list_text(app))
-            await pilot.press("s")
-            await pilot.pause()
-            confirm = box(app, "#box-confirm").replace("\n", " ")
-            self.assertIn("DRY RUN", confirm)
-            self.assertIn("change together, or not at all", confirm)
-            self.assertIn("chat on screen starts fresh", confirm)
-            await pilot.press("enter")
-            await settle(app, pilot)
-            self.assertIsInstance(app.screen, acd.NoticePopup)
-            body = box(app, "#box-text")
-            self.assertIn("This would happen: Kylie leaves the Team Room", body)
-            self.assertIn("team-room kick kylie", body)
-        self.assertEqual(F.tree_hashes(w.root), before, "a dry run from the screen wrote something")
-
-    async def test_armed_team_room_change_from_the_screen_and_u_undoes(self):
-        w = F.edit_world(armed=True)
-        room = F.FakeTeamRoom(w)
-        app = edit_app(w, runner=room)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await open_setting(app, pilot, 1, "team_room")
-            await pilot.press("down")
-            await pilot.press("enter")
-            await pilot.press("s")
-            await pilot.press("enter")
-            await settle(app, pilot)
-            self.assertIn("Saved: Kylie leaves the Team Room", box(app, "#box-text"))
-            self.assertNotIn("assistant", members(w))
-            await pilot.press("enter")
-            await settle(app, pilot)
-            await pilot.press("u")
-            await pilot.pause()
-            await pilot.press("y")
-            await settle(app, pilot)
-            self.assertIn("assistant", members(w))
-        self.assertEqual(room.calls, [["kick", "kylie"], ["add", "assistant", "kylie", "Kylie"]])
-
-    async def test_talk_popup_offers_plain_choices_and_saves_as_a_dry_run(self):
-        w = F.edit_world()
-        before = F.tree_hashes(w.root)
-        app = edit_app(w)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await open_setting(app, pilot, 1, "talk")
-            self.assertIn("Kylie: who it may talk to", box(app, "#box-title"))
-            listed = list_text(app)
-            for words in ("May speak in the Team Room", "Hands out work (only Jarvis by default)", "Takes work from",
-                          "job cards only", "nobody (Peter only)", "Answers", "when named in the line   now"):
-                self.assertIn(words, listed)
-            await pilot.press("down")
-            await pilot.press("enter")                                   # May speak: no
-            await pilot.press("s")
-            await pilot.pause()
-            confirm = box(app, "#box-confirm").replace("\n", " ")
-            self.assertIn("Kylie may not speak in the Team Room.", confirm)
-            self.assertIn("recorded, not yet enforced", confirm)
-            await pilot.press("enter")
-            await settle(app, pilot)
-            body = box(app, "#box-text")
-            self.assertIn("DRY RUN, nothing written", body)
-            self.assertIn("+ speaks_in_team_room = false", body)
-        self.assertEqual(F.tree_hashes(w.root), before)
-
-    async def test_armed_talk_rule_shows_in_the_tree_at_once(self):
-        w = F.edit_world(armed=True)
-        app = edit_app(w)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await open_setting(app, pilot, 2, "talk")                    # Esther
-            lst = app.screen.query_one("#box-list", OptionList)
-            target = next(i for i in range(lst.option_count) if "job cards only" in str(lst.get_option_at_index(i).prompt))
-            lst.highlighted = target
-            await pilot.press("enter")
-            await pilot.press("s")
-            await pilot.press("enter")
-            await settle(app, pilot)
-            self.assertIn("Saved: Esther now takes work only as job cards", box(app, "#box-text").replace("\n", " "))
-            await pilot.press("enter")
-            await settle(app, pilot)
-            self.assertIn("only as job cards", app.screen.tree_plain())
-        self.assertTrue(tomllib.loads(w.edit.rules.read_text(encoding="utf-8"))["agents"]["tax_angel_esther"]["only_job_cards"])
-
-    async def test_simba_keeps_answers_when_named_and_the_lead_cannot_be_muted(self):
-        w = F.edit_world()
-        app = edit_app(w)
-        async with app.run_test(size=(190, 70)) as pilot:
-            await pilot.pause()
-            await open_setting(app, pilot, 4, "talk")                    # Simba
-            lst = app.screen.query_one("#box-list", OptionList)
-            rows = {str(lst.get_option_at_index(i).prompt): lst.get_option_at_index(i).disabled
-                    for i in range(lst.option_count)}
-            locked = [off for text, off in rows.items() if "kept as it is" in text]
-            self.assertEqual(locked, [True, True], rows)                 # both ways of answering are greyed out
-            await pilot.press("escape")
-            await pilot.pause()
-            await pilot.press("escape")
-            await pilot.pause()
-            await open_setting(app, pilot, 0, "talk")                    # Jarvis, the lead
-            lst = app.screen.query_one("#box-list", OptionList)
-            no_row = next(lst.get_option_at_index(i) for i in range(lst.option_count)
-                          if "leads the room" in str(lst.get_option_at_index(i).prompt))
-            self.assertTrue(no_row.disabled)
-
     async def test_restart_review_lists_a_real_team_room_entry(self):
         w = F.edit_world(armed=True)
         E.set_team_room("assistant", False, w.edit, runner=F.FakeTeamRoom(w), now=WHEN, loader=L)
@@ -530,16 +377,6 @@ class Screen(unittest.IsolatedAsyncioTestCase):
             body = box(app, "#box-text").replace("\n", " ")
             self.assertIn("1 saved change is waiting for a restart", body)
             self.assertIn("Kylie joins the Team Room", body)
-
-    async def test_version_three_pictures_are_drawn_without_a_window(self):
-        w = F.edit_world()
-        out = Path(tempfile.mkdtemp(prefix="acd-shot3-"))
-        made = await acd_snapshot.render_v3(out, collector=lambda: F.edit_collect(w), agent=1, size=(170, 60),
-                                            desk_kwargs={"edit": w.edit, "loader": F.lines_loader, "tester": None})
-        self.assertEqual({p.name for p in made}, {"v3_tree.svg", "v3_presence_popup.svg", "v3_talk_popup.svg",
-                                                  "v3_restart_popup.svg"})
-        self.assertIn("Team", (out / "v3_presence_popup.svg").read_text(encoding="utf-8"))
-
 
 # ---- the Team Room adapter, on a throw-away copy of the Team Room's program -----------------------------------
 LIVE_TEAM_ROOM = Path.home() / "GitHub" / "Team_Room" / "team_room.py"

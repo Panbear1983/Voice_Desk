@@ -80,6 +80,8 @@ NEEDS = {
               "setting until a fresh chat is started.",
     "backup": "No restart needed. New chats and job cards use the new list at once; open terminal chats keep the "
               "old list until a fresh chat is started.",
+    "ladder": "No restart needed. New chats and job cards use the new ladder at once; open terminal chats keep the "
+              "old list until a fresh chat is started.",
     "voice": "No restart needed. The Voice Desk speaks it from the next line; a Hermes agent's own window uses it "
              "from its next session.",
     "rule": "No restart needed. The desk shows it at once. The Team Room follows a rule only where its line says so; "
@@ -91,7 +93,7 @@ NEEDS = {
                  "and switches the Telegram side in the same step. The chat on screen starts fresh; the old lines "
                  "stay in the saved history.",
 }
-UNDOABLE = ("model", "effort", "backup", "voice", "rule", "team_room", "voice_place", "agent")
+UNDOABLE = ("model", "effort", "backup", "ladder", "voice", "rule", "team_room", "voice_place", "agent")
 _DESK_NOTE = re.compile(r"^[ \t]*# \d{4}-\d\d-\d\d " + re.escape(WHO) + r": ")
 
 
@@ -719,6 +721,299 @@ def set_backup(profile: str, provider: str, model: str, on: bool, paths: EditPat
 
 
 # ---- voice -------------------------------------------------------------------------------------------------------
+# ---- the fallback ladder: ONE order for every agent (Peter, 2026-11-17) -----------------------------------------
+# Rung 1 is the agent's main model. The backups follow in this order and no other:
+#   rung 2  Antigravity: Claude there first, Gemini there second
+#   rung 3  ChatGPT (Codex)
+#   rung 4  NVIDIA Nemotron
+LADDER_MODELS = {      # rung -> (service, the models offered on it)
+    "ag_claude": (D.AGY, ("claude-opus-5-5", "claude-sonnet-5-5")),
+    "ag_gemini": (D.AGY, ("gemini-3.8-flash", "gemini-4-argon")),
+    "codex": ("openai-codex", ("gpt-5.4-mini",)),
+    "nvidia": ("nvidia", ("nvidia/nemotron-3.5-lightning-30b-a3b", "nvidia/nemotron-3-ultra-550b-a55b")),
+}
+RUNG_NAME = {"ag_claude": "rung 2 (Antigravity, Claude first)", "ag_gemini": "rung 2 (Antigravity, then Gemini)",
+             "codex": "rung 3 (ChatGPT)", "nvidia": "rung 4 (NVIDIA)"}
+
+
+def rung_choices(rung: str, current: Optional[str] = None) -> list[str]:
+    known = list(LADDER_MODELS[rung][1])
+    return known if not current or current in known else [current] + known
+
+
+def ladder_parts(pairs: list) -> tuple[dict, list]:
+    """(rung -> (service, model), the rest in file order). A second entry on a rung counts as an extra."""
+    parts: dict = {}
+    extras: list = []
+    for pair in pairs:
+        key = D.rung_of(pair[0], pair[1])
+        if key and key not in parts:
+            parts[key] = tuple(pair)
+        else:
+            extras.append(tuple(pair))
+    return parts, extras
+
+
+def ladder_order(pairs: list) -> list:
+    """The same backups in the standard order: the ladder's rungs first, anything that is not on the ladder after."""
+    parts, extras = ladder_parts(pairs)
+    return [parts[k] for k in D.LADDER_KEYS if k in parts] + extras
+
+
+def pair_words(pair) -> str:
+    return f"{D.model_name(pair[1])} via {D.service_name(pair[0], short=True)}"
+
+
+def pairs_words(pairs: list) -> str:
+    return ", then ".join(pair_words(p) for p in pairs) if pairs else "no backups"
+
+
+def rewrite_backups(text: str, pairs: list, date: str, words: str, raws: Optional[dict] = None) -> str:
+    """The text with the backups list holding exactly `pairs`, in that order. An entry that is already there keeps
+    its own lines byte for byte; a new one gets two fresh lines (or its remembered lines). Comments that stood
+    inside the list are kept above the entries; every line outside the list stays byte for byte."""
+    block = read_block(text)
+    lines = text.splitlines(keepends=True)
+    have = {(i.provider, i.model): lines[i.start:i.end] for i in block.items}
+    ind = block.item_indent
+    body: list[str] = []
+    for prov, model in pairs:
+        raw = have.get((prov, model)) or list((raws or {}).get(f"{prov}|{model}") or ())
+        if raw and all(isinstance(x, str) for x in raw) and _indent(raw[0]) == ind:
+            body += [x if x.endswith("\n") else x + "\n" for x in raw]
+        else:
+            body += [f"{' ' * ind}- provider: {prov}\n", f"{' ' * ind}  model: {model}\n"]
+    en = block.entry
+    keep: list[str] = []
+    if block.inline_empty:
+        if not pairs:
+            return text
+        lines[en.line] = en.head.rstrip() + (en.tail if en.tail.strip() else "\n")
+        start = end = en.line + 1
+    else:
+        start, end = _block_span(lines, block)
+        inside = {n for i in block.items for n in range(i.start, i.end)}
+        keep = [lines[n] for n in range(start, end)
+                if n not in inside and lines[n].strip().startswith("#") and not _DESK_NOTE.match(lines[n])]
+        if not pairs:
+            lines[en.line] = en.head.rstrip() + " []" + (en.tail if en.tail.strip() else "\n")
+    if start > 0 and not lines[start - 1].endswith("\n"):
+        lines[start - 1] += "\n"
+    lines[start:end] = keep + [_note(ind, date, words)] + body
+    return "".join(lines)
+
+
+def set_ladder(profile: str, pairs: list, paths: EditPaths, *, what: str = "", now: Optional[_dt.datetime] = None,
+               loader: Optional[Loader] = None, undoes: Optional[str] = None, raws: Optional[dict] = None) -> Result:
+    """Make an agent's backups list exactly `pairs`, in that order, through the safe path (backup, atomic write,
+    Hermes read-back, auto-restore, one history line, undo). The desk remembers what left the list."""
+    now = _now(now)
+    name = _name(paths, profile)
+    date = f"{now:%Y-%m-%d}"
+    pairs = [(str(p[0]), str(p[1])) for p in pairs]
+    try:
+        if _rules(paths, profile).get("model_locked"):
+            raise EditError(f"{name} has no backups by design, and the desk does not change that")
+        if len(set(pairs)) != len(pairs):
+            raise EditError("the same backup is in the new list twice; nothing changed")
+        loader = loader or default_loader()
+        old = readable(_config(paths, profile), loader)
+        block = read_block(old)
+        before = [(i.provider, i.model) for i in block.items]
+        if before == pairs:
+            return Result(True, f"{name}'s backups are already exactly that; nothing to change")
+        old_lines = old.splitlines(keepends=True)
+        kept = {f"{i.provider}|{i.model}": old_lines[i.start:i.end] for i in block.items}
+        known = {f"{r.get('provider')}|{r.get('model')}": list(r.get("raw") or ())      # a remembered entry's own lines
+                 for r in read_off(paths).get(profile, ())}
+        known.update(raws or {})
+        new = rewrite_backups(old, pairs, date, "backups set in the standard ladder order", known)
+        if [(i.provider, i.model) for i in read_block(new).items] != pairs:
+            raise EditError("the new list did not come out as planned; nothing changed")
+    except EditError as exc:
+        return _refused(exc)
+    what = what or f"{name}'s backups change from {pairs_words(before)} to {pairs_words(pairs)}"
+    off = read_off(paths)
+
+    def remember() -> None:
+        mine = [r for r in off.get(profile, []) if (r.get("provider"), r.get("model")) not in pairs]
+        on_rungs = {D.rung_of(p, m) for p, m in pairs} - {""}
+        mine = [r for r in mine if D.rung_of(str(r.get("provider")), str(r.get("model"))) not in on_rungs]
+        for n, pair in enumerate(before, 1):
+            if pair in pairs or D.rung_of(*pair) in on_rungs:
+                continue                                # still listed, or its rung now holds another model
+            mine = [r for r in mine if (r.get("provider"), r.get("model")) != pair]
+            mine.append({"provider": pair[0], "model": pair[1], "position": n, "off_since": date,
+                         "note": f"switched off {now:%-d %b}", "raw": kept.get(f"{pair[0]}|{pair[1]}", [])})
+        off[profile] = mine
+        _write_off(paths, off)
+
+    return _finish(paths, profile, "ladder", what, old, new, {"fallback_providers": pairs},
+                   [list(p) for p in before], [list(p) for p in pairs], now, loader, undoes, {"raws": kept}, remember)
+
+
+def set_rung(profile: str, rung: str, model: Optional[str], paths: EditPaths, *,
+             now: Optional[_dt.datetime] = None, loader: Optional[Loader] = None) -> Result:
+    """One rung of one agent's ladder: the model it uses there, or None / "" for off. The whole list is written
+    in the standard order, so a list that was out of order is put in order by the same change (and it says so)."""
+    name = _name(paths, profile)
+    try:
+        if rung not in LADDER_MODELS:
+            raise EditError(f"{rung} is not a rung of the ladder; nothing changed")
+        loader = loader or default_loader()
+        old = readable(_config(paths, profile), loader)
+        before = [(i.provider, i.model) for i in read_block(old).items]
+    except EditError as exc:
+        return _refused(exc)
+    parts, extras = ladder_parts(before)
+    had = parts.get(rung)
+    service = LADDER_MODELS[rung][0]
+    if model:
+        if model not in rung_choices(rung, had[1] if had else None):
+            return Result(False, f"{D.model_name(model)} is not a model the desk offers on {RUNG_NAME[rung]}; "
+                                 "nothing changed")
+        parts[rung] = (service, model)
+    else:
+        parts.pop(rung, None)
+    target = [parts[k] for k in D.LADDER_KEYS if k in parts] + extras
+    if target == before:
+        state = pair_words(had) if had else "off"
+        return Result(True, f"{name}'s {RUNG_NAME[rung]} is already {state}; nothing to change")
+    if model and had:
+        what = f"{name}'s {RUNG_NAME[rung]} changes from {D.model_name(had[1])} to {D.model_name(model)}"
+    elif model:
+        what = f"{name}'s {RUNG_NAME[rung]} is switched on: {D.model_name(model)}"
+    elif had:
+        what = f"{name}'s {RUNG_NAME[rung]} is switched off (it was {D.model_name(had[1])}; the desk remembers it)"
+    else:
+        what = f"{name}'s {RUNG_NAME[rung]} stays off"
+    after_same = [p for p in before if p in target]
+    if after_same != [p for p in target if p in before]:
+        what += "; the list is also put in the standard order"
+    return set_ladder(profile, target, paths, what=what, now=now, loader=loader)
+
+
+@dataclass
+class LadderPlan:
+    profile: str
+    name: str
+    before: list
+    after: list
+    notes: list[str] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def changes(self) -> bool:
+        return not self.error and self.before != self.after
+
+
+def plan_standard_ladder(paths: EditPaths, profiles: Optional[list[str]] = None, extras: str = "keep",
+                         loader: Optional[Loader] = None) -> list[LadderPlan]:
+    """What "apply the standard ladder" would do to every agent that is not locked. READ-ONLY, whatever the armed
+    switch says: it reads each settings file and writes nothing.
+
+    Each agent keeps its own model on a rung where it already has one. A missing rung gets: on Antigravity the
+    same Claude model as its main model, then Gemini 3.8 Flash; on ChatGPT the model an agent already uses there;
+    on NVIDIA the Nemotron model it already lists (or remembers), else the one most agents list.
+    extras="keep" leaves backups that are not on the ladder after it; "drop" takes them off the list."""
+    try:
+        rules = D.load_rules(paths.rules)
+    except (OSError, ValueError):
+        rules = {}
+    if profiles is None:
+        profiles = D.discover_profiles(paths.profiles, rules)
+    loader = loader or default_loader()
+    off = read_off(paths)
+    read: dict = {}
+    for prof in profiles:
+        if D.rules_for(rules, prof).get("model_locked"):
+            continue
+        try:
+            text = readable(_config(paths, prof), loader)
+            read[prof] = (managed(text)["model"], [(i.provider, i.model) for i in read_block(text).items], "")
+        except EditError as exc:
+            read[prof] = ({}, [], str(exc))
+    codex = next((p for prof in read for p in read[prof][1] if D.rung_of(*p) == "codex"),
+                 ("openai-codex", LADDER_MODELS["codex"][1][0]))
+    seen_nv = [p[1] for prof in read for p in read[prof][1] if D.rung_of(*p) == "nvidia"]
+    seen_nv += [str(r.get("model")) for prof in read for r in off.get(prof, ()) if r.get("provider") == "nvidia"]
+    common_nv = max(sorted(set(seen_nv)), key=seen_nv.count) if seen_nv else NVIDIA[1]
+    out = []
+    for prof, (main, before, err) in read.items():
+        name = _name(paths, prof)
+        if err:
+            out.append(LadderPlan(prof, name, [], [], error=err))
+            continue
+        parts, rest = ladder_parts(before)
+        notes = []
+        main_model = str(main.get("default") or "")
+        want = dict(parts)
+        if "ag_claude" not in want:
+            model = main_model if main_model in LADDER_MODELS["ag_claude"][1] else LADDER_MODELS["ag_claude"][1][0]
+            want["ag_claude"] = (D.AGY, model)
+            notes.append(f"adds rung 2, Claude on Antigravity: {D.model_name(model)} (the same as its main model)")
+        if "ag_gemini" not in want:
+            want["ag_gemini"] = (D.AGY, "gemini-3.8-flash")
+            notes.append("adds rung 2, Gemini on Antigravity: Gemini 3.8 Flash")
+        if "codex" not in want:
+            want["codex"] = tuple(codex)
+            notes.append(f"adds rung 3, ChatGPT: {D.model_name(codex[1])}")
+        if "nvidia" not in want:
+            mine = next((str(r.get("model")) for r in off.get(prof, ()) if r.get("provider") == "nvidia"), "")
+            model = mine or common_nv
+            want["nvidia"] = ("nvidia", model)
+            notes.append(f"adds rung 4, NVIDIA: {D.model_name(model)}"
+                         + (" (it was switched off for this agent before)" if mine else ""))
+        after = [want[k] for k in D.LADDER_KEYS]
+        if [p for p in before if p in after] != [p for p in after if p in before]:
+            notes.append("puts the rungs it already has in the standard order")
+        for pair in rest:
+            if extras == "keep":
+                after.append(pair)
+                notes.append(f"keeps {pair_words(pair)} after the ladder (it is not on the standard ladder)")
+            else:
+                notes.append(f"takes {pair_words(pair)} off the list (it is not on the standard ladder; "
+                             "the desk remembers it)")
+        if before == after:
+            notes = ["already on the standard ladder: nothing changes"]
+        out.append(LadderPlan(prof, name, before, after, notes))
+    return out
+
+
+def plan_lines(plan: LadderPlan) -> list[str]:
+    """One agent's before and after, as the lines a result shows."""
+    if plan.error:
+        return [f"  could not be read: {plan.error}"]
+    out = [f"- before: {pairs_words(plan.before)}", f"+ after:  {pairs_words(plan.after)}"]
+    return out + ["  " + n for n in plan.notes]
+
+
+def apply_standard_ladder(paths: EditPaths, *, dry_run: bool = False, extras: str = "keep",
+                          profiles: Optional[list[str]] = None, now: Optional[_dt.datetime] = None,
+                          loader: Optional[Loader] = None) -> list[Result]:
+    """Put every agent that is not locked on the standard ladder. dry_run=True writes nothing whatever the armed
+    switch says: every result is a dry run that lists the agent's before and after. Otherwise each agent goes
+    through set_ladder (which is itself a dry run on a desk that is not armed); u undoes the newest one."""
+    results = []
+    for plan in plan_standard_ladder(paths, profiles, extras, loader):
+        if plan.error:
+            results.append(Result(False, f"{plan.name}: not changed. {plan.error}"))
+        elif not plan.changes:
+            results.append(Result(True, f"{plan.name} is already on the standard ladder; nothing to change",
+                                  dry=dry_run))
+        elif dry_run:
+            results.append(Result(True, f"DRY RUN, nothing written. This would happen: {plan.name}'s backups are "
+                                        "set to the standard ladder", dry=True, lines=plan_lines(plan),
+                                  needs=NEEDS["ladder"]))
+        else:
+            res = set_ladder(plan.profile, plan.after, paths, now=now, loader=loader,
+                             what=f"{plan.name}'s backups are set to the standard ladder: {pairs_words(plan.after)}")
+            if res.ok and not res.lines:
+                res.lines = plan_lines(plan)
+            results.append(res)
+    return results
+
+
 VOICE_FIELDS = ("voice", "voice_zh", "speed", "effect")
 
 
@@ -881,6 +1176,30 @@ def change_voice(agent_key: str, field_name: str, value: Any, paths: EditPaths, 
         entry["undoes"] = undoes
     _append_history(paths, entry)
     return Result(True, ("Undone: " if undoes else "Saved: ") + what, needs=NEEDS["voice"], entry=entry)
+
+
+SPEED_FIXED = "fixed by this voice: its speaker has no speed setting the desk can change"
+
+
+def speed_fixed(agent_key: str, paths: EditPaths) -> str:
+    """Why this agent's speaking speed cannot be changed from the desk; "" when it can. The REAL change is run
+    on throw-away copies (never on the live files), and the answer is whether it would go through."""
+    try:
+        agent = voiceedit._find_agent(A.load(paths.voice.toml), agent_key)
+    except Exception as exc:                            # noqa: BLE001
+        return f"the Voice Desk list could not be read ({type(exc).__name__})"
+    trial = next(v for _, v in SPEEDS if agent.speed is None or abs(v - float(agent.speed)) > 1e-9)
+    try:
+        root, box, _pairs = _sandbox(paths.voice)
+    except OSError as exc:
+        return f"the desk could not try it on a copy ({exc.strerror or exc})"
+    try:
+        res = _speed_change(agent_key, trial, box, _dt.datetime.now())
+    except Exception:                                   # noqa: BLE001
+        return SPEED_FIXED
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return "" if res.ok else SPEED_FIXED
 
 
 def real_voice_test(agent: A.Agent, lang: str, voice: str) -> tuple[bool, str]:
@@ -1267,6 +1586,11 @@ def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Option
     if kind == "backup":
         return set_backup(last["profile"], last["provider"], last["model"], bool(last["before"]), paths, now=now,
                           loader=loader, undoes=last["id"])
+    if kind == "ladder":
+        return set_ladder(last["profile"], [tuple(p) for p in last["before"]], paths, now=now, loader=loader,
+                          undoes=last["id"], raws=dict(last.get("raws") or {}),
+                          what=f"{_name(paths, last['profile'])}'s backups go back to "
+                               f"{pairs_words([tuple(p) for p in last['before']])}")
     if kind == "rule":
         return change_rules(last["profile"], dict(last["before"]), paths, now=now, undoes=last["id"])
     if kind == "voice_place":
