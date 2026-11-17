@@ -60,6 +60,20 @@ CELL_TO_VOICE_MODE = {v: k for k, v in _VOICE_MODE_TO_CELL.items()}
 GEMINI_SWITCH_NAME = "gemini_voice_off"
 
 
+def _tg_dm_chat() -> str:
+    """Peter's own Telegram chat number. It is private, so it is never written in this project: it comes from
+    VOICE_DESK_TG_DM_CHAT, or from the one-line file tg_dm_chat in the Voice Desk state folder. Neither there
+    = a made-up number, so nothing matches and the Telegram direct-chat cells simply read as not set."""
+    got = os.environ.get("VOICE_DESK_TG_DM_CHAT", "").strip()
+    if got:
+        return got
+    try:
+        got = (Path(S.STATE_DIR) / "tg_dm_chat").read_text(encoding="utf-8").strip()
+    except OSError:
+        got = ""
+    return got or "1000000001"
+
+
 @dataclass(frozen=True)
 class Cell:
     value: str                       # OFF / VOICE_BACK / ALWAYS / NA / UNKNOWN
@@ -81,7 +95,7 @@ class Paths:
     state: Path
     mirror_config: Path
     repo: Path
-    tg_dm_chat: str = "7512954760"
+    tg_dm_chat: str = "1000000001"              # a made-up number; the real one is read by default()
     receiver_port: int = 8765
     simba_yaml: Optional[Path] = None            # panbear-daily's simba.yaml: her Team_Room voice-note switch
 
@@ -98,7 +112,7 @@ class Paths:
             mirror_config=Path(os.environ.get(
                 "VOICE_DESK_MIRROR_CONFIG",
                 profiles / "orchestrator/scripts/team_room/state/mirror_config.json")),
-            repo=S.REPO, tg_dm_chat=os.environ.get("VOICE_DESK_TG_DM_CHAT", "7512954760"),
+            repo=S.REPO, tg_dm_chat=_tg_dm_chat(),
             receiver_port=S.RECEIVER_PORT,
             simba_yaml=Path(os.environ.get("VOICE_DESK_SIMBA_YAML", home / "GitHub/panbear-daily/simba.yaml")))
 

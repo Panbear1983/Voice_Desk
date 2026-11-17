@@ -145,13 +145,13 @@ class RepairsSwitches(Base):
         data["voice"]["enabled"] = True
         settings.write_text(json.dumps(data))
         self.p.gemini_switch.unlink()
-        self.p.voice_mode_file.write_text(json.dumps({"assistant:telegram:7512954760": "all"}))
+        self.p.voice_mode_file.write_text(json.dumps({"assistant:telegram:1000000001": "all"}))
         (self.p.speech_dir / "off").unlink()
         rep = self.run_w()
         self.assertEqual(len(rep.repaired), 4, (rep.repaired, [x.text for x in rep.problems]))
         self.assertFalse(json.loads(settings.read_text())["voice"]["enabled"])
         self.assertTrue(self.p.gemini_switch.exists())
-        self.assertEqual(json.loads(self.p.voice_mode_file.read_text())["assistant:telegram:7512954760"], "off")
+        self.assertEqual(json.loads(self.p.voice_mode_file.read_text())["assistant:telegram:1000000001"], "off")
         self.assertTrue((self.p.speech_dir / "off").exists())
         self.assertTrue(self.run_w(at=T0 + 300).quiet())
 
@@ -331,13 +331,13 @@ class Alerts(Base):
         fake.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{log}"\nexit ${{FAKE_EXIT:-0}}\n')
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
         with mock.patch.dict(os.environ, {"VOICE_DESK_HERMES_BIN": str(fake), "FAKE_EXIT": "0"}):
-            self.assertTrue(W.send_dm("hello there", "7512954760"))
+            self.assertTrue(W.send_dm("hello there", "1000000001"))
             self.assertEqual(log.read_text().split("\n")[:-1],
-                             ["-p", "orchestrator", "send", "--to", "telegram:7512954760", "hello there", "--json"])
+                             ["-p", "orchestrator", "send", "--to", "telegram:1000000001", "hello there", "--json"])
         with mock.patch.dict(os.environ, {"VOICE_DESK_HERMES_BIN": str(fake), "FAKE_EXIT": "1"}):
-            self.assertFalse(W.send_dm("hello there", "7512954760"))
+            self.assertFalse(W.send_dm("hello there", "1000000001"))
         with mock.patch.dict(os.environ, {"VOICE_DESK_HERMES_BIN": str(tmp / "missing")}):
-            self.assertFalse(W.send_dm("hello there", "7512954760"))
+            self.assertFalse(W.send_dm("hello there", "1000000001"))
 
 
 class PauseAndDryRun(Base):

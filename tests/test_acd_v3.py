@@ -394,8 +394,19 @@ class Adapter(unittest.TestCase):
         cls.tmp = Path(tempfile.mkdtemp(prefix="acd-adapter-"))
         shutil.copy2(LIVE_TEAM_ROOM, cls.tmp / "team_room.py")
         cls.original = (cls.tmp / "team_room.py").read_text(encoding="utf-8")
-        done = subprocess.run(["patch", "-p1", "--no-backup-if-mismatch", "-i", str(PATCH)], cwd=cls.tmp,
-                              capture_output=True, text=True)
+        # Since 2026-11-17 the adapter is installed in the live Team Room. A copy that already carries the marker
+        # is the patched one as it stands; the plain one is then made by taking the patch back out of a second copy.
+        cls.installed = D.ADAPTER_MARK in cls.original
+        cls.plain_text = cls.original
+        if cls.installed:
+            (cls.tmp / "undo").mkdir()
+            shutil.copy2(LIVE_TEAM_ROOM, cls.tmp / "undo" / "team_room.py")
+            done = subprocess.run(["patch", "-R", "-p1", "--no-backup-if-mismatch", "-i", str(PATCH)],
+                                  cwd=cls.tmp / "undo", capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            cls.plain_text = (cls.tmp / "undo" / "team_room.py").read_text(encoding="utf-8")
+        else:
+            done = subprocess.run(["patch", "-p1", "--no-backup-if-mismatch", "-i", str(PATCH)], cwd=cls.tmp,
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
         cls.patch_out = done.stdout + done.stderr
         cls.applied = done.returncode == 0
         cls.rules = cls.tmp / "rules.toml"
@@ -414,7 +425,7 @@ class Adapter(unittest.TestCase):
                 spec.loader.exec_module(mod)
                 return mod
             (cls.tmp / "plain").mkdir()
-            (cls.tmp / "plain" / "team_room.py").write_text(cls.original, encoding="utf-8")
+            (cls.tmp / "plain" / "team_room.py").write_text(cls.plain_text, encoding="utf-8")
             cls.plain = load("acd_test_team_room_plain", cls.tmp / "plain" / "team_room.py")
             cls.tr = load("acd_test_team_room_patched", cls.tmp / "team_room.py") if cls.applied else None
         finally:

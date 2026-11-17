@@ -22,8 +22,8 @@ import onoff  # noqa: E402
 import syshealth  # noqa: E402
 import voiceedit as VE  # noqa: E402
 
-KEY = "assistant:telegram:7512954760"          # Kylie
-JARVIS = "orchestrator:telegram:7512954760"
+KEY = "assistant:telegram:1000000001"          # Kylie
+JARVIS = "orchestrator:telegram:1000000001"
 
 
 def agent_of(w, key):
@@ -80,11 +80,11 @@ class TelegramDirect(Base):
             self.assertEqual(self.cell("jarvis", "tg_dm").label, G.LABEL[token])
 
     def test_other_chats_and_odd_keys_in_the_file_are_kept_and_the_old_file_is_backed_up(self):
-        original = json.dumps({"wanna-buffet:telegram:7512954760": "all", "telegram:99": "off", "bad": "nonsense"}, indent=2)
+        original = json.dumps({"wanna-buffet:telegram:1000000001": "all", "telegram:99": "off", "bad": "nonsense"}, indent=2)
         self.mode_file.write_text(original)
         res = self.switch("kylie", "tg_dm", "voice_back")
         self.assertTrue(res.ok, res.message)
-        self.assertEqual(self.modes(), {"wanna-buffet:telegram:7512954760": "all", "telegram:99": "off", "bad": "nonsense",
+        self.assertEqual(self.modes(), {"wanna-buffet:telegram:1000000001": "all", "telegram:99": "off", "bad": "nonsense",
                                         KEY: "voice_only"})
         backups = list(self.w.edit.hermes_backups.glob("*-voice-panel/*gateway_voice_mode.json"))
         self.assertEqual(len(backups), 1)
@@ -147,7 +147,7 @@ class TelegramDirect(Base):
 
     def test_stray_copies_in_profile_folders_are_never_read_or_written(self):
         strays = {}
-        for prof, body in (("orchestrator", {"assistant:telegram:7512954760": "off"}), ("wanna-buffet", {"telegram:7512954760": "all"})):
+        for prof, body in (("orchestrator", {"assistant:telegram:1000000001": "off"}), ("wanna-buffet", {"telegram:1000000001": "all"})):
             f = self.w.paths.profiles / prof / "gateway_voice_mode.json"
             f.write_text(json.dumps(body))
             strays[f] = f.read_bytes()

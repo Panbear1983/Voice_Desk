@@ -2,7 +2,7 @@
 Peter's real files, windows or logs.
 
     world = make_world()        # .paths (gridstate.Paths), .edit (voiceedit.EditPaths), .toml, .root
-    log(world, "assistant", "agent.log", ts, "gateway.run: response ready: platform=telegram chat=7512954760 ...")
+    log(world, "assistant", "agent.log", ts, "gateway.run: response ready: platform=telegram chat=1000000001 ...")
 """
 from __future__ import annotations
 
@@ -161,7 +161,7 @@ def log(world, profile: str, name: str, ts: float, text: str) -> None:
         fh.write(f"{stamp(ts)} {text}\n")
 
 
-CHAT = "7512954760"
+CHAT = "1000000001"
 
 
 def dm_reply(world, profile: str, ts: float, chat: str = CHAT) -> None:

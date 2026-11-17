@@ -83,8 +83,8 @@ class TheCells(unittest.TestCase):
                          V.COLOUR["bad"])
 
     def test_telegram_direct_mode_file_wins_then_auto_tts(self):
-        w = F.make_world(dm_modes={"assistant:telegram:7512954760": "off", "wanna-buffet:telegram:7512954760": "voice_only",
-                                   "orchestrator:telegram:7512954760": "all"})
+        w = F.make_world(dm_modes={"assistant:telegram:1000000001": "off", "wanna-buffet:telegram:1000000001": "voice_only",
+                                   "orchestrator:telegram:1000000001": "all"})
         rows = rows_by_key(w)
         self.assertEqual(rows["kylie"].cells["tg_dm"].value, G.OFF)
         self.assertEqual(rows["wanna_buffet"].cells["tg_dm"].value, G.VOICE_BACK)
@@ -215,16 +215,16 @@ class TheVoiceCheck(unittest.TestCase):
         self.assertEqual(rows_by_key(w)["kylie"].evidence["tg_dm"].status, "idle")
 
     def test_off_but_a_voice_was_made_is_a_mismatch(self):
-        w = F.make_world(dm_modes={"assistant:telegram:7512954760": "off"})
+        w = F.make_world(dm_modes={"assistant:telegram:1000000001": "off"})
         F.dm_reply(w, "assistant", NOW - H)
         F.dm_voice(w, "assistant", NOW - H + 1)
         self.assertEqual(rows_by_key(w)["kylie"].evidence["tg_dm"].status, "bad")
-        w2 = F.make_world(dm_modes={"assistant:telegram:7512954760": "off"})
+        w2 = F.make_world(dm_modes={"assistant:telegram:1000000001": "off"})
         F.dm_reply(w2, "assistant", NOW - H)
         self.assertEqual(rows_by_key(w2)["kylie"].evidence["tg_dm"].status, "idle", "Off and text only is as set")
 
     def test_voice_back_without_a_voice_message_is_grey(self):
-        w = F.make_world(dm_modes={"assistant:telegram:7512954760": "voice_only"})
+        w = F.make_world(dm_modes={"assistant:telegram:1000000001": "voice_only"})
         F.dm_reply(w, "assistant", NOW - H)
         self.assertEqual(rows_by_key(w)["kylie"].evidence["tg_dm"].status, "idle")
 

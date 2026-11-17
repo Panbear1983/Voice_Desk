@@ -428,7 +428,7 @@ class TheOnOffCells(unittest.IsolatedAsyncioTestCase):
             await pilot.press("up", "up", "enter")                              # Always -> Off
             self.assertTrue(await wait_for(lambda: voiceedit.read_history(self.w.edit)))
             await pilot.pause()
-            self.assertEqual(json.loads(self.w.paths.voice_mode_file.read_text()), {"assistant:telegram:7512954760": "off"})
+            self.assertEqual(json.loads(self.w.paths.voice_mode_file.read_text()), {"assistant:telegram:1000000001": "off"})
             rows, lights = await asyncio.to_thread(app.collect)
             self.assertEqual({r.agent.key: r.cells["tg_dm"].value for r in rows}["kylie"], "off")
 
