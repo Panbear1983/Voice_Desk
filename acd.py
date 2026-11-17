@@ -501,6 +501,9 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
             words, status = SHORT_UNKNOWN.get(place, "unknown"), D.GREY
         if p.can_switch:
             return Cell(status, words, detail + [E.NEEDS["team_room"]], setting="team_room")
+        wire = wire_at(v.wiring, D.WIRE_OF.get(place, ""))
+        if wire is not None and v.voice_key:
+            return wired_cell(name, status, words, detail, wire)
         return Cell(status, words, detail, fixed=p.why_not or "there is no clean switch for this place")
 
     if key.startswith("talk:"):
@@ -516,6 +519,37 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         return Cell(D.GREY if no else D.GREEN, words, detail + [E.NEEDS["rule"]], setting=key)
 
     return Cell()
+
+
+WIRE_ALL = "*"                           # the call-names cell of Claude, Gemini and Codex: every place in one menu
+MARK_ONLY = "a mark the desk shows: it switches nothing on or off"
+
+
+def wire_at(wiring: tuple, place: str) -> Optional[D.Wire]:
+    return next((w for w in wiring if w.place == place), None)
+
+
+def phrase_words(w: D.Wire) -> str:
+    """"hello Jarvis (stored)", "hello Jarvis (today's, none stored)", "none"."""
+    if not w.phrase:
+        return "none"
+    return w.phrase + (" (stored)" if w.phrase_stored else " (today's, none stored)")
+
+
+def wired_cell(name: str, status: Optional[str], words: str, detail: list, w: D.Wire) -> Cell:
+    """A WHERE IT SHOWS UP cell that also carries the Voice Desk list's own mark for that place: here or not here,
+    and the activation phrase. The fact read from the logs stays; the mark and the phrase are what Enter changes."""
+    place = P.wire_place_name(w.place)
+    if not w.here and not w.here_stored:        # nothing is wired there and the list holds no mark: the fact stands
+        return Cell(status, words, detail, setting=f"wire:{w.place}")
+    if not w.here:
+        return Cell(D.RED if status == D.RED else D.GREY, "not here",
+                    [f"{name} is marked not here at {place} in the Voice Desk list ({MARK_ONLY})."] + detail,
+                    setting=f"wire:{w.place}")
+    more = [f"Activation phrase: {phrase_words(w)}."]
+    if not w.wired and w.here_stored:
+        more.append(f"Marked here, but nothing makes it speak there yet: {w.hint}.")
+    return Cell(status, words, detail + more, setting=f"wire:{w.place}")
 
 
 def place_cell(name: str, key: str, places: tuple, has_voice: bool = True) -> Cell:
@@ -559,8 +593,19 @@ def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
         return place_cell(o.name, key, o.voice_places)
     if key == "names":
         more = len(o.call_names) - 1
-        return Cell(D.GREEN, (o.call_names[0] + (f" +{more} more" if more > 0 else "")) if o.call_names else "none",
-                    [f"The voice line wakes {o.name} when it hears: " + ", ".join(o.call_names) + "."],
+        words = (o.call_names[0] + (f" +{more} more" if more > 0 else "")) if o.call_names else "none"
+        detail = [f"The voice line wakes {o.name} when it hears: " + ", ".join(o.call_names) + "."]
+        if o.wiring and o.key:
+            kept = [f"{P.wire_place_name(w.place)}: {w.phrase}" for w in o.wiring if w.here and w.phrase_stored]
+            away = [P.wire_place_name(w.place) for w in o.wiring if not w.here and w.here_stored]
+            if kept:
+                detail.append("Stored activation phrases: " + "; ".join(kept) + ".")
+            if away:
+                detail.append("Marked not here at: " + ", ".join(away) + ".")
+            detail.append("The call names themselves are not changed from the desk. Enter marks a place here or "
+                          "not here, or stores an activation phrase.")
+            return Cell(D.GREEN, words, detail, setting=f"wire:{WIRE_ALL}")
+        return Cell(D.GREEN, words, detail,
                     fixed="the call names are kept in the Voice Desk list; the desk shows them and does not change them")
     return Cell()
 
@@ -747,6 +792,7 @@ class Opt:
     now: bool = False               # today's choice
     disabled: bool = False
     note: str = ""
+    goes_on: bool = False           # Enter goes straight on to a next step (a line to type); nothing is saved here
 
 
 @dataclass
@@ -929,6 +975,9 @@ class CellMenu(ModalScreen[Optional[str]]):
             return
         if o.now:
             self.query_one("#menu-status", Static).update("That is what it is now, so there is nothing to change.")
+            return
+        if o.goes_on:
+            self.dismiss(o.token)
             return
         lines = self.spec.describe(o.token)
         if not lines:
@@ -1865,6 +1914,8 @@ class Desk(App):
             return self.spec_rung(col, setting.split(":", 1)[1])
         if setting.startswith("talk:"):
             return self.spec_talk(col, setting.split(":", 1)[1])
+        if setting.startswith("wire:"):
+            return self.spec_wire(col, setting.split(":", 1)[1])
         build = {"model": self.spec_model, "effort": self.spec_effort, "extras": self.spec_extras,
                  "team_room": self.spec_team_room}.get(setting)
         if build:
@@ -1881,8 +1932,97 @@ class Desk(App):
         if spec.testable and spec.agent is not None and self.tester:
             agent = spec.agent
             tester = lambda lang, voice: self.tester(agent, lang, voice)        # noqa: E731
-        self.push_screen(CellMenu(spec, anchor, dry=not self.is_armed, tester=tester),
-                         lambda token: self.run_jobs(spec.jobs(token)) if token is not None else None)
+        def chosen(token: Optional[str]) -> None:
+            if token is None:
+                return
+            if cell.setting.startswith("wire:") and token.startswith("phrase|"):
+                self.ask_phrase(col, token.split("|", 1)[1])
+                return
+            self.run_jobs(spec.jobs(token))
+
+        self.push_screen(CellMenu(spec, anchor, dry=not self.is_armed, tester=tester), chosen)
+
+    def spec_wire(self, col: Any, which: str) -> Spec:
+        """Here or not here at a place, and the activation phrase there: the Voice Desk list's own marks (the old
+        dashboard's X and P keys). which = one place, or WIRE_ALL for every place in one menu."""
+        edit = self.edit
+        key = getattr(col, "voice_key", "") or getattr(col, "key", "")
+        wires = [w for w in getattr(col, "wiring", ()) if which in (WIRE_ALL, w.place)]
+        one = which != WIRE_ALL
+        title = (f"{col.name}: {P.wire_place_name(which)}, here or not here" if one
+                 else f"{col.name}: where it is marked here, and its activation phrases")
+        if not key or not wires:
+            return Spec(title, locked=f"{col.name} is not in the Voice Desk list, so there is nothing to mark.")
+        by = {w.place: w for w in wires}
+        options: list[Opt] = []
+        for w in wires:
+            place = P.wire_place_name(w.place)
+            if one:
+                options += [Opt(f"here|{w.place}", "here", w.here), Opt(f"nothere|{w.place}", "not here", not w.here)]
+            else:
+                options.append(Opt(f"nothere|{w.place}", f"{place}: mark it not here") if w.here
+                               else Opt(f"here|{w.place}", f"{place}: mark it here"))
+            if w.here:
+                options.append(Opt(f"phrase|{w.place}", ("" if one else f"{place}: ") + "change the phrase... (now: "
+                                   + phrase_words(w) + ")", goes_on=True))
+
+        def describe(tok: str) -> list[str]:
+            did, place = tok.split("|", 1)
+            w, name = by[place], P.wire_place_name(place)
+            if did == "phrase":
+                return ["Next you type the phrase. Nothing is saved until you say yes to it."]
+            out = [f"{col.name} is marked {'here' if did == 'here' else 'not here'} at {name} in the Voice Desk list.",
+                   "It is " + MARK_ONLY + ". Spoken replies there keep their own switch."]
+            if did == "here" and not w.wired:
+                out.append(f"Nothing makes it speak there yet: {w.hint}.")
+            if did == "nothere" and w.phrase_stored:
+                out.append("Its stored activation phrase there is kept.")
+            return out
+
+        def jobs(tok: str) -> list:
+            did, place = tok.split("|", 1)
+            return [] if did == "phrase" else [lambda: P.set_here(edit, key, place, did == "here")]
+
+        note = ("These are marks kept in the Voice Desk list, the same ones the old dashboard had. A phrase is stored "
+                "and shown only: it does not rename a Siri shortcut or change the wake words yet.")
+        return Spec(title, options, describe, jobs, note=note, needs=P.NEEDS_HERE)
+
+    def ask_phrase(self, col: Any, place: str) -> None:
+        """A line to type the activation phrase of one place, then one yes / no line with the old and the new."""
+        edit = self.edit
+        key = getattr(col, "voice_key", "") or getattr(col, "key", "")
+        name = P.wire_place_name(place)
+        title = f"{col.name} at {name}: activation phrase"
+        try:
+            have, stored, default = P.phrase_now(edit, key, place)
+        except Exception as exc:                         # noqa: BLE001
+            self.push_screen(NoticePopup(title, Text(f"The Voice Desk list could not be read ({type(exc).__name__}). "
+                                                     "Nothing was changed.")))
+            return
+        was = (have + ("" if stored else " (today's, none stored)")) if have else "none"
+        note = (P.PHRASE_HINT.get(place, "") + " "
+                + (f"Leave it empty to go back to today's: {default}. " if default else "Leave it empty for none. ")
+                + P.NEEDS_PHRASE)
+
+        def answered(text: Optional[str]) -> None:
+            if text is None:
+                return
+            text = " ".join(text.split())
+            if len(text) > P.PHRASE_MAX:
+                self.push_screen(NoticePopup(title, Text(f"That is {len(text)} characters; a phrase of at most "
+                                                         f"{P.PHRASE_MAX}, please. Nothing was changed.")))
+                return
+            if (text and stored and text == have) or (not text and not stored):
+                self.push_screen(NoticePopup(title, Text("That is what it is now, so there is nothing to change.")))
+                return
+            new = text or (f"today's ({default})" if default else "none")
+            body = [Text(f"  now    {was}"), Text(f"  new    {new}"), Text(""), Text(P.NEEDS_PHRASE, style=DIM),
+                    Text(""), self.dry_line()]
+            self.push_screen(NoticePopup(f"Store this phrase for {col.name} at {name}?", join(body),
+                                         ask="yes, store it"),
+                             lambda yes: self.run_jobs([lambda: P.set_phrase(edit, key, place, text)]) if yes else None)
+
+        self.push_screen(AskPopup(title, note, have if stored else ""), answered)
 
     def open_row(self, row: Row, anchor: Optional[tuple[int, int]] = None) -> None:
         """Enter on a row's name: the same choices, applied to every agent the row can be changed for, after one

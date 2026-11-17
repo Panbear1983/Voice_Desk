@@ -186,14 +186,15 @@ def _plain(message: str) -> str:
 
 
 def _record(paths: E.EditPaths, res: voiceedit.Result, now: _dt.datetime, did: str, what: str,
-            undoes: Optional[str] = None) -> E.Result:
+            undoes: Optional[str] = None, needs: str = "") -> E.Result:
+    needs = needs or NEEDS_AGENT
     grid = dict(res.entry or {})
     entry = {"id": f"{_stamp(now)}-{grid.get('agent')}-agent-{did}", "ts": now.timestamp(), "who": WHO,
              "kind": "agent", "agent": grid.get("agent"), "did": did, "what": what, "ok": True, "grid": grid}
     if undoes:
         entry["undoes"] = undoes
     E._append_history(paths, entry)
-    return E.Result(True, ("Undone: " if undoes else "Saved: ") + what, needs=NEEDS_AGENT, entry=entry)
+    return E.Result(True, ("Undone: " if undoes else "Saved: ") + what, needs=needs, entry=entry)
 
 
 NEEDS_AGENT = ("Only the Voice Desk list changed. The voice line answers to a new name, or stops answering to a "
@@ -267,18 +268,122 @@ def undo_agent(last: dict, paths: E.EditPaths, *, now: Optional[_dt.datetime] = 
     now = now or _dt.datetime.now()
     what = "undo of: " + str(last.get("what"))
     grid = dict(last.get("grid") or {})
+    needs = {"grid:here": NEEDS_HERE, "grid:phrase": NEEDS_PHRASE}.get(str(grid.get("field")), NEEDS_AGENT)
     try:
         if not E.armed(paths):
             res, lines = _in_sandbox(paths, lambda box: gridedit.undo(grid, box))
             if not res.ok:
                 return E.Result(False, "Not undone. " + _plain(res.message))
-            return _dry(paths, what + ".", lines, NEEDS_AGENT)
+            return _dry(paths, what + ".", lines, needs)
         res = gridedit.undo(grid, paths.voice)
     except (voiceedit.EditError, OSError, ValueError, KeyError) as exc:
         return E.Result(False, f"Not undone. {exc}")
     if not res.ok:
         return E.Result(False, "Not undone. " + _plain(res.message))
-    return _record(paths, res, now, "undone", str(last.get("what")), undoes=last["id"])
+    return _record(paths, res, now, "undone", str(last.get("what")), undoes=last["id"], needs=needs)
+
+
+# ---- 2b. here / not here, and the activation phrase (the old dashboard's X and P keys) -----------------------
+NEEDS_HERE = ("Only the Voice Desk list changed. It is a mark the desk shows: it switches nothing on or off, "
+              "restarts nothing, and no agent's own files were touched.")
+NEEDS_PHRASE = ("Stored and shown only: it does not rename a Siri shortcut or change the wake words yet. Only the "
+                "Voice Desk list changed, and nothing is restarted.")
+PHRASE_HINT = {
+    "terminal": "What starts it in its window, for example the command name.",
+    "tg_dm": "The bot Peter writes to, for example @JarvisBot.",
+    "tg_group": "The group, for example Team_Room.",
+    "mic": "The words that wake it at the Mac's microphone, for example hello Jarvis.",
+    "iphone": "The Siri shortcut's name, for example Talk to Jarvis.",
+}
+PHRASE_MAX = 80
+
+
+def wire_place_name(place: str) -> str:
+    import gridstate as G
+    return G.PLACE_NAME.get(place, place)
+
+
+def _wire_ready(paths: E.EditPaths, key: str, place: str):
+    """(the agent, its grid cells) or an EditError in plain words. Only reads."""
+    import gridstate as G
+    if paths.grid is None:
+        raise E.EditError("The Voice Desk's own files are not known to the desk.")
+    if place not in G.PLACE_KEYS:
+        raise E.EditError(f"{place} is not a place the Voice Desk list knows.")
+    agent = voiceedit._find_agent(A.load(paths.voice.toml), key)
+    return agent, G.cells_for(agent, paths.grid)
+
+
+def set_here(paths: E.EditPaths, key: str, place: str, here: bool, *,
+             now: Optional[_dt.datetime] = None) -> E.Result:
+    """Mark an agent here, or not here, at one place, with the old dashboard's own writer (gridedit.set_here: a
+    copy first, an atomic write, a read back, put back at once when the read back is wrong). u undoes it."""
+    import gridstate as G
+    now = now or _dt.datetime.now()
+    word = "here" if here else "not here"
+    try:
+        agent, cells = _wire_ready(paths, key, place)
+        name = wire_place_name(place)
+        what = f"{agent.display} is marked {word} at {name}"
+        if G.here_map(agent, cells)[place] == here:
+            return E.Result(True, f"{agent.display} is already marked {word} at {name}; nothing to change")
+        if here and G.unwired(cells[place], place):
+            what += f" (nothing makes it speak there yet: {G.wiring_hint(agent, place)})"
+        if not E.armed(paths):
+            res, lines = _in_sandbox(paths, lambda box: gridedit.set_here(box, key, place, here, cells, now=now))
+            if not res.ok:
+                return E.Result(False, "Not changed. " + _plain(res.message))
+            return _dry(paths, what + ".", lines, NEEDS_HERE)
+        res = gridedit.set_here(paths.voice, key, place, here, cells, now=now)
+    except (E.EditError, voiceedit.EditError, OSError, ValueError, KeyError) as exc:
+        return E.Result(False, f"Not changed. {exc}")
+    if not res.ok or res.entry is None:
+        return E.Result(False, "Not changed. " + _plain(res.message))
+    return _record(paths, res, now, "here" if here else "nothere", what, needs=NEEDS_HERE)
+
+
+def phrase_now(paths: E.EditPaths, key: str, place: str) -> tuple[str, bool, str]:
+    """(the phrase shown today, is it stored, today's default when none is stored). Only reads."""
+    import gridstate as G
+    agent = voiceedit._find_agent(A.load(paths.voice.toml), key)
+    default = G.default_phrase(agent, place)
+    stored = G.phrase_map(agent).get(place)
+    return (stored if stored is not None else default), stored is not None, default
+
+
+def set_phrase(paths: E.EditPaths, key: str, place: str, text: Optional[str], *,
+               now: Optional[_dt.datetime] = None) -> E.Result:
+    """Store the activation phrase of one place (empty = back to today's default), with the old dashboard's own
+    writer (gridedit.set_phrase). Stored and shown only: it renames nothing. u undoes it."""
+    import gridstate as G
+    now = now or _dt.datetime.now()
+    text = " ".join((text or "").split())
+    todays = " (today's)"
+    try:
+        agent, cells = _wire_ready(paths, key, place)
+        name = wire_place_name(place)
+        if not G.here_map(agent, cells)[place]:
+            return E.Result(False, f"Not changed. {agent.display} is marked not here at {name}: mark it here first.")
+        if len(text) > PHRASE_MAX:
+            return E.Result(False, f"Not changed. An activation phrase of at most {PHRASE_MAX} characters, please.")
+        have, stored, default = phrase_now(paths, key, place)
+        if (text and stored and text == have) or (not text and not stored):
+            return E.Result(True, f"{agent.display} at {name}: already "
+                                  f"{have or 'no phrase'}{'' if stored else todays}; nothing to change")
+        new = text or (f"today's ({default})" if default else "none")
+        what = (f"{agent.display} at {name}: the activation phrase changes from "
+                f"{have or 'none'}{'' if stored or not have else todays} to {new}")
+        if not E.armed(paths):
+            res, lines = _in_sandbox(paths, lambda box: gridedit.set_phrase(box, key, place, text, now=now))
+            if not res.ok:
+                return E.Result(False, "Not changed. " + _plain(res.message))
+            return _dry(paths, what + ".", lines, NEEDS_PHRASE)
+        res = gridedit.set_phrase(paths.voice, key, place, text, now=now)
+    except (E.EditError, voiceedit.EditError, OSError, ValueError, KeyError) as exc:
+        return E.Result(False, f"Not changed. {exc}")
+    if not res.ok or res.entry is None:
+        return E.Result(False, "Not changed. " + _plain(res.message))
+    return _record(paths, res, now, "phrase", what, needs=NEEDS_PHRASE)
 
 
 # ---- 3. the listener (the voice line) --------------------------------------------------------------------------
