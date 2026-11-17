@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Permission pop-up watcher: one cheap pass every 30 s, nothing stays running in between.
+     A template: install.sh fills in the home and repo folders, writes
+     ~/Library/LaunchAgents/com.peter.permission-watch.plist and loads it (./install.sh --print shows it).
+     The program launchd starts is the repo's .venv python; macOS ties the Screen Recording grant to the
+     real file behind it (see README.md). -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.peter.permission-watch</string>
+  <key>ProgramArguments</key><array>
+    <string>@REPO@/.venv/bin/python</string>
+    <string>@REPO@/tools/permission_watch/permission_watch.py</string>
+    <string>--once</string>
+  </array>
+  <key>StartInterval</key><integer>30</integer>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>WorkingDirectory</key><string>@REPO@/tools/permission_watch</string>
+  <key>StandardOutPath</key><string>@HOME@/.local/state/permission_watch/watch.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/.local/state/permission_watch/watch.log</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>@HOME@</string>
+  </dict>
+</dict></plist>
