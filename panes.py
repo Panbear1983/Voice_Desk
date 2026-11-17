@@ -90,9 +90,24 @@ def _is_rule(row: str) -> bool:
 
 
 def _split(tail: str) -> tuple[list, list, Optional[str]]:
-    """(rows above the input box, rows below its top rule, the top rule itself or None)."""
+    """(rows above the input box, rows below its top rule, the top rule itself or None).
+
+    Hermes also prints a fixed 40-cell rule into the scrollback around every message and answer;
+    in a narrow window it wraps into a full row plus a short one ("─────────"). That pair is not the
+    input box, whose top rule is followed by the input line, never by another rule. While Hermes
+    redraws, a read can end on such a pair with no input box under it (caught live 2026-11-17 in
+    Jarvis's window, 3 reads in 1,100 during a busy turn); that must not read as "voice off"."""
     rows = [r for r in tail.splitlines() if r.strip()]
-    rules = [i for i, r in enumerate(rows) if _is_rule(r)]
+
+    def dash_len(k: int) -> int:
+        s = rows[k].strip() if 0 <= k < len(rows) else ""
+        return len(s) if s and set(s) == {"─"} else 0
+
+    def wrapped(i: int) -> bool:               # head (a shorter dash row follows) or tail (a longer one precedes)
+        n = dash_len(i)
+        return bool(n) and (0 < dash_len(i + 1) < n or dash_len(i - 1) > n)
+
+    rules = [i for i, r in enumerate(rows) if _is_rule(r) and not wrapped(i)]
     if not rules:
         return rows[:-3], rows[-3:], None
     i = rules[-1]
@@ -154,8 +169,26 @@ def recording_confirmed(tail: Optional[str]) -> bool:
     return False
 
 
-def state(pane: str) -> str:
-    return state_of(screen_tail(pane, lines=STATE_LINES))
+def _look(pane: str, confirm_off: bool = True) -> tuple[str, Optional[str]]:
+    """(state, tail). A half-drawn frame is read again (up to three reads); "off" is believed only
+    if a second read 0.3 s later says so too (a redraw lasts milliseconds, an end phrase stays)."""
+    now, tail = "unclear", None
+    for attempt in range(4):
+        tail = screen_tail(pane, lines=STATE_LINES)
+        now = state_of(tail)
+        if now == "unclear" and attempt < 2:
+            time.sleep(0.15)
+            continue
+        if now == "off" and confirm_off:
+            confirm_off = False
+            time.sleep(0.3)
+            continue
+        break
+    return now, tail
+
+
+def state(pane: str, confirm_off: bool = True) -> str:
+    return _look(pane, confirm_off)[0]
 
 
 def stopped_by_phrase(tail: Optional[str]) -> bool:
@@ -194,8 +227,12 @@ def stash_draft(pane: str) -> bool:
 
 def rearm(pane: str) -> bool:
     """Peter 2026-10-21: an end phrase should put the window back to 'voice on, waiting for Ctrl+B',
-    not switch voice off. Hermes turns it off, so turn it straight back on (a draft is stashed first)."""
-    if state(pane) != "off" or not stopped_by_phrase(screen_tail(pane, lines=30)):
+    not switch voice off. Hermes turns it off, so turn it straight back on (a draft is stashed first).
+    Checked every 1.5 s for four windows, so the first look is a single read; the second, before
+    typing anything, is confirmed (a half-drawn frame mid-turn must not get "/voice on" typed in)."""
+    if state(pane, confirm_off=False) != "off" or not stopped_by_phrase(screen_tail(pane, lines=30)):
+        return False
+    if state(pane) != "off":
         return False
     if not stash_draft(pane):
         return False
@@ -217,18 +254,6 @@ def has_draft(ansi_tail: Optional[str]) -> bool:
     if not _ANSI.sub("", after).strip():
         return False
     return not after.startswith("\x1b[3m")               # italic = the placeholder, not typed text
-
-
-def _look(pane: str) -> tuple[str, Optional[str]]:
-    """(state, tail), read again a few times while the frame is unclear (half drawn)."""
-    now, tail = "unclear", None
-    for _ in range(3):
-        tail = screen_tail(pane, lines=STATE_LINES)
-        now = state_of(tail)
-        if now != "unclear":
-            break
-        time.sleep(0.15)
-    return now, tail
 
 
 def _await_rec(pane: str, wait_sec: float) -> str:

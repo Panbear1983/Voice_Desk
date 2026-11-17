@@ -1,0 +1,20 @@
+
+
+∴ Thought for 0s
+───────────────────────────────
+─────────
+
+───────────────────────────────
+─────────
+☤ Orchestrator
+Her persona file is locked to a
+ pinned fingerprint. If I edit
+it without re-pinning, she goes
+ silent in every chat. I'll fin
+d how the pin is updated, since
+ earlier persona edits all went
+ through it.
+───────────────────────────────
+─────────
+
+💻 $ ls + 2 commands  0.3s

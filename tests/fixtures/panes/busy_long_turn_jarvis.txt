@@ -1,0 +1,24 @@
+ng, since the same test passed
+ earlier and the running listen
+er should be the updated code.
+I'm also looking at wh
+ether Whisper's prompt, which l
+eaves out Simba, is causing a m
+ishearing.
+
+I'm wondering whether the trans
+cript "Hello, Wanna Buffet" was
+ actually Peter saying "Hello J
+ar
+vis," since whisper may be mish
+earing the name right after Sim
+ba. I'm also checking whether t
+he
+ room noise, around 350 to 480,
+ is raising the speech threshol
+d enough to keep the listener f
+rom tri
+── ⠧ Working… · 1m · ↓ 3.9k...
+☤ type to redirect this turn ·
+ 🎤 Ctrl+B
+ ☤ agy-claude · 1.1d

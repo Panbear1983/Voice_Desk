@@ -42,6 +42,12 @@ BUSY_TOOL = fx("busy_tool_jarvis.txt")                    # "── ⠼ (⌐■_
 BUSY_PREP = fx("busy_preparing_jarvis.txt")               # "── ⠴ ⚡ Preparing mcp__termi..."
 REC_TAIL = fx("rec_narrow_jarvis.txt")                    # " ● REC" (6 rows: the row with "● Recording" is above it)
 TRANSCRIBING = fx("transcribing_narrow_jarvis.txt")       # " ◉ STT"
+BUSY_LONG = fx("busy_long_turn_jarvis.txt")               # "── ⠧ Working… · 1m · ↓ 3.9k..."
+# Real reads with no input box: Hermes was redrawing (3 of ~1,100 reads in 7 minutes of a busy turn).
+# The old reader called all three "off", and one "off" read is enough to end a hand-off as an end phrase.
+HALF_TOOL = fx("half_drawn_tool_row_jarvis.txt")          # ends: separator pair, a tool row
+HALF_SEP = fx("half_drawn_separator_jarvis.txt")          # ends: a separator pair
+HALF_REARM = fx("half_drawn_after_rearm_jarvis.txt")      # ends: "/voice off  to disable voice" help text
 
 RULE = "───────────────────────────────"
 STATS = " ☤ agy-opus · 1s"
@@ -68,8 +74,12 @@ class StateOfTest(unittest.TestCase):
         self.assertEqual(P.state_of(AFTER_END), "voice-idle")
 
     def test_busy_spinner_is_busy_never_off(self):
-        for frame in (BUSY, BUSY_TOOL, BUSY_PREP, BUSY_NO_BAR):
+        for frame in (BUSY, BUSY_TOOL, BUSY_PREP, BUSY_LONG, BUSY_NO_BAR):
             self.assertEqual(P.state_of(frame), "busy", frame)
+
+    def test_real_half_drawn_frames_are_unclear_not_off(self):
+        for frame in (HALF_TOOL, HALF_SEP, HALF_REARM):
+            self.assertEqual(P.state_of(frame), "unclear", frame)
 
     def test_recording_and_transcribing(self):
         self.assertEqual(P.state_of(REC_TAIL), "recording")
@@ -101,6 +111,47 @@ class StateOfTest(unittest.TestCase):
             P._herdr = real
         args = list(calls[0])
         self.assertEqual(args[args.index("--source") + 1], "recent")
+
+    def test_off_is_believed_only_when_read_twice(self):
+        # Built: a wide window caught mid-redraw - an unwrapped 40-cell scrollback rule, then a tool row.
+        # Statically it looks like a drawn box with no voice bar; the next read shows the turn.
+        blip = "x" * 70 + "\n" + "─" * 40 + "\n💻 $ ls + 2 commands  0.3s\n"
+        self.assertEqual(P.state_of(blip), "off")
+        for reads, want in (([blip, BUSY], "busy"), ([blip, NARROW_IDLE], "voice-idle"), ([OFF, OFF], "off"),
+                            ([HALF_TOOL, HALF_SEP, BUSY], "busy")):
+            with Reads(reads):
+                self.assertEqual(P.state("wH:pR"), want, reads)
+
+    def test_rearm_types_nothing_on_a_blip(self):
+        by_phrase = "Stop phrase detected — ending voice chat.\n\nVoice mode disabled.\n"
+        blip_after_phrase = by_phrase + "x" * 70 + "\n" + "─" * 40 + "\n💻 $ ls + 2 commands  0.3s\n"
+        with Reads([blip_after_phrase, blip_after_phrase, BUSY, BUSY]) as r:
+            self.assertFalse(P.rearm("wH:pR"))
+        self.assertEqual(r.sent, [])
+
+    def test_rearm_still_undoes_a_real_end_phrase(self):
+        ended = (f"Stop phrase detected — ending voice chat.\n\nVoice mode disabled.\n{RULE}\n"
+                 f"☤ Ask me anything\n{STATS}\n")
+        with Reads([ended]) as r:
+            self.assertTrue(P.rearm("wH:pR"))
+        self.assertIn(("pane", "send-text", "wH:pR", "/voice on"), r.sent)
+
+
+class Reads:
+    """screen_tail returns these frames one per read (the last one repeats); records anything sent."""
+
+    def __init__(self, frames):
+        self.frames, self.sent = list(frames), []
+
+    def __enter__(self):
+        self._real = (P.screen_tail, P._herdr, P.time.sleep)
+        P.screen_tail = lambda pane, lines=6, ansi=False: self.frames.pop(0) if len(self.frames) > 1 else self.frames[0]
+        P._herdr = lambda *a, **k: self.sent.append(a) or type("R", (), {"returncode": 0, "stdout": ""})()
+        P.time.sleep = lambda s: None
+        return self
+
+    def __exit__(self, *exc):
+        P.screen_tail, P._herdr, P.time.sleep = self._real
 
 
 class FakeWindow:

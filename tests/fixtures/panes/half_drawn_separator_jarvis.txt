@@ -1,0 +1,21 @@
+ guard uses SOUL before changin
+g anything.
+
+∴ Thought for 0s
+───────────────────────────────
+─────────
+
+───────────────────────────────
+─────────
+☤ Orchestrator
+Her guard plugin reads this per
+sona file, so I'll check what i
+t requires before editing.
+───────────────────────────────
+─────────
+
+💻 $ sed -n 1,20p __init__.py |
+ cut -c1-170 + 1 command  0.1s
+
+───────────────────────────────
+─────────

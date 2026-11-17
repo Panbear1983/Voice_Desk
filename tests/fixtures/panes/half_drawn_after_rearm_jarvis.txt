@@ -1,0 +1,17 @@
+...
+Transcribing...
+Stop phrase detected — ending v
+oice chat.
+
+Voice mode disabled.
+
+Voice mode enabled (TTS enabled
+)
+  Ctrl+B to start/stop recordin
+g
+  Say "stop" to end the voice c
+hat.
+  /voice tts  to toggle speech
+output
+  /voice off  to disable voice
+mode
