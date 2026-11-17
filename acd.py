@@ -1,35 +1,44 @@
-"""Agent Control Desk, version four: the screen.
+"""Agent Control Desk: the screen. ONE table (Peter, 2026-11-17).
 
     ./acd.sh              every change is a dry run: shown in full, nothing written
     ./acd.sh --armed      changes are written, but only if the desk's own armed switch is also on (acd_edit.py)
 
-HOME, the grid: one row per agent. Columns: the model that is set, the model that really answered the last
-reply, the backups, the voice, where the agent shows up, and who it talks to. A narrow window shows fewer
-columns instead of scrolling sideways; the tree always has everything.
-ENTER on a row opens that agent's tree. In the tree, Enter on a setting opens a small pop-up with a few plain
-choices: the language model and its thinking effort, each backup on or off, the English and Chinese voice and
-the speaking speed. S saves (after one confirm line that says exactly what will change), Esc cancels.
+Rows are settings, columns are agents: Jarvis, Kylie, Builder, Esther, Wanna Buffet, Simba, then Claude, Gemini
+and Codex (those three are there for their voices and the names that wake them; other rows are blank for them).
+Every cell starts with a light: green live everywhere, yellow saved but waiting on a restart or a fresh chat,
+blue a temporary override, red failed or changed behind the desk's back, grey off or not applicable.
 
-  grid   up / down  choose an agent     Enter  open the agent's tree
-  tree   up / down  choose a setting    Enter  change it     left / right  other agent     Esc  back
-  both   u  undo the newest change      r  restart review    c  read again now    q  close
-         p  pause / resume the watcher  a  (grid) the voices of Claude, Gemini and Codex
-         t  silent voice test (one agent or everyone; made to files and checked, never played)
-         l  the listener: what the voice line is doing, mute / hush / new conversation / restart / stop
-         n  add an agent to the Voice Desk list      d  remove one (shows exactly what goes, asks first)
+  arrows   move cell to cell (they step over the section headings and stop at the edges)
+  Enter    on a cell that can be changed: a small menu opens under the cell with the choices, today's marked
+           "now". Enter on a choice shows one line that says exactly what will change and whether a restart is
+           needed; Enter again saves, Esc goes back.
+           on a row's name (the first column): the same menu, applied to every agent the row can be changed
+           for, after one confirmation that lists each agent's before and after.
+           on a fact (who answered last ...): nothing opens; the strip under the table says why.
+  s        the standard fallback ladder for every agent: shows each agent's before and after first, then asks
+  u  undo the newest change      r  restart review    c  read again now    q  close
+  p  pause / resume the watcher
+  t  silent voice test (one agent or everyone; made to files and checked, never played)
+  l  the listener: what the voice line is doing, mute / hush / new conversation / restart / stop
+  n  add an agent to the Voice Desk list      d  remove one (shows exactly what goes, asks first)
   (plain lower-case letters, no Shift; the hint line on screen shows them the same way)
 
-The last four are what only the old Voice Desk dashboard could do (acd_parity.py). They go through the same
-armed gate as every change; stopping or restarting the listener asks twice and is refused while someone is
-speaking or an agent is mid-reply. In the tree the arrow keys stop at the first and the last setting.
+The strip under the table tells the whole story of the chosen cell: allowance numbers and reset times, why a
+reply fell to a backup, what a change would need. It replaces the old tree.
 
-Version four adds, per agent: whether each service it uses can still sign in and how much allowance is left
-(acd_health.py), anything changed behind the desk's back with "put it back" / "accept it" (acd_watch.py), and
-the old Voice Desk grid's own switches for spoken replies, place by place (the grid's own code does the switch).
+THE FALLBACK LADDER has one fixed order for every agent: rung 1 the main model (the Claude subscription), rung 2
+Antigravity (Claude there first, Gemini second), rung 3 ChatGPT (Codex), rung 4 NVIDIA Nemotron. A cell's menu
+picks the model for that rung, or off; the order is never a choice. A list that is not in that order is shown
+as it is, with a yellow light, and is never reordered just by reading it. A small arrow marks the rung that
+answered each agent's last reply; a rung whose allowance is used up is red with the day it comes back.
+
+In a narrow window the row names stay pinned on the left and the agent columns scroll sideways; a line under
+the table names the columns (and sections) that are off screen.
 
 It is an overseer, never a lifeline: it reads gently (ONE background read every 45 seconds for all agents),
-every change goes through acd_edit.py (backup, atomic write, read back, auto-restore, history, undo), and it
-never restarts anything itself: R only leaves a request for the existing restart helper.
+every change goes through acd_edit.py (backup, atomic write, read back, auto-restore, history, undo), it never
+restarts anything itself (r only leaves a request for the existing restart helper), and it never sends anything
+to Telegram.
 """
 from __future__ import annotations
 
@@ -68,9 +77,9 @@ READ_ONLY_LABEL = DRY_LABEL                 # the old name, kept for callers
 COLOUR = {D.GREEN: "#3fb950", D.YELLOW: "#d29922", D.BLUE: "#58a6ff", D.RED: "#f85149", D.GREY: "#8b949e"}
 DIM = "#8b949e"
 MARK = "■"                               # the small square that carries a colour
-CAN_CHANGE = "◆"                         # in the tree: Enter on this line changes the setting
 LEGEND = ((D.GREEN, "live everywhere"), (D.YELLOW, "saved, waiting on a restart or a fresh chat"),
-          (D.BLUE, "temporary override"), (D.RED, "failed, or changed behind the desk's back"))
+          (D.BLUE, "temporary override"), (D.RED, "failed, or changed behind the desk's back"),
+          (D.GREY, "off or not applicable"))
 
 
 def mark(status: str) -> Text:
@@ -111,12 +120,15 @@ def where(platform: str) -> str:
     return D.PLATFORM_NAMES.get(platform, platform)
 
 
-def legend_text() -> Text:
-    t = Text()
+def legend_text(width: int = 10_000) -> Text:
+    """What each light means, broken between two items (never inside one) when the window is narrow."""
+    items = []
     for status, words in LEGEND:
+        t = Text()
         t.append(MARK + " ", style=COLOUR[status])
-        t.append(words + "   ", style=DIM)
-    return t
+        t.append(words, style=DIM)
+        items.append(t)
+    return flow(items, width)
 
 
 def warnings_text(snap: D.Snapshot) -> Text:
@@ -127,363 +139,478 @@ def state_word(p: D.Presence) -> str:
     return {D.ON: "on", D.OFF: "off", D.UNKNOWN: "unknown"}[p.state]
 
 
-# ---- the grid's cells ------------------------------------------------------------------------------------
-def cell_agent(v: D.AgentView) -> Text:
-    t = Text()
-    t.append(v.name, style="bold")
-    if v.role:
-        t.append("\n" + v.role, style=DIM)
-    return t
+# ---- the table: rows are settings, columns are agents ----------------------------------------------------
+FACT = "a fact read from the logs and the settings, not a setting of its own: there is nothing to change here"
+ANSWERED = "▶"                           # on the ladder: the rung that answered the agent's last reply
+SHORT_UNKNOWN = {"iphone_voice": "no shortcut"}        # a grey square and the reason, never a bare "?"
+SHORT_ANSWER = {"yes, like everyone": "yes", "yes, like every member": "yes", "yes, the only one who does": "yes",
+                "yes, by job card only": "by card", "only as job cards": "job cards only",
+                "when named in the line": "when named"}
+PLACE_ROW = {"terminal": "Terminal chat", "tg_private": "Telegram private chat", "tg_group": "Telegram team group",
+             "team_room": "Team Room", "mac_voice": "Mac voice line", "iphone_voice": "iPhone voice (Siri)"}
+VPLACE_ROW = (("terminal", "Speaks in terminal window"), ("tg_dm", "Speaks in Telegram private"),
+              ("tg_group", "Speaks in Telegram group"), ("mic", "Speaks on the mic line"),
+              ("iphone", "Speaks on the iPhone (Siri)"))
+TALK_ROW = (("speaks", "Speaks in the Team Room"), ("hands_out", "Hands out work"),
+            ("takes_from", "Takes work from"), ("answers", "Answers"))
+SECTIONS = ("LANGUAGE MODEL", "FALLBACK LADDER (one order)", "VOICE", "WHERE IT SHOWS UP",
+            "WHO IT MAY TALK TO")
 
 
-def cell_model_set(v: D.AgentView) -> Text:
-    if v.error:
-        return join([line(D.RED, "cannot be read"), Text(v.error, style=DIM)])
-    if not v.model:
-        return line(None, "unknown", dim=True)
-    lock = " (locked)" if v.model_locked else ""
-    out = [line(v.model_status, D.model_name(v.model.model) + lock),
-           Text(f"  {D.service_name(v.model.service, short=True)}", style=DIM),
-           Text(f"  {effort_words(v.model.effort)}", style=DIM)]
-    if v.drifts:
-        out.append(line(D.RED, "changed behind the desk"))
-    elif v.model_behind:
-        out.append(Text("  changed somewhere else", style=DIM))
-    elif v.model_pending:
-        out.append(Text("  saved, not live everywhere", style=DIM))
-    main = next((h for h in v.health if h.main), None)
-    if main is not None:
-        words = {H.SIGNIN_DEAD: "sign-in dead", H.ALLOWANCE_OUT: "allowance used up"}.get(
-            main.kind, "signed in, working" if main.state == H.GOOD else "sign-in unknown")
-        out.append(line(main.status, words) if main.state != H.UNKNOWN else Text("? " + words, style=DIM))
-    return join(out)
+@dataclass(frozen=True)
+class Row:
+    key: str                        # "model", "rung:codex", "vplace:tg_dm", "presence:team_room", "talk:answers" ...
+    label: str
+    section: bool = False
 
 
-def cell_last(v: D.AgentView) -> Text:
-    if v.error:
-        return line(None, "unknown", dim=True)
-    if not v.last:
-        return line(None, "unknown: no reply in the log", dim=True)
-    r = v.last
-    out = [line(r.status, D.model_name(r.answered_model)),
-           Text(f"  {D.service_name(r.answered_service, short=True)}", style=DIM)]
-    if r.dropped:
-        out.append(Text("  the main model failed", style=DIM))
-    elif r.status == D.YELLOW:
-        out.append(Text("  chat on an older setting", style=DIM))
-    elif r.status == D.BLUE:
-        out.append(Text("  temporary choice", style=DIM))
-    elif r.status == D.RED:
-        out.append(Text("  main service not signed in", style=DIM))
-    out.append(Text(f"  {where(r.where)}, {when(r.when)}", style=DIM))
-    if v.drops_today:
-        out.append(Text(f"  {v.drops_today} backup drops today", style=DIM))
-    return join(out)
+@dataclass
+class Cell:
+    status: Optional[str] = None    # the light. None = this row does not apply to this column: the cell is blank
+    words: str = ""                 # the few words in the cell
+    detail: list = field(default_factory=list)      # the full story, for the strip under the table
+    setting: str = ""               # what Enter changes here ("" = nothing)
+    fixed: str = ""                 # for a cell with no menu: why
+    marker: bool = False            # the ladder rung that answered the last reply
+
+    @property
+    def blank(self) -> bool:
+        return self.status is None and not self.words
 
 
-def cell_backups(v: D.AgentView) -> Text:
-    if v.error:
-        return line(None, "unknown", dim=True)
-    if not v.backups:
-        return Text("none", style=DIM)
-    out = []
-    for b in v.backups:
-        t = Text()
-        trouble = D.backup_trouble(v.health, b)
-        t.append("on  " if b.on else "off ", style=COLOUR[D.RED if trouble else D.GREEN] if b.on else DIM)
-        t.append(backup_words(b), style="" if b.on else DIM)
-        out.append(t)
-        if trouble:
-            out.append(Text("    " + trouble.removeprefix("allowance "), style=COLOUR[D.RED]))   # kept short: the grid is narrow
-    return join(out)
+def is_agent(col: Any) -> bool:
+    return isinstance(col, D.AgentView)
 
 
-def cell_voice(v: D.AgentView) -> Text:
-    if not v.voice:
-        return Text("no voice", style=DIM)
-    out = [line(D.GREEN, D.voice_label(v.voice.english))]
-    if v.voice.speed is not None:
-        out.append(Text(f"  speed {v.voice.speed:g}", style=DIM))
-    if v.voice.english_only:
-        out.append(Text("  English only", style=DIM))
-    elif v.voice.chinese:
-        out.append(Text(f"  Chinese: {D.voice_label(v.voice.chinese)}", style=DIM))
-    return join(out)
+def col_id(col: Any) -> str:
+    return col.profile if is_agent(col) else "other:" + col.key
 
 
-SHORT_PLACE = {"terminal": "terminal chat", "tg_private": "Telegram private", "tg_group": "Telegram group",
-               "team_room": "Team Room", "mac_voice": "Mac voice", "iphone_voice": "iPhone voice"}
+def columns_of(snap: Optional[D.Snapshot]) -> list:
+    """The table's columns after the row names: every agent, then Claude, Gemini and Codex."""
+    return list(snap.agents) + list(snap.others) if snap else []
 
 
-SHORT_UNKNOWN = {"iphone_voice": "iPhone: no shortcut"}        # a grey square and the reason, never a bare "?"
-
-
-def cell_presence(v: D.AgentView) -> Text:
-    if v.error:
-        return line(None, "unknown", dim=True)
-    out = []
-    for p in v.presence:
-        if p.state == D.ON:
-            out.append(line(p.status, SHORT_PLACE[p.key]))
-        elif p.state == D.OFF:
-            out.append(Text(f"- {SHORT_PLACE[p.key]}: off", style=DIM))
-        else:
-            out.append(line(D.GREY, SHORT_UNKNOWN.get(p.key, f"{SHORT_PLACE[p.key]}: unknown"), dim=True))
-    return join(out)
-
-
-def cell_talks(v: D.AgentView) -> Text:
-    if not v.talks:
-        return Text("unknown", style=DIM)
-    return join([Text(f"{GRID_TALK.get(what, what)}: {GRID_ANSWER.get(answer, answer)}") for what, answer in v.talks])
-
-
-GRID_TALK = {"Speaks in the Team Room": "Team Room", "Hands out work": "Hands out work",
-             "Sends jobs to Builder": "Builder jobs", "Takes work from": "Work from", "Takes work": "Work",
-             "Answers": "Answers"}
-GRID_ANSWER = {"yes, like everyone": "speaks", "yes, the only one who does": "yes",
-               "yes, by job card only": "by card", "only as job cards": "job cards only",
-               "when named in the line": "when named"}
-
-COLUMNS = (("Agent", cell_agent), ("Model set", cell_model_set), ("Model that answered last", cell_last),
-           ("Backups", cell_backups), ("Voice", cell_voice), ("Where it shows up", cell_presence),
-           ("Talks to", cell_talks))
-# A narrow window drops columns from the right instead of scrolling sideways (the tree still has everything).
-NARROW = ((178, 7), (150, 6), (124, 5), (96, 4), (0, 3))
-KEEP_WHEN_NARROW = ("Agent", "Model set", "Model that answered last", "Voice", "Backups", "Where it shows up",
-                    "Talks to")
-
-
-def columns_for(width: int, agents: tuple = ()) -> tuple:
-    """The columns that fit a window this wide. With the agents given, the real width of what the cells hold
-    decides (so nothing ever scrolls sideways); without them, round thresholds do."""
-    if not agents:
-        count = next(n for least, n in NARROW if width >= least)
-    else:
-        need = {}
-        for label, build in COLUMNS:
-            widest = max((len(ln) for v in agents for ln in build(v).plain.split("\n")), default=0)
-            need[label] = max(len(label), widest) + 2          # the table pads every cell by one on each side
-        count = 3
-        for n in range(len(COLUMNS), 2, -1):
-            if sum(need[label] for label in KEEP_WHEN_NARROW[:n]) <= width:
-                count = n
-                break
-    keep = set(KEEP_WHEN_NARROW[:count])
-    return tuple(c for c in COLUMNS if c[0] in keep)
-
-
-# ---- one agent's tree --------------------------------------------------------------------------------------
-WRAP = 78                                      # the tree's value column wraps here, so a narrow pane still reads
-
-
-def _leaf(prefix: str, label: str, value: Text, width: int = 17) -> Text:
-    t = Text()
-    t.append(prefix, style=DIM)
-    t.append(label.ljust(width))
-    t.append_text(value)
-    return t
-
-
-def _leaves(prefix: str, label: str, status: Optional[str], words: str, width: int = 17, dim: bool = False,
-            more: str = "│  │  ") -> list[Text]:
-    """One tree line whose words may be long: wrapped, with the later lines lined up under the first."""
-    parts = textwrap.wrap(words, WRAP) or [""]
-    first = line(status, parts[0], dim=dim) if status else Text(parts[0], style=DIM if dim else "")
-    out = [_leaf(prefix, label, first, width)]
-    pad = "  " if status else ""
-    for part in parts[1:]:
-        out.append(_leaf(more, "", Text(pad + part, style=DIM if dim else ""), width))
-    return out
-
-
-END_OF_TREE = "── end of {name}'s tree: nothing below this line ──"
-
-
-def tree_rows(v: D.AgentView) -> list[tuple[list[Text], Optional[str]]]:
-    """One agent's whole tree as rows: (the lines, the name of the setting Enter changes there, or None)."""
-    rows: list[tuple[list[Text], Optional[str]]] = []
-
-    def add(lines, setting: Optional[str] = None) -> None:
-        rows.append((lines if isinstance(lines, list) else [lines], setting))
-
-    head = Text()
-    head.append(v.name.upper(), style="bold")
-    if v.role:
-        head.append(f"  ({v.role})", style=DIM)
-    add(head)
-    if v.error:
-        add([Text(""), line(D.RED, v.error),
-             Text("  Nothing else can be shown for this agent until the settings file reads again.", style=DIM)])
-        return rows
-
-    add(Text("├─ Language model", style="bold"))
-    if v.model:
-        lock = "  (locked: shown, never changed from the desk)" if v.model_locked else ""
-        note = f"  ({v.model_note})" if v.model_note else ""
-        add(_leaves("│  ├─ ", "Set to", v.model_status,
-                    f"{D.model_name(v.model.model)}, on {D.service_name(v.model.service)}, "
-                    f"{effort_words(v.model.effort)}{lock}{note}"), "model")
-        if v.model_behind and not any(d.key == "model" for d in v.drifts):
-            add(_leaves("│  ├─ ", "Changed", D.RED, v.model_behind))
-        if v.model_pending:
-            add(_leaves("│  ├─ ", "Not live yet", D.YELLOW, v.model_pending))
-    else:
-        add(_leaf("│  ├─ ", "Set to", Text("unknown", style=DIM)))
-    if v.last:
-        add(_leaves("│  ├─ ", "Last reply", v.last.status,
-                    f"{v.last.note} ({where(v.last.where)}, {when(v.last.when)})"))
-    else:
-        add(_leaf("│  ├─ ", "Last reply", Text("unknown: no reply in the current log", style=DIM)))
-    if v.health:
-        add(Text("│  ├─ Services it uses: sign-in and allowance", style=""))
-        for h in v.health:
-            add(_leaves("│  │     ", "", h.status if h.state != H.UNKNOWN else None, h.words, 0,
-                        dim=h.state == H.UNKNOWN, more="│  │     "))
-            if h.allowance:
-                for ln in h.allowance:
-                    add(_leaves("│  │         ", "", None, "allowance: " + ln, 0, dim=True, more="│  │         "))
-            elif h.allowance_note:
-                add(_leaves("│  │         ", "", None, "allowance: unknown (" + h.allowance_note + ")", 0, dim=True,
-                            more="│  │         "))
-    elif v.signin_failed and v.model:
-        add(_leaves("│  ├─ ", "Sign-in", D.RED,
-                    f"{D.service_name(v.model.service)} could not sign in during the last day "
-                    f"({D.plain_reason(v.signin_failed)})"))
-    for i, d in enumerate(v.drifts):
-        add(_leaves("│  ├─ ", "Changed", D.RED, d.sentence + (f" ({d.note})" if d.note else "")
-                    + " Enter: put it back, or accept it."), f"drift:{i}")
-    add(_leaf("│  ├─ ", "Drops today", Text(
-        f"{v.drops_today} to a backup" if v.drops_today else "none", style="" if v.drops_today else DIM)))
-    if v.old_chats:
-        add(_leaves("│  ├─ ", "Old chats", D.YELLOW,
-                    f"{v.old_chats} open on an older setting. A fresh chat would use the current one"))
-    if v.override:
-        o = v.override
-        add(_leaf("│  ├─ ", "Temporary", line(
-            D.BLUE, f"{D.model_name(o.model)} through {D.service_name(o.service)} "
-                    f"({where(o.where)}, {when(o.when)})")))
-    else:
-        add(_leaf("│  ├─ ", "Temporary", Text(
-            "none right now (a model typed in a chat or pinned on a job shows here)", style=DIM)))
-    add(Text("│  └─ Backups, in order", style=""))
-    if not v.backups:
-        add(Text("│        none" + (", by design" if v.backups_locked else ""), style=DIM), "backups")
-    for i, b in enumerate(v.backups):
-        branch = "└─" if i == len(v.backups) - 1 else "├─"
-        t = Text()
-        t.append(f"│        {branch} {b.position if b.on else '-'}  ", style=DIM)
-        trouble = D.backup_trouble(v.health, b)
-        t.append("on   " if b.on else "off  ", style=COLOUR[D.RED if trouble else D.GREEN] if b.on else DIM)
-        t.append(backup_words(b, short=False), style="" if b.on else DIM)
-        if trouble:
-            t.append(f"  (on, but {trouble}: it cannot answer until then)" if "until" in trouble
-                     else f"  (on, but {trouble}: it cannot answer)", style=COLOUR[D.RED])
-        if b.note:
-            t.append(f"  ({b.note})", style=DIM)
-        add(t, "backups")
-
-    add(Text("├─ Voice", style="bold"))
-    if v.voice:
-        add(_leaf("│  ├─ ", "English", line(D.GREEN, D.voice_label(v.voice.english))), "voice")
-        chinese = "none: this agent is English only" if v.voice.english_only else D.voice_label(v.voice.chinese)
-        add(_leaf("│  ├─ ", "Chinese", Text(chinese, style=DIM if v.voice.english_only else "")), "voice_zh")
-        speed = E.speed_word(v.voice.speed) + (f" ({v.voice.speed:g})" if v.voice.speed is not None else "")
-        add(_leaf("│  ├─ ", "Speed", Text(speed, style=DIM if v.voice.speed is None else "")), "speed")
-        if v.effect:
-            add(_leaf("│  ├─ ", "Effect", Text(str(v.effect))), "effect")
-        add(_leaf("│  ├─ " if v.voice_places else "│  └─ ", "If the voice fails",
-                  Text("stays silent, no stand-in voice"), 20))
-    else:
-        add(Text("│  ├─ no voice in the Voice Desk list" if v.voice_places else
-                 "│  └─ no voice in the Voice Desk list", style=DIM))
-    if v.voice_places:
-        add(Text("│  └─ Spoken replies, place by place (the setting, then what the logs say really happened)"))
-        for ln, setting in place_rows(v.voice_places, "│        "):
-            add(ln, setting)
-
-    add(Text("├─ Where it shows up", style="bold"))
-    for i, p in enumerate(v.presence):
-        last = i == len(v.presence) - 1
-        branch = "└─ " if last else "├─ "
-        more = "│     " if last else "│  │  "
-        lines = _leaves("│  " + branch, D.PLACE_NAME[p.key], p.status if p.state == D.ON or p.status == D.RED else None,
-                        f"{state_word(p)}: {p.evidence}", 23, dim=p.state != D.ON and p.status != D.RED, more=more)
-        if not p.can_switch and p.why_not:
-            lines += _leaves(more, "", None, p.why_not, 23, dim=True, more=more)
-        add(lines, "team_room" if p.can_switch else None)
-
-    add(Text("└─ Who it may talk to", style="bold"))
-    rules = v.talk_rules
-    if not rules:
-        for i, (what, answer) in enumerate(v.talks):
-            branch = "└─ " if i == len(v.talks) - 1 else "├─ "
-            add(_leaf("   " + branch, what, Text(answer), 26))
-    for i, r in enumerate(rules):
-        last = i == len(rules) - 1
-        branch = "└─ " if last else "├─ "
-        more = "      " if last else "   │  "
-        colour = D.GREEN if r.standing.startswith((D.WORKS_TODAY, D.ENFORCED)) else None
-        lines = _leaves("   " + branch, r.label, colour, r.answer, 26, more=more)
-        lines += _leaves(more, "", None, r.standing + (f"; {r.locked}" if r.locked else ""), 26, dim=True, more=more)
-        add(lines, "talk")
-    add([Text(""), Text(END_OF_TREE.format(name=v.name), style=DIM), Text(" ")])     # a space: an empty last line is dropped
+def rows_of(snap: Optional[D.Snapshot]) -> list[Row]:
+    """Every row of the table, top to bottom. Two rows appear only when some agent has something to show there:
+    the extra backups that are not on the ladder, and a voice effect."""
+    agents = snap.agents if snap else ()
+    ladders = [D.ladder(v) for v in agents if not v.error]
+    rows = [Row("section:model", SECTIONS[0], True),
+            Row("model", "Model"), Row("effort", "Thinking effort"), Row("signin", "Service and sign-in"),
+            Row("last", "Who answered last"), Row("drops", "Drops to a backup today"),
+            Row("section:ladder", SECTIONS[1], True), Row("rung:main", D.RUNG_LABEL[D.MAIN_RUNG])]
+    rows += [Row(f"rung:{key}", label) for key, label, _ in D.LADDER]
+    if any(lad.extras or lad.extras_off for lad in ladders):
+        rows.append(Row("extras", D.RUNG_LABEL[D.EXTRA_RUNG]))
+    rows += [Row("section:voice", SECTIONS[2], True), Row("voice", "English voice"), Row("voice_zh", "Chinese voice"),
+             Row("speed", "Speed")]
+    if any(v.effect for v in agents):
+        rows.append(Row("effect", "Voice effect"))
+    rows += [Row(f"vplace:{key}", label) for key, label in VPLACE_ROW]
+    rows.append(Row("names", "Answers to (call names)"))
+    rows.append(Row("section:presence", SECTIONS[3], True))
+    rows += [Row(f"presence:{key}", PLACE_ROW.get(key, name)) for key, name in D.PLACES]
+    rows.append(Row("section:talk", SECTIONS[4], True))
+    rows += [Row(f"talk:{key}", label) for key, label in TALK_ROW]
     return rows
 
 
-def place_rows(places: tuple, pad: str) -> list[tuple[list[Text], Optional[str]]]:
-    """The voice switches of one agent as tree rows: (the lines, the setting Enter changes there or None)."""
-    out = []
-    for i, p in enumerate(places):
-        branch = "└─ " if i == len(places) - 1 else "├─ "
-        more = pad + ("   " if i == len(places) - 1 else "│  ")
-        words = p.value + (f"   ({p.evidence})" if p.evidence else "")
-        lines = _leaves(pad + branch, D.VOICE_PLACE_NAME.get(p.key, p.key), p.status, words, 31, more=more)
-        if p.problem:
-            lines += _leaves(more, "", D.RED, p.problem, 31, more=more)
-        if not p.can_switch and p.why_not:
-            lines += _leaves(more, "", None, p.why_not, 31, dim=True, more=more)
-        out.append((lines, f"vplace:{p.key}" if p.can_switch else None))
+def _health_lines(h: Optional[D.ServiceView]) -> list[str]:
+    if h is None:
+        return []
+    out = [h.words]
+    if h.allowance:
+        out += ["allowance: " + ln for ln in h.allowance]
+    elif h.allowance_note:
+        out.append("allowance: unknown (" + h.allowance_note + ")")
     return out
 
 
-def tree_text(v: D.AgentView) -> Text:
-    """The whole tree of one agent as one text (what the tree screen shows, line for line)."""
-    return join([ln for lines, _ in tree_rows(v) for ln in lines])
+def _drift(v: D.AgentView, key: str) -> Optional[int]:
+    return next((i for i, d in enumerate(v.drifts) if d.key == key), None)
 
 
-ROOM_HEADING = "TEAM ROOM (all agents)"       # the note under it is about the room, not the chosen agent
+def _drift_lines(v: D.AgentView, i: int) -> list[str]:
+    d = v.drifts[i]
+    return [d.sentence + (f" ({d.note})" if d.note else ""), "Enter: put it back, or accept it."]
 
 
-def agent_list_text(snap: D.Snapshot, index: int) -> Text:
-    out = [Text("AGENTS", style=DIM)]
-    for i, v in enumerate(snap.agents):
-        t = Text()
-        t.append("> " if i == index else "  ", style="bold" if i == index else "")
-        t.append(v.name.ljust(14), style="bold reverse" if i == index else "")
-        t.append(" ")
-        t.append(MARK, style=COLOUR.get(v.worst, DIM))
-        out.append(t)
-    out += [Text(""), Text(ROOM_HEADING, style=DIM), Text(snap.room_note, style=DIM)]
-    return join(out)
+def _short_trouble(trouble: str) -> str:
+    return trouble.removeprefix("allowance ")
 
 
-def others_text(snap: D.Snapshot) -> Text:
-    if not snap.others:
+def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None) -> Cell:
+    """One agent's cell on one row: the light, the few words, the full story and what Enter does there."""
+    key = row.key
+    if v.error:
+        if key == "model":
+            return Cell(D.RED, "cannot be read", [v.error, "Nothing else can be shown for this agent until the "
+                                                  "settings file reads again."], fixed="the settings file cannot be read")
+        return Cell(D.GREY, "unknown", [v.error], fixed="the settings file cannot be read")
+    name = v.name
+    main = next((h for h in v.health if h.main), None)
+
+    if key == "model":
+        if not v.model:
+            return Cell(D.GREY, "unknown", ["The model could not be read."], fixed="the model could not be read")
+        ms = v.model
+        detail = [f"{name}'s model is set to {D.model_name(ms.model)}, on {D.service_name(ms.service)}, "
+                  f"{effort_words(ms.effort)}."]
+        if v.model_note:
+            detail.append(f"Note: {v.model_note}.")
+        status = v.model_status
+        drift = _drift(v, "model")
+        if drift is not None:
+            return Cell(D.RED, D.model_name(ms.model), detail + _drift_lines(v, drift), setting=f"drift:{drift}")
+        if v.model_behind:
+            detail.append(v.model_behind)
+        if v.model_pending:
+            detail.append("Not live everywhere yet: " + v.model_pending)
+        if v.old_chats:
+            detail.append(f"{v.old_chats} open chat{'s are' if v.old_chats != 1 else ' is'} still on an older "
+                          "setting; a fresh chat would use the current one.")
+            status = D.YELLOW if status == D.GREEN else status
+        if v.override:
+            o = v.override
+            detail.append(f"Temporary choice: {D.model_name(o.model)} through {D.service_name(o.service)} "
+                          f"({where(o.where)}, {when(o.when)}). The desk leaves it alone.")
+            status = D.BLUE if status == D.GREEN else status
+        detail += _health_lines(main)
+        if v.model_locked:
+            return Cell(status, D.model_name(ms.model) + "  locked", detail,
+                        fixed=f"{name}'s model is locked: it is shown, never changed from the desk")
+        return Cell(status, D.model_name(ms.model), detail + [E.NEEDS["model"]], setting="model")
+
+    if key == "effort":
+        if not v.model:
+            return Cell(D.GREY, "unknown", fixed="the model could not be read")
+        effort = v.model.effort
+        words = "extra thinking off" if effort == "none" else effort
+        detail = [f"{name} thinks with {effort_words(effort)}."]
+        drift = _drift(v, "effort")
+        if drift is not None:
+            return Cell(D.RED, words, detail + _drift_lines(v, drift), setting=f"drift:{drift}")
+        if v.model_locked:
+            return Cell(D.GREY if effort == "none" else D.GREEN, words, detail,
+                        fixed=f"{name}'s thinking effort is locked with its model")
+        return Cell(D.GREEN, words, detail + [E.NEEDS["effort"]], setting="effort")
+
+    if key == "signin":
+        service = D.service_name(v.model.service, short=True) if v.model else "unknown"
+        if main is None:
+            if v.signin_failed and v.model:
+                return Cell(D.RED, f"{service}, could not sign in",
+                            [f"{D.service_name(v.model.service)} could not sign in during the last day "
+                             f"({D.plain_reason(v.signin_failed)})."], fixed=FACT)
+            return Cell(D.GREY, f"{service}, not checked", ["The sign-in has not been checked yet."], fixed=FACT)
+        words = {H.SIGNIN_DEAD: "sign-in dead", H.ALLOWANCE_OUT: "allowance used up"}.get(
+            main.kind, "signed in" if main.state == H.GOOD else "sign-in unknown")
+        status = main.status if main.state != H.UNKNOWN else D.GREY
+        detail = _health_lines(main)
+        if main.needs_peter:
+            detail.append("Only Peter signing in again fixes this.")
+        return Cell(status, f"{service}, {words}", detail, fixed=FACT)
+
+    if key == "last":
+        if not v.last:
+            return Cell(D.GREY, "no reply in the log", ["No reply is in the current log."], fixed=FACT)
+        r = v.last
+        return Cell(r.status, f"{D.model_name(r.answered_model)}, {when(r.when)}",
+                    [f"{r.note} ({where(r.where)}, {when(r.when)}).",
+                     f"It was answered by {D.model_name(r.answered_model)} on {D.service_name(r.answered_service)}."],
+                    fixed=FACT)
+
+    if key == "drops":
+        n = v.drops_today
+        status = D.GREEN if n == 0 else D.YELLOW if n < 10 else D.RED
+        return Cell(status, str(n), [f"Today {name} fell to a backup {n} time{'s' if n != 1 else ''}: the main model "
+                                     "failed and a lower rung answered." if n else
+                                     f"Today {name} has not fallen to a backup."], fixed=FACT)
+
+    if key == "rung:main":
+        if not v.model:
+            return Cell(D.GREY, "unknown", fixed="the model could not be read")
+        lad = D.ladder(v)
+        failing = main is not None and main.state == H.FAILING
+        status = D.RED if failing else v.model_status
+        words = D.model_name(v.model.model) + (", " + {H.SIGNIN_DEAD: "sign-in dead",
+                                                       H.ALLOWANCE_OUT: "used up"}.get(main.kind, "failing")
+                                               if failing else "")
+        detail = [f"Rung 1 is {name}'s main model: {D.model_name(v.model.model)} on "
+                  f"{D.service_name(v.model.service)}. Every reply starts here."]
+        if lad.answered == D.MAIN_RUNG:
+            detail.append("The last reply was answered from this rung.")
+        elif lad.below:
+            detail.append(f"The last reply was answered from {lad.below}.")
+        detail += _health_lines(main)
+        if v.model_locked:
+            return Cell(status, words, detail, fixed=f"{name}'s model is locked", marker=lad.answered == D.MAIN_RUNG)
+        return Cell(status, words, detail + ["Enter changes the main model (the same choice as the Model row)."],
+                    setting="model", marker=lad.answered == D.MAIN_RUNG)
+
+    if key.startswith("rung:"):
+        rung = key.split(":", 1)[1]
+        if v.backups_locked:
+            return Cell(D.GREY, "none", [f"{name} has no backups by design, and the desk does not change that."],
+                        fixed=f"{name} has no backups by design")
+        lad = D.ladder(v)
+        r = lad.rung(rung)
+        if r is None or r.backup is None:
+            return Cell(D.GREY, "off", [f"{name} has nothing on {E.RUNG_NAME[rung]}: when the rungs above it fail, "
+                                        "this one is skipped.", E.NEEDS["ladder"]],
+                        setting=key, marker=bool(r and r.answered))
+        b = r.backup
+        if not b.on:
+            return Cell(D.GREY, f"off ({D.model_name(b.model)})",
+                        [f"{backup_words(b, short=False)} is switched off for {name}"
+                         + (f" ({b.note})" if b.note else "") + ". The desk remembers it and can switch it on again.",
+                         E.NEEDS["ladder"]], setting=key, marker=r.answered)
+        drift = _drift(v, f"backup|{b.service}|{b.model}")
+        words = D.model_name(b.model) + (", " + _short_trouble(r.trouble) if r.trouble else "")
+        detail = [f"{name}'s {E.RUNG_NAME[rung]}: {backup_words(b, short=False)}. It answers only when every rung "
+                  "above it has failed."]
+        if r.trouble:
+            detail.append(f"It is on, but {r.trouble}: it cannot answer"
+                          + (" until then." if "until" in r.trouble else "."))
+        if r.answered:
+            detail.append("The last reply was answered from this rung.")
+        if lad.order_note:
+            detail.append(lad.order_note[0].upper() + lad.order_note[1:] + ". A change on any rung writes the list "
+                          "in the standard order.")
+        detail += _health_lines(next((h for h in v.health if h.service == b.service), None))
+        if drift is not None:
+            return Cell(D.RED, words, detail + _drift_lines(v, drift), setting=f"drift:{drift}", marker=r.answered)
+        return Cell(r.status, words, detail + [E.NEEDS["ladder"]], setting=key, marker=r.answered)
+
+    if key == "extras":
+        if v.backups_locked:
+            return Cell(D.GREY, "none", [f"{name} has no backups by design."], fixed=f"{name} has no backups by design")
+        lad = D.ladder(v)
+        if not lad.extras and not lad.extras_off:
+            return Cell(D.GREY, "none", [f"Every backup of {name} is on the ladder."],
+                        fixed="there is no extra backup here")
+        if not lad.extras:
+            b = lad.extras_off[0]
+            return Cell(D.GREY, f"off ({backup_words(b)})",
+                        [f"{backup_words(x, short=False)} is switched off for {name}; it is not on the standard "
+                         "ladder. The desk remembers it." for x in lad.extras_off], setting="extras")
+        first = lad.extras[0]
+        trouble = D.backup_trouble(v.health, first)
+        words = backup_words(first) + (f"  +{len(lad.extras) - 1} more" if len(lad.extras) > 1 else "")
+        detail = [f"{backup_words(x, short=False)} is on {name}'s list but is not on the standard ladder "
+                  "(Claude subscription, Antigravity, ChatGPT, NVIDIA)." for x in lad.extras]
+        if lad.answered == D.EXTRA_RUNG:
+            detail.append("The last reply was answered by it.")
+        if trouble:
+            detail.append(f"It is on, but {trouble}.")
+        return Cell(D.RED if trouble else D.YELLOW, words, detail + [E.NEEDS["backup"]], setting="extras",
+                    marker=lad.answered == D.EXTRA_RUNG)
+
+    if key in ("voice", "voice_zh", "speed", "effect"):
+        if not v.voice:
+            if key == "effect":
+                return Cell()
+            return Cell(D.GREY, "no voice", [f"{name} has no voice in the Voice Desk list, so there is nothing to "
+                                             "change. n adds an agent to that list."],
+                        fixed=f"{name} has no voice in the Voice Desk list")
+        if key == "voice":
+            return Cell(D.GREEN, D.voice_label(v.voice.english),
+                        [f"{name} speaks English as {D.voice_label(v.voice.english)}. One voice: if it fails, "
+                         f"{name} stays silent, no stand-in voice.", E.NEEDS["voice"]], setting="voice")
+        if key == "voice_zh":
+            if v.voice.english_only:
+                return Cell(D.GREY, "English only", [f"{name} is English only: a Chinese line stays silent.",
+                                                     E.NEEDS["voice"]], setting="voice_zh")
+            if not v.voice.chinese:
+                return Cell(D.GREY, "silent", [f"{name} has no Chinese voice: a Chinese line stays silent.",
+                                               E.NEEDS["voice"]], setting="voice_zh")
+            return Cell(D.GREEN, D.voice_label(v.voice.chinese),
+                        [f"{name} speaks Chinese as {D.voice_label(v.voice.chinese)}.", E.NEEDS["voice"]],
+                        setting="voice_zh")
+        if key == "speed":
+            why = (speed_why or {}).get(v.voice_key, "")
+            speed = v.voice.speed
+            word = E.speed_word(speed)
+            words = "not set" if speed is None else word if word == f"{speed:g}" else f"{word} ({speed:g})"
+            if why:
+                return Cell(D.GREY, "fixed by this voice" if speed is None else words,
+                            [f"{name}'s speaking speed: {words}.", why[0].upper() + why[1:] + "."], fixed=why)
+            return Cell(D.GREY if speed is None else D.GREEN, words,
+                        [f"{name}'s speaking speed: {words}.", E.NEEDS["voice"]], setting="speed")
+        if not v.effect:
+            return Cell()
+        return Cell(D.GREEN, str(v.effect), [f"{name}'s voice effect: {v.effect}.", E.NEEDS["voice"]],
+                    setting="effect")
+
+    if key.startswith("vplace:"):
+        return place_cell(name, key, v.voice_places, has_voice=bool(v.voice))
+
+    if key == "names":
+        return Cell()
+
+    if key.startswith("presence:"):
+        place = key.split(":", 1)[1]
+        p = next((x for x in v.presence if x.key == place), None)
+        if p is None:
+            return Cell(D.GREY, "unknown", fixed=FACT)
+        label = D.PLACE_NAME.get(place, place)
+        detail = [f"{label}: {state_word(p)}: {p.evidence}."]
+        if p.why_not and not p.can_switch:
+            detail.append(p.why_not[0].upper() + p.why_not[1:] + ".")
+        if p.state == D.ON:
+            words = "in" + (", leads it" if v.room_lead else "") if place == "team_room" else "on"
+            status = p.status
+        elif p.state == D.OFF:
+            words, status = ("out" if place == "team_room" else "off"), (D.RED if p.status == D.RED else D.GREY)
+        else:
+            words, status = SHORT_UNKNOWN.get(place, "unknown"), D.GREY
+        if p.can_switch:
+            return Cell(status, words, detail + [E.NEEDS["team_room"]], setting="team_room")
+        return Cell(status, words, detail, fixed=p.why_not or "there is no clean switch for this place")
+
+    if key.startswith("talk:"):
+        rule = key.split(":", 1)[1]
+        r = next((x for x in v.talk_rules if x.key == rule), None)
+        if r is None:
+            return Cell(D.GREY, "unknown", ["The rules file could not be read."], fixed="the rules file could not be read")
+        words = SHORT_ANSWER.get(r.answer, r.answer)
+        no = r.token in ("no", "nobody") or r.answer.lower().startswith(("no", "nobody"))
+        detail = [f"{r.label}: {r.answer}.", "Where this rule stands: " + r.standing + "."]
+        if r.locked:
+            detail.append(r.locked[0].upper() + r.locked[1:] + ".")
+        return Cell(D.GREY if no else D.GREEN, words, detail + [E.NEEDS["rule"]], setting=key)
+
+    return Cell()
+
+
+def place_cell(name: str, key: str, places: tuple, has_voice: bool = True) -> Cell:
+    """Spoken replies at one place: the setting, then what the logs say really happened."""
+    place = key.split(":", 1)[1]
+    p = next((x for x in places if x.key == place), None)
+    if p is None:
+        if not has_voice:
+            return Cell(D.GREY, "no voice", [f"{name} has no voice, so nothing is spoken here."],
+                        fixed=f"{name} has no voice in the Voice Desk list")
+        return Cell()
+    unknown = p.value.strip() in ("?", "—", "-", "")
+    words = (p.evidence or "not known") if unknown else p.value + (f", {p.evidence}" if p.evidence else "")
+    detail = [f"Spoken replies, {D.place_words(place)}: " + ("not known" if unknown else p.value)
+              + (f" ({p.evidence})" if p.evidence else "") + "."]
+    if p.problem:
+        detail.append(p.problem)
+    status = D.RED if p.problem else p.status
+    if p.can_switch:
+        return Cell(status, words, detail + [E.NEEDS["voice_place"]], setting=key)
+    why = D.plain_why(p.why_not) if p.why_not else "there is no switch for this place"
+    return Cell(status, words, detail + [why[0].upper() + why[1:] + "."], fixed=why)
+
+
+def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
+    """Claude, Gemini and Codex: called by name through the Voice Desk. Voice and call names only; every other
+    row is blank for them."""
+    key = row.key
+    lands = f" Where a change lands: {o.takes_effect}." if o.takes_effect else ""
+    if key == "voice":
+        return Cell(D.GREEN if o.english else D.GREY, D.voice_label(o.english) if o.english else "silent",
+                    [f"{o.name} speaks English as {D.voice_label(o.english)}." + lands, E.NEEDS["voice"]],
+                    setting="voice")
+    if key == "voice_zh":
+        return Cell(D.GREEN if o.chinese else D.GREY, D.voice_label(o.chinese) if o.chinese else "silent",
+                    [f"{o.name} speaks Chinese as {D.voice_label(o.chinese)}." + lands, E.NEEDS["voice"]],
+                    setting="voice_zh")
+    if key.startswith("vplace:"):
+        return place_cell(o.name, key, o.voice_places)
+    if key == "names":
+        return Cell(D.GREEN, ", ".join(o.call_names),
+                    [f"The voice line wakes {o.name} when it hears: " + ", ".join(o.call_names) + "."],
+                    fixed="the call names are kept in the Voice Desk list; the desk shows them and does not change them")
+    return Cell()
+
+
+ROOM_HEADING = "The Team Room (all agents)"      # the note after it is about the room, not the chosen agent
+
+
+def cell_of(row: Row, col: Any, speed_why: Optional[dict] = None, room_note: str = "") -> Cell:
+    if row.section:
+        return Cell()
+    cell = agent_cell(row, col, speed_why) if is_agent(col) else other_cell(row, col)
+    if room_note and row.key == "presence:team_room" and not cell.blank:
+        cell.detail.append(f"{ROOM_HEADING}: {room_note}")
+    return cell
+
+
+def cell_at(key: str, col: Any, speed_why: Optional[dict] = None) -> Cell:
+    """One cell by its row's key ("model", "rung:codex", "vplace:tg_dm" ...), for checks and tests."""
+    return cell_of(Row(key, key), col, speed_why)
+
+
+def column_story(snap: D.Snapshot, col: Any, speed_why: Optional[dict] = None) -> str:
+    """Everything the table and its strip say about one column, as plain text: each row's cell, then the strip's
+    whole story for it. (Checks and tests read this; the screen draws the same cells.)"""
+    out = [col.name.upper()]
+    for row in rows_of(snap):
+        if row.section:
+            out.append(row.label)
+            continue
+        cell = cell_of(row, col, speed_why, snap.room_note)
+        if cell.blank:
+            continue
+        out.append(f"{row.label}: {cell_text(cell).plain}")
+        out.append("    " + strip_text(row, col, cell, 10_000).plain)
+    return "\n".join(out)
+
+
+def cell_text(cell: Cell, width: int = 0, bright: bool = False) -> Text:
+    """What the table draws: the light, then the words (cut with an ellipsis when the column is narrower)."""
+    if cell.blank:
         return Text("")
-    out = [Text("Called by name through the Voice Desk (voice and call names only; press a to change their voices)", style=DIM)]
-    for o in snap.others:
-        t = Text()
-        t.append(f"  {o.name.ljust(8)}", style="bold")
-        t.append(f"voice {D.voice_label(o.english)}")
-        if o.chinese:
-            t.append(f", Chinese {D.voice_label(o.chinese)}")
-        own = next((p for p in o.voice_places if p.key == "terminal"), None)
-        if own is not None:
-            t.append(f"   speaks in its own window: {own.value}")
-        t.append("   answers to: " + ", ".join(o.call_names), style=DIM)
-        out.append(t)
-    return join(out)
+    t = Text()
+    t.append(MARK + " ", style=COLOUR.get(cell.status, DIM))
+    words = (ANSWERED + " " if cell.marker else "") + cell.words
+    if width and len(words) + 2 > width:
+        words = words[:max(1, width - 3)].rstrip() + "…"
+    colour = COLOUR[D.RED] if cell.status == D.RED else DIM if cell.status == D.GREY and not bright else ""
+    t.append(words, style=colour)
+    return t
+
+
+def _sentence(words: str) -> str:
+    words = words.strip()
+    return words if not words or words[-1] in ".!?:" else words + "."
+
+
+def strip_text(row: Row, col: Any, cell: Cell, width: int = 120, armed: bool = False) -> Text:
+    """The strip under the table: the whole story of the chosen cell, and what Enter does there."""
+    t = Text()
+    if row.section:
+        t.append(row.label, style=f"bold {COLOUR[D.BLUE]}")
+        return t
+    if col is None:
+        t.append(row.label + ", every agent: ", style=f"bold {COLOUR[D.BLUE]}")
+        t.append("Enter opens the same choices and applies one of them to every agent it applies to, after one "
+                 "confirmation that lists each agent's before and after.")
+        return t
+    head = f"{col.name}, {row.label.strip()}: "
+    if cell.blank:
+        t.append(head, style=f"bold {COLOUR[D.BLUE]}")
+        t.append("this row does not apply here.", style=DIM)
+        return t
+    body = " ".join(_sentence(str(x)) for x in cell.detail if x)
+    if cell.setting:
+        body += " Enter opens the choices."
+    elif cell.fixed:
+        body += " No menu here: " + cell.fixed + "."
+    lines = textwrap.wrap(head + body, max(30, width)) or [head]
+    for i, ln in enumerate(lines):
+        if i:
+            t.append("\n")
+        if i == 0:
+            t.append(ln[:len(head)], style=f"bold {COLOUR[D.BLUE]}")
+            t.append(ln[len(head):])
+        else:
+            t.append(ln)
+    return t
 
 
 def listener_item(view: "P.ListenerView") -> Text:
@@ -546,18 +673,27 @@ def flow(items: list[Text], width: int, gap: str = "   ") -> Text:
 class Opt:
     token: str
     label: str
-    now: bool = False               # radio: today's choice.  toggle: switched on today
+    now: bool = False               # today's choice
     disabled: bool = False
     note: str = ""
 
 
 @dataclass
-class Group:
-    key: str
-    label: str
-    kind: str                       # "radio" (pick one) or "toggle" (each line on / off)
+class Spec:
+    """Everything one cell's menu needs: the choices, what each would change, and the jobs that change it."""
+    title: str
     options: list[Opt] = field(default_factory=list)
-    testable: str = ""              # "en" / "zh": T renders the highlighted voice to a file and checks it
+    describe: Callable[[str], list[str]] = lambda token: []
+    jobs: Callable[[str], list] = lambda token: []
+    note: str = ""
+    locked: str = ""                # why nothing can be chosen here
+    needs: str = ""                 # what it takes for a change to be live everywhere
+    testable: str = ""              # "en" / "zh": t makes the highlighted voice to a file and checks it
+    agent: Any = None               # the Voice Desk agent behind a voice menu (for the test)
+
+    @property
+    def current(self) -> Optional[Opt]:
+        return next((o for o in self.options if o.now), None)
 
 
 _POPUP_CSS = """
@@ -572,184 +708,163 @@ _POPUP_CSS = """
 #box-confirm {{ height: auto; }}
 #box-keys {{ color: #8b949e; height: auto; }}
 """
+MENU_WIDTH = 64
 
 
-class EditPopup(ModalScreen[Optional[dict]]):
-    """A few plain choices for one setting. Enter or Space chooses; S saves after one confirm line that says
-    exactly what will change; Esc cancels. Returns {group key: token} for radios and {group key: {token: on}}
-    for toggles, holding only what changed, or None."""
-    CSS = _POPUP_CSS.format(name="EditPopup")
-    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("s", "save", "save"),
-                Binding("space", "choose", "choose"), Binding("t", "test", "test"),
-                Binding("enter", "enter", "enter", show=False)]
+class CellMenu(ModalScreen[Optional[str]]):
+    """The floating menu under a cell: the choices for that one setting, today's marked "now". Enter on a choice
+    shows one line that says exactly what will change and whether a restart is needed; Enter again saves, Esc
+    goes back. Returns the chosen token, or None."""
+    CSS = """
+    CellMenu { align: left top; background: #0d1117 25%; }
+    #menu { width: 64; max-width: 100%; height: auto; max-height: 100%; border: round #1f6feb; background: #1c2330;
+            padding: 0 1; }
+    #menu-title { text-style: bold; height: auto; }
+    #menu-note { color: #8b949e; height: auto; }
+    #menu-list { height: auto; max-height: 14; background: #1c2330; border: none; padding: 0; }
+    #menu-list > .option-list--option-disabled { color: #8b949e; }
+    #menu-list > .option-list--option-highlighted { background: #1f6feb; }
+    #menu-status { height: auto; color: #d29922; }
+    #menu-confirm { height: auto; }
+    #menu-keys { color: #8b949e; height: auto; }
+    """
+    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("enter", "enter", "choose", show=False),
+                Binding("t", "test", "test", show=False)]
 
-    def __init__(self, title: str, groups: list[Group], describe: Callable[[dict], list[str]], note: str = "",
-                 locked: str = "", tester: Optional[Callable[[str, str], tuple[bool, str]]] = None,
-                 dry: bool = True) -> None:
+    def __init__(self, spec: Spec, anchor: Optional[tuple[int, int]] = None, dry: bool = True,
+                 tester: Optional[Callable[[str, str], tuple[bool, str]]] = None) -> None:
         super().__init__()
-        self.title_words, self.groups, self.describe, self.note, self.locked = title, groups, describe, note, locked
-        self.tester, self.dry = tester, dry
-        self.staged: dict[str, str] = {}
-        self.flipped: dict[str, dict[str, bool]] = {}
-        self.confirming = False
-        self.rows: list[tuple[Optional[Group], Optional[Opt]]] = []
+        self.spec, self.anchor, self.dry, self.tester = spec, anchor, dry, tester
+        self.confirming: Optional[str] = None           # the token waiting for its second Enter
 
-    # -- what is on the list
-    def is_on(self, g: Group, o: Opt) -> bool:
-        if g.kind == "toggle":
-            return self.flipped.get(g.key, {}).get(o.token, o.now)
-        return self.staged.get(g.key, next((x.token for x in g.options if x.now), None)) == o.token
-
-    def row_text(self, g: Group, o: Opt) -> Text:
-        on = self.is_on(g, o)
+    def row_text(self, o: Opt) -> Text:
         t = Text()
-        box = ("[x] " if on else "[ ] ") if g.kind == "toggle" else ("(o) " if on else "( ) ")
-        t.append("  " + box, style=COLOUR[D.GREEN] if on else DIM)
+        t.append("(o) " if o.now else "( ) ", style=COLOUR[D.GREEN] if o.now else DIM)
         t.append(o.label, style=DIM if o.disabled else "")
-        if o.now and g.kind == "radio":
+        if o.now:
             t.append("   now", style=COLOUR[D.BLUE])
-        if g.kind == "toggle":
-            t.append("   on now" if o.now else "   off now", style=DIM)
-            if on != o.now:
-                t.append("   -> " + ("on" if on else "off"), style=COLOUR[D.YELLOW])
-        elif on and not o.now:
-            t.append("   <- chosen", style=COLOUR[D.YELLOW])
         if o.note:
             t.append(f"   ({o.note})", style=DIM)
         return t
 
-    def options(self) -> list[Option]:
-        self.rows = []
-        out = []
-        for g in self.groups:
-            self.rows.append((g, None))
-            out.append(Option(Text(g.label, style="bold"), disabled=True))
-            for o in g.options:
-                self.rows.append((g, o))
-                out.append(Option(self.row_text(g, o), disabled=o.disabled))
-        return out
-
-    def changes(self) -> dict:
-        out: dict = {}
-        for g in self.groups:
-            if g.kind == "radio":
-                now = next((x.token for x in g.options if x.now), None)
-                if g.key in self.staged and self.staged[g.key] != now:
-                    out[g.key] = self.staged[g.key]
-            else:
-                flips = {tok: on for tok, on in self.flipped.get(g.key, {}).items()
-                         if on != next(x.now for x in g.options if x.token == tok)}
-                if flips:
-                    out[g.key] = flips
-        return out
-
     def compose(self) -> ComposeResult:
-        with Vertical(id="box"):
-            yield Static(self.title_words, id="box-title")
-            yield Static(self.locked or self.note, id="box-note")
-            yield OptionList(*([] if self.locked else self.options()), id="box-list")
-            yield Static("", id="box-status")
-            yield Static("", id="box-confirm")
-            yield Static("", id="box-keys")
+        with Vertical(id="menu"):
+            yield Static(self.spec.title, id="menu-title")
+            yield Static(self.spec.locked or self.spec.note, id="menu-note")
+            yield OptionList(*([] if self.spec.locked else
+                               [Option(self.row_text(o), disabled=o.disabled) for o in self.spec.options]),
+                             id="menu-list")
+            yield Static("", id="menu-status")
+            yield Static("", id="menu-confirm")
+            yield Static("", id="menu-keys")
 
     def on_mount(self) -> None:
-        lst = self.query_one("#box-list", OptionList)
-        lst.display = not self.locked
-        if self.locked:
+        lst = self.query_one("#menu-list", OptionList)
+        note = self.query_one("#menu-note", Static)
+        note.display = bool(self.spec.locked or self.spec.note)
+        lst.display = not self.spec.locked
+        if self.spec.locked:
             lst.disabled = True
             self.set_focus(None)
         else:
             lst.focus()
-            first = next((i for i, (g, o) in enumerate(self.rows) if o and self.is_on(g, o) and not o.disabled),
-                         next((i for i, (_, o) in enumerate(self.rows) if o and not o.disabled), None))
-            lst.highlighted = first
+            opts = self.spec.options
+            lst.highlighted = next((i for i, o in enumerate(opts) if o.now and not o.disabled),
+                                   next((i for i, o in enumerate(opts) if not o.disabled), None))
         self.show_keys()
+        self.call_after_refresh(self.place)
+
+    def place(self) -> None:
+        """Put the menu right under its cell; when it would run off the screen, pull it back in (or above the cell)."""
+        try:
+            box = self.query_one("#menu", Vertical)
+        except Exception:                               # noqa: BLE001  the menu is closing
+            return
+        width, height = box.outer_size.width or MENU_WIDTH, box.outer_size.height or 8
+        sw, sh = self.app.size.width, self.app.size.height
+        if self.anchor is None:
+            x, y = max(0, (sw - width) // 2), max(0, (sh - height) // 2)
+        else:
+            x, y = self.anchor
+            x = max(0, min(x, sw - width))
+            if y + height > sh:
+                y = max(0, y - height - 1) if y - height - 1 >= 0 else max(0, sh - height)
+        box.styles.offset = (x, y)
 
     def show_keys(self) -> None:
-        if self.locked:
+        if self.spec.locked:
             words = "Esc close"
-        elif self.confirming:
+        elif self.confirming is not None:
             words = "Enter = yes, do exactly that     Esc = back to the choices"
         else:
-            words = "Up / Down move   Enter or Space choose   S save   Esc cancel"
-            if self.tester and any(g.testable for g in self.groups):
-                words += "   T test the highlighted voice (made to a file and checked, never played)"
-        self.query_one("#box-keys", Static).update(words)
+            words = "up / down move   Enter choose   Esc cancel"
+            if self.tester and self.spec.testable:
+                words += "   t test this voice (made to a file, never played)"
+        self.query_one("#menu-keys", Static).update(words)
 
-    def highlighted(self) -> tuple[Optional[Group], Optional[Opt]]:
-        i = self.query_one("#box-list", OptionList).highlighted
-        return self.rows[i] if i is not None and 0 <= i < len(self.rows) else (None, None)
-
-    def redraw(self) -> None:
-        lst = self.query_one("#box-list", OptionList)
-        keep = lst.highlighted
-        lst.clear_options()
-        lst.add_options(self.options())
-        lst.highlighted = keep
-
-    # -- keys
-    def action_choose(self) -> None:
-        if self.locked or self.confirming:
-            return
-        g, o = self.highlighted()
-        if g is None or o is None or o.disabled:
-            return
-        if g.kind == "toggle":
-            self.flipped.setdefault(g.key, {})[o.token] = not self.is_on(g, o)
-        else:
-            self.staged[g.key] = o.token
-        self.query_one("#box-status", Static).update("")
-        self.redraw()
+    def highlighted(self) -> Optional[Opt]:
+        i = self.query_one("#menu-list", OptionList).highlighted
+        return self.spec.options[i] if i is not None and 0 <= i < len(self.spec.options) else None
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         self.action_enter()
 
     def action_enter(self) -> None:
-        if self.locked:
+        if self.spec.locked:
             self.dismiss(None)
-        elif self.confirming:
-            self.dismiss(self.changes())
-        else:
-            self.action_choose()
-
-    def action_save(self) -> None:
-        if self.locked or self.confirming:
             return
-        changes = self.changes()
-        if not changes:
-            self.query_one("#box-status", Static).update("Nothing is different from now, so there is nothing to save.")
+        if self.confirming is not None:
+            self.dismiss(self.confirming)
             return
-        self.confirming = True
-        head = ("This is a DRY RUN: the desk will show exactly what would change and write nothing."
+        o = self.highlighted()
+        if o is None or o.disabled:
+            return
+        if o.now:
+            self.query_one("#menu-status", Static).update("That is what it is now, so there is nothing to change.")
+            return
+        lines = self.spec.describe(o.token)
+        if not lines:
+            self.query_one("#menu-status", Static).update("Nothing would change.")
+            return
+        self.confirming = o.token
+        head = ("DRY RUN: the desk will show exactly what would change and write nothing."
                 if self.dry else "This will be WRITTEN now (backup first, read back, u undoes it).")
         body = [Text(head, style=COLOUR[D.YELLOW] if self.dry else COLOUR[D.RED])]
-        body += [Text("  " + s) for s in self.describe(changes)]
-        self.query_one("#box-confirm", Static).update(join(body))
-        self.query_one("#box-list", OptionList).disabled = True
+        wrap = max(24, (self.query_one("#menu", Vertical).size.width or MENU_WIDTH) - 4)
+        for s in lines:
+            parts = textwrap.wrap(s, wrap) or [""]
+            body += [Text(("  " if i == 0 else "    ") + part) for i, part in enumerate(parts)]
+        if self.spec.needs:
+            body += [Text("  " + part, style=DIM) for part in textwrap.wrap(self.spec.needs, wrap)]
+        self.query_one("#menu-status", Static).update("")
+        self.query_one("#menu-confirm", Static).update(join(body))
+        self.query_one("#menu-list", OptionList).disabled = True
         self.set_focus(None)
         self.show_keys()
+        self.call_after_refresh(self.place)
 
     def action_cancel(self) -> None:
-        if self.confirming:
-            self.confirming = False
-            self.query_one("#box-confirm", Static).update("")
-            lst = self.query_one("#box-list", OptionList)
+        if self.confirming is not None:
+            self.confirming = None
+            self.query_one("#menu-confirm", Static).update("")
+            lst = self.query_one("#menu-list", OptionList)
             lst.disabled = False
             lst.focus()
             self.show_keys()
+            self.call_after_refresh(self.place)
         else:
             self.dismiss(None)
 
     def action_test(self) -> None:
-        g, o = self.highlighted()
-        if self.locked or self.confirming or not self.tester or g is None or o is None or not g.testable:
+        o = self.highlighted()
+        if self.spec.locked or self.confirming is not None or not self.tester or o is None or not self.spec.testable:
             return
         if not o.token:
-            self.query_one("#box-status", Static).update("Silent has nothing to test.")
+            self.query_one("#menu-status", Static).update("Silent has nothing to test.")
             return
-        self.query_one("#box-status", Static).update(f"Making {o.label} to a file (nothing is played) ...")
-        self.run_voice_test(g.testable, o.token, o.label)
+        self.query_one("#menu-status", Static).update(f"Making {o.label} to a file (nothing is played) ...")
+        self.run_voice_test(self.spec.testable, o.token, o.label)
 
     @work(thread=True, exclusive=True, group="acd-voice-test")
     def run_voice_test(self, lang: str, voice: str, label: str) -> None:
@@ -758,7 +873,7 @@ class EditPopup(ModalScreen[Optional[dict]]):
         except Exception as e:                           # noqa: BLE001
             ok, detail = False, f"{type(e).__name__}: {e}"
         words = f"{'Test passed' if ok else 'Test FAILED'} for {label}: {detail}"
-        self.app.call_from_thread(self.query_one("#box-status", Static).update, words)
+        self.app.call_from_thread(self.query_one("#menu-status", Static).update, words)
 
 
 class NoticePopup(ModalScreen[bool]):
@@ -952,308 +1067,317 @@ def results_text(results: list[E.Result]) -> tuple[str, Text]:
     return title, join(out[:-1] if out else out)
 
 
-# ---- the screens -------------------------------------------------------------------------------------------
+# ---- the screen --------------------------------------------------------------------------------------------
 _TOP_CSS = """
 #title { height: 1; background: #161b22; padding: 0 1; }
 #warnings { height: auto; padding: 0 1; }
-#legend { height: 1; padding: 0 1; background: #161b22; }
+#legend { height: auto; padding: 0 1; background: #161b22; }
 #systems { height: auto; padding: 0 1; }
-#keys { height: 1; padding: 0 1; background: #161b22; color: #8b949e; dock: bottom; }
+#keys { height: auto; padding: 0 1; background: #161b22; color: #8b949e; dock: bottom; }
 """
 _SHARED_KEYS = [Binding("t", "app.voice_test", "voice test", show=False),
                 Binding("l", "app.listener", "listener", show=False),
                 Binding("n", "app.add_agent", "add an agent", show=False),
                 Binding("d", "app.remove_agent", "remove an agent", show=False),
+                Binding("s", "app.standard_ladder", "the standard ladder", show=False),
                 Binding("c", "app.reread", "read again", show=False), Binding("q", "app.quit", "close", show=False),
                 Binding("u", "app.undo", "undo", show=False), Binding("r", "app.restart_review", "restart", show=False),
                 Binding("p", "app.pause_watcher", "pause the watcher", show=False)]
 
-
-def hidden_below(table: DataTable, agents: tuple) -> list[str]:
-    """The names of the agents whose block is not fully on screen below the table's bottom edge."""
-    bottom = table.scroll_y + max(0, table.size.height - 1)          # the header takes one line
-    out, top = [], 0
-    for i, v in enumerate(agents):
-        try:
-            height = table.ordered_rows[i].height
-        except IndexError:
-            break
-        if top + height - 1 > bottom:                                # the last line of a block is a blank spacer
-            out.append(v.name)
-        top += height
-    return out
+# The letters are shown the way they are typed: plain lower-case keys, no Shift. Shown item by item, so a narrow
+# window breaks the line between two keys and never cuts one off.
+TABLE_KEYS = ("arrows move cell to cell", "Enter open the choices (on a row's name: for every agent)",
+              "s standard ladder", "t voice test", "l listener", "n add", "d remove", "u undo", "r restart review",
+              "p pause watcher", "c read again", "q close")
+EDGE_WORDS = {"down": "that is the last row: nothing is below it", "up": "that is the first row: nothing is above it",
+              "left": "that is the first column: the row names", "right": "that is the last column"}
+LABEL_WIDTH = 30
+COL_MIN, COL_MAX = 18, 34
 
 
-# The letters are shown the way they are typed: plain lower-case keys, no Shift.
-GRID_KEYS = ("up/down agent  Enter open its tree  a assistants' voices  t voice test  l listener  "
-             "n add  d remove  u undo  r restart review  p pause watcher  c read again  q close")
-TREE_KEYS = (f"{CAN_CHANGE} = can change: up/down, Enter  left/right agent  Esc grid  t voice test  "
-             "l listener  n add  d remove  u undo  r restart review  p pause watcher  c read again  q close")
+def keys_text(width: int, note: str = "") -> Text:
+    items = [Text(k, style=DIM) for k in TABLE_KEYS]
+    if note:
+        items.append(Text(note, style=COLOUR[D.YELLOW]))
+    return flow(items, width, gap="   ")
 
 
-EDGE_WORDS = {1: "that was the last setting: nothing is below it. up goes back; Esc returns to the grid",
-              -1: "that was the first setting: nothing is above it. down goes on; Esc returns to the grid"}
+def column_width(snap: Optional[D.Snapshot], window: int, speed_why: Optional[dict] = None) -> int:
+    """One width for every agent column: as wide as the longest cell needs, but never wider than what lets all
+    the agents fit beside the row names. Whatever does not fit (the three assistants, in a narrow window) scrolls
+    sideways; a cell that is cut ends in an ellipsis and the strip has the whole story."""
+    cols, rows = columns_of(snap), rows_of(snap)
+    if not cols:
+        return COL_MIN
+    need = max((len(cell_text(cell_of(r, c, speed_why)).plain) for r in rows for c in cols), default=COL_MIN)
+    need = max(need, max(len(c.name) for c in cols), COL_MIN)
+    room = max(40, window) - (LABEL_WIDTH + 2) - 2
+    fit = room // len(cols) - 2                                 # every column pads one on each side
+    if fit < COL_MIN + 4:                                       # not all nine: the agents fit, the assistants scroll
+        fit = room // max(1, len(snap.agents) if snap else 1) - 2
+    return max(COL_MIN, min(COL_MAX, need, fit))
 
 
-class QuietTable(DataTable):
-    """The grid's table, without the faint band that follows the mouse pointer: with the chosen row also
-    highlighted, that band looked like a second agent was selected. A click still chooses a row."""
+class DeskTable(DataTable):
+    """The desk's one table. Three differences from a plain table: no faint band follows the mouse pointer (with
+    the chosen cell also highlighted it looked like a second choice); the arrow keys step over the section
+    headings; and they STOP at the first and the last row and column, and say so."""
+
+    class Edge(Message):
+        def __init__(self, direction: str) -> None:
+            super().__init__()
+            self.direction = direction
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.headings: set[int] = set()
 
     def _set_hover_cursor(self, active: bool) -> None:
         super()._set_hover_cursor(False)
 
+    def step_rows(self, direction: int) -> None:
+        row, col = self.cursor_coordinate
+        new = row + direction
+        while 0 <= new < self.row_count and new in self.headings:
+            new += direction
+        if not 0 <= new < self.row_count:
+            self.post_message(self.Edge("down" if direction > 0 else "up"))
+            return
+        self.move_cursor(row=new, column=col)
 
-class GridScreen(Screen):
-    """Home: one row per agent."""
+    def action_cursor_down(self) -> None:
+        self.step_rows(1)
+
+    def action_cursor_up(self) -> None:
+        self.step_rows(-1)
+
+    def action_cursor_right(self) -> None:
+        if self.cursor_coordinate.column >= len(self.columns) - 1:
+            self.post_message(self.Edge("right"))
+            return
+        super().action_cursor_right()
+
+    def action_cursor_left(self) -> None:
+        if self.cursor_coordinate.column <= 0:
+            self.post_message(self.Edge("left"))
+            return
+        super().action_cursor_left()
+
+
+class TableScreen(Screen):
+    """The whole desk: one table. Rows are settings, columns are agents; the strip under it tells the full story
+    of the chosen cell."""
     CSS = _TOP_CSS + """
-    #grid { height: 1fr; }
-    #grid > .datatable--cursor { background: #30363d; }
-    #more { height: 1; padding: 0 1; color: #d29922; display: none; }
-    #grid > .datatable--header { background: #161b22; color: #8b949e; }
-    #others { height: auto; padding: 1 1 0 1; }
+    #table { height: 1fr; }
+    #table > .datatable--cursor { background: #12233d; text-style: bold; }
+    #table > .datatable--header { background: #161b22; color: #e6edf3; text-style: bold; }
+    #table > .datatable--fixed { background: #0d1117; color: #8b949e; }
+    #table > .datatable--fixed-cursor { background: #12233d; color: #e6edf3; }
+    #more { height: auto; padding: 0 1; color: #d29922; display: none; }
+    #strip { height: auto; max-height: 9; padding: 0 1; background: #161b22; border-top: solid #30363d; }
     """
-    BINDINGS = [Binding("a", "app.assistants", "assistants' voices", show=False), *_SHARED_KEYS]
+    BINDINGS = [*_SHARED_KEYS]
 
     def compose(self) -> ComposeResult:
         yield Static("", id="title")
         yield Static("reading every agent's settings and log ...", id="warnings")
         yield Static(legend_text(), id="legend")
         yield Static("", id="systems")
-        yield QuietTable(id="grid", cursor_type="row", zebra_stripes=False,
-                         cursor_foreground_priority="renderable")    # the chosen row keeps its green and red
+        yield DeskTable(id="table", cursor_type="cell", zebra_stripes=False, fixed_columns=1, header_height=2,
+                        cursor_foreground_priority="renderable")      # the chosen cell keeps its green and red
         yield Static("", id="more")
-        yield Static("", id="others")
+        yield Static("", id="strip")
         yield Static("", id="keys")
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[Row] = []
+        self.cols: list = []
+        self.cells: dict = {}
+        self.shape: tuple = ()
+        self.note = ""
+
     def on_mount(self) -> None:
-        self.shown: tuple = ()
-        self.query_one("#grid", DataTable).focus()
+        self.query_one("#table", DataTable).focus()
         self.show(self.app.snapshot)
 
     def on_resize(self) -> None:
-        snap = self.app.snapshot
-        if columns_for(self.size.width, snap.agents if snap else ()) != self.shown:
-            self.show(snap)
-        elif snap is not None:
-            self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width(), self.app.listener_now))
-        self.call_after_refresh(self.more_hint)
+        self.show(self.app.snapshot)
 
+    # -- drawing
     def show(self, snap: Optional[D.Snapshot]) -> None:
-        self.query_one("#title", Static).update(self.app.title_text())
-        table = self.query_one("#grid", DataTable)
-        cols = columns_for(self.size.width or self.app.size.width, snap.agents if snap else ())
-        if cols != self.shown:
-            table.clear(columns=True)
-            for label, _ in cols:
-                table.add_column(label, key=label)
-            self.shown = cols
-        hidden = len(COLUMNS) - len(cols)
-        self.query_one("#keys", Static).update(
-            GRID_KEYS
-            + (f"   ({hidden} columns hidden: window is narrow, the tree has them)" if hidden else ""))
+        app = self.app
+        self.query_one("#title", Static).update(app.title_text())
+        self.query_one("#legend", Static).update(legend_text(app.text_width()))
+        self.query_one("#keys", Static).update(keys_text(app.text_width(), self.note))
         if snap is None:
             return
         self.query_one("#warnings", Static).update(warnings_text(snap))
-        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width(), self.app.listener_now))
-        keep = table.cursor_row
-        table.clear()
-        for v in snap.agents:
-            cells = [build(v) for _, build in cols]
-            table.add_row(*cells, height=max(c.plain.count("\n") + 1 for c in cells) + 1, key=v.profile)
-        if snap.agents:
-            table.move_cursor(row=min(keep, len(snap.agents) - 1))
-        self.query_one("#others", Static).update(others_text(snap))
+        self.query_one("#systems", Static).update(systems_text(snap, app.text_width(), app.listener_now))
+        table = self.query_one("#table", DeskTable)
+        rows, cols = rows_of(snap), columns_of(snap)
+        width = column_width(snap, self.size.width or app.size.width, app.speed_why)
+        keep_row = self.rows[table.cursor_coordinate.row].key if self.rows and table.row_count else ""
+        keep_col = table.cursor_coordinate.column if table.row_count else 1
+        keep_scroll = (table.scroll_x, table.scroll_y)
+        shape = (tuple(r.key for r in rows), tuple(col_id(c) for c in cols), width)
+        self.rows, self.cols = rows, cols
+        self.cells = {(r.key, col_id(c)): cell_of(r, c, app.speed_why, snap.room_note) for r in rows for c in cols}
+        fresh = shape != self.shape
+        if fresh:
+            table.clear(columns=True)
+            table.add_column(Text("\nSetting", style=DIM), key="setting", width=LABEL_WIDTH)
+            for c in cols:
+                head = Text(c.name, style="bold")
+                head.append("\n" + (getattr(c, "role", "") or ("called by name" if not is_agent(c) else "")), style=DIM)
+                table.add_column(head, key=col_id(c), width=width)
+            self.shape = shape
+        else:
+            table.clear()
+        table.headings = {i for i, r in enumerate(rows) if r.section}
+        for r in rows:
+            if r.section:
+                table.add_row(Text(r.label, style=f"bold {COLOUR[D.BLUE]}"), *[Text("") for _ in cols], key=r.key)
+            else:
+                table.add_row(Text("  " + r.label), *[cell_text(self.cells[(r.key, col_id(c))], width) for c in cols],
+                              key=r.key)
+        if rows:
+            at = next((i for i, r in enumerate(rows) if r.key == keep_row), None)
+            if at is None or rows[at].section:
+                at = next((i for i, r in enumerate(rows) if not r.section), 0)
+            had = bool(keep_row)
+            table.move_cursor(row=at, column=min(max(keep_col, 0), len(cols)) if had else 1, scroll=not had)
+            if had:
+                table.scroll_to(x=keep_scroll[0], y=keep_scroll[1], animate=False)
+        self.show_strip()
         self.call_after_refresh(self.more_hint)
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+    def go(self, row_key: str, column: Any = None) -> bool:
+        """Put the cursor on a row (by its key) and a column: a number (0 = the row names), an agent's name, or
+        None to stay in the same column. False when there is no such row or column."""
+        table = self.query_one("#table", DeskTable)
+        r = next((i for i, row in enumerate(self.rows) if row.key == row_key), None)
+        if r is None:
+            return False
+        if column is None:
+            c = table.cursor_coordinate.column
+        elif isinstance(column, int):
+            c = column
+        else:
+            c = next((i + 1 for i, col in enumerate(self.cols) if col.name == column or col_id(col) == column), -1)
+        if not 0 <= c <= len(self.cols):
+            return False
+        table.move_cursor(row=r, column=c)
+        return True
+
+    def at(self) -> tuple[Optional[Row], Any, Optional[Cell]]:
+        """(the row, the column's agent or None for the row names, the cell) under the cursor."""
+        table = self.query_one("#table", DeskTable)
+        if not self.rows or not table.row_count:
+            return None, None, None
+        r, c = table.cursor_coordinate
+        if not 0 <= r < len(self.rows):
+            return None, None, None
+        row = self.rows[r]
+        if c <= 0 or c > len(self.cols):
+            return row, None, None
+        col = self.cols[c - 1]
+        return row, col, self.cells.get((row.key, col_id(col)))
+
+    def show_strip(self, extra: str = "") -> None:
+        row, col, cell = self.at()
+        strip = self.query_one("#strip", Static)
+        if row is None:
+            strip.update("")
+            return
+        t = strip_text(row, col, cell or Cell(), self.app.text_width(), self.app.is_armed)
+        if extra:
+            t.append("\n" + extra, style=COLOUR[D.YELLOW])
+        strip.update(t)
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        self.show_strip()
         self.call_after_refresh(self.more_hint)
+
+    def on_desk_table_edge(self, event: DeskTable.Edge) -> None:
+        self.show_strip(EDGE_WORDS[event.direction] + ".")
 
     def more_hint(self) -> None:
-        """One line under the grid when agents sit below the bottom edge, naming them: nothing is cut off in silence."""
-        snap = self.app.snapshot
+        """One line under the table that NAMES whatever is off screen: agent columns to the left or right, and
+        sections below. Nothing is cut off in silence."""
         try:
-            table, more = self.query_one("#grid", DataTable), self.query_one("#more", Static)
+            table, more = self.query_one("#table", DeskTable), self.query_one("#more", Static)
         except Exception:                               # noqa: BLE001  the screen is closing
             return
-        below = hidden_below(table, snap.agents if snap else ())
-        more.display = bool(below)
+        parts = []
+        left, right = hidden_columns(table, self.cols)
+        if right:
+            parts.append("more columns to the right (right arrow): " + ", ".join(right))
+        if left:
+            parts.append("more columns to the left (left arrow): " + ", ".join(left))
+        below = hidden_sections(table, self.rows)
         if below:
-            more.update("more below, press down: " + ", ".join(below))
+            parts.append("more rows below (down arrow): " + ", ".join(below))
+        more.display = bool(parts)
+        if parts:
+            more.update(flow([Text(p) for p in parts], self.app.text_width()))
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self.app.open_tree(event.cursor_row)
-
-
-class TreeList(OptionList):
-    """The tree's list. Two differences from a plain list: the arrow keys STOP at the first and the last setting
-    (no silent jump to the other end), and each step also brings the plain lines around the new setting into
-    view, so nothing between two settings is ever skipped off screen."""
-
-    class Edge(Message):
-        """Up was pressed on the first setting, or down on the last one."""
-        def __init__(self, direction: int) -> None:
-            super().__init__()
-            self.direction = direction
-
-    def step(self, direction: int) -> None:
-        options = self.options
-        at = self.highlighted
-        j = (at if at is not None else (-1 if direction > 0 else len(options))) + direction
-        while 0 <= j < len(options) and options[j].disabled:
-            j += direction
-        if 0 <= j < len(options):
-            self.highlighted = j
-            self.call_after_refresh(self.show_around, j, direction)
-        else:
-            (self.scroll_end if direction > 0 else self.scroll_home)(animate=False)
-            self.post_message(self.Edge(direction))
-
-    def action_cursor_down(self) -> None:
-        self.step(1)
-
-    def action_cursor_up(self) -> None:
-        self.step(-1)
-
-    def show_around(self, j: int, direction: int) -> None:
-        """Bring the setting and the plain lines that follow it (going down) or come before it (going up) into
-        view. When they do not all fit, the setting itself wins."""
-        options = self.options
-        if not (0 <= j < len(options)) or not self.is_mounted:
-            return
-        k = j
-        while 0 <= k + direction < len(options) and options[k + direction].disabled:
-            k += direction
+    def cell_anchor(self) -> Optional[tuple[int, int]]:
+        """Where on the screen the chosen cell's bottom-left corner is: the floating menu opens right there."""
+        table = self.query_one("#table", DeskTable)
         try:
-            first, last = min(j, k), max(j, k)
-            top = self._index_to_line[first]
-            height = self._index_to_line[last] + self._heights[last] - top
-        except KeyError:
-            return
-        room = self.scrollable_content_region.height
-        if height <= room:
-            self.scroll_to_region(Region(0, top, self.scrollable_content_region.width, height), force=True,
-                                  animate=False, immediate=True)
-        else:
-            self.scroll_to_highlight(top=direction > 0)
-
-
-class TreeScreen(Screen):
-    """One agent's whole tree. Up and down move through its settings; Enter changes the highlighted one."""
-    CSS = _TOP_CSS + """
-    #body { height: 1fr; }
-    #agents { width: 26; padding: 1 1; border-right: solid #30363d; }
-    #tree { width: 1fr; height: 1fr; padding: 1 2; background: #0d1117; border: none; }
-    #tree > .option-list--option-disabled { color: #e6edf3; }
-    #tree > .option-list--option-highlighted { background: #30363d; }
-    """
-    BINDINGS = [Binding("escape", "back", "back", show=False), Binding("left", "move(-1)", "agent", show=False),
-                Binding("right", "move(1)", "agent", show=False), Binding("space", "change", "change", show=False),
-                *_SHARED_KEYS]
-
-    def __init__(self, index: int) -> None:
-        super().__init__()
-        self.index = index
-        self.settings: list[Optional[str]] = []
-
-    def compose(self) -> ComposeResult:
-        yield Static("", id="title")
-        yield Static("", id="warnings")
-        yield Static(legend_text(), id="legend")
-        yield Static("", id="systems")
-        with Horizontal(id="body"):
-            yield Static("", id="agents")
-            yield TreeList(id="tree")
-        yield Static(TREE_KEYS, id="keys")
-
-    def on_mount(self) -> None:
-        self.query_one("#tree", OptionList).focus()
-        self.show(self.app.snapshot)
-
-    def on_resize(self) -> None:
-        if self.app.snapshot is not None:
-            self.query_one("#systems", Static).update(systems_text(self.app.snapshot, self.app.text_width(), self.app.listener_now))
-
-    def view(self) -> Optional[D.AgentView]:
-        snap = self.app.snapshot
-        if snap is None or not snap.agents:
+            r, c = table.cursor_coordinate
+            widths = [col.get_render_width(table) for col in table.ordered_columns]
+            x = sum(widths[:c]) - (0 if c == 0 else int(table.scroll_x))
+            y = table.header_height + r - int(table.scroll_y)
+            return table.region.x + max(0, x), table.region.y + y + 1
+        except Exception:                               # noqa: BLE001  the menu then opens in the middle
             return None
-        self.index = max(0, min(self.index, len(snap.agents) - 1))
-        return snap.agents[self.index]
 
-    def show(self, snap: Optional[D.Snapshot], reset: bool = False) -> None:
-        self.query_one("#title", Static).update(self.app.title_text())
-        v = self.view()
-        if snap is None or v is None:
-            return
-        self.query_one("#warnings", Static).update(warnings_text(snap))
-        self.query_one("#systems", Static).update(systems_text(snap, self.app.text_width(), self.app.listener_now))
-        self.query_one("#agents", Static).update(agent_list_text(snap, self.index))
-        tree = self.query_one("#tree", OptionList)
-        keep = None if reset else tree.highlighted
-        options, self.settings = [], []
-        block: list[Text] = []
-
-        def flush() -> None:
-            if block:
-                options.append(Option(join(list(block)), disabled=True))
-                self.settings.append(None)
-                block.clear()
-
-        for lines, setting in tree_rows(v):
-            if setting is None:
-                block.extend(lines)
-                continue
-            flush()
-            lines = [ln.copy() for ln in lines]
-            lines[0].append("   " + CAN_CHANGE, style=COLOUR[D.BLUE])
-            options.append(Option(join(lines)))
-            self.settings.append(setting)
-        flush()
-        tree.clear_options()
-        tree.add_options(options)
-        first = next((i for i, s in enumerate(self.settings) if s), None)
-        tree.highlighted = keep if keep is not None and keep < len(options) and self.settings[keep] else first
-
-    def on_tree_list_edge(self, event: TreeList.Edge) -> None:
-        """Down on the last setting, or up on the first: the cursor stays put and the hint line says why."""
-        self.query_one("#keys", Static).update(Text(EDGE_WORDS[event.direction], style=COLOUR[D.YELLOW]))
-
-    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        """Headings above the first setting and notes under the last one are not settings, so the arrow keys would
-        stop short of them: at either end, scroll the rest into view."""
-        self.query_one("#keys", Static).update(TREE_KEYS)
-        chosen = [i for i, s in enumerate(self.settings) if s]
-        if not chosen or event.option_index is None:
-            return
-        tree = self.query_one("#tree", OptionList)
-        if event.option_index == chosen[-1]:
-            self.call_after_refresh(tree.scroll_end, animate=False)
-        elif event.option_index == chosen[0]:
-            self.call_after_refresh(tree.scroll_home, animate=False)
-
-    def tree_plain(self) -> str:
-        v = self.view()
-        return tree_text(v).plain if v else ""
-
-    def action_move(self, step: int) -> None:
-        snap = self.app.snapshot
-        if snap and snap.agents:
-            self.index = (self.index + step) % len(snap.agents)
-            self.show(snap, reset=True)
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+    # -- Enter
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         event.stop()
-        self.action_change()
-
-    def action_change(self) -> None:
-        i = self.query_one("#tree", OptionList).highlighted
-        v = self.view()
-        if v is None or i is None or not (0 <= i < len(self.settings)) or not self.settings[i]:
+        row, col, cell = self.at()
+        if row is None or row.section:
             return
-        self.app.open_setting(v, self.settings[i])
+        if col is None:
+            self.app.open_row(row, self.cell_anchor())
+        elif cell is None or cell.blank:
+            self.show_strip("Nothing to change here: this row does not apply to " + col.name + ".")
+        elif not cell.setting:
+            self.show_strip("Nothing to change here: " + (cell.fixed or FACT) + ".")
+        else:
+            self.app.open_cell(row, col, cell, self.cell_anchor())
+
+
+def hidden_columns(table: DataTable, cols: list) -> tuple[list[str], list[str]]:
+    """(names of the columns cut off on the left, on the right) in a window too narrow for all of them."""
+    try:
+        widths = [col.get_render_width(table) for col in table.ordered_columns]
+    except Exception:                                   # noqa: BLE001
+        return [], []
+    seen = table.scrollable_content_region.width or table.size.width
+    if len(widths) != len(cols) + 1 or not seen:
+        return [], []
+    first, edge = widths[0], seen
+    left, right, x = [], [], first
+    for c, w in zip(cols, widths[1:]):
+        start, end = x - table.scroll_x, x + w - table.scroll_x
+        if start < first:
+            left.append(c.name)
+        elif end > edge:
+            right.append(c.name)
+        x += w
+    return left, right
+
+
+def hidden_sections(table: DataTable, rows: list) -> list[str]:
+    """The sections that start below the table's bottom edge."""
+    seen = table.scrollable_content_region.height or table.size.height
+    if not seen:
+        return []
+    bottom = table.scroll_y + seen - table.header_height
+    return [r.label.split(" (")[0] for i, r in enumerate(rows) if r.section and i >= bottom]
 
 
 class Desk(App):
@@ -1282,6 +1406,8 @@ class Desk(App):
         self.edit = edit or E.EditPaths.default(launcher_armed=launcher_armed)
         self.loader, self.tester = loader, tester
         self.last_results: list[E.Result] = []
+        self.speed_why: dict = {}                                # Voice Desk key -> why its speed cannot be changed
+        self.speed_stamp: Optional[int] = None
         if collector is None:
             paths = D.Paths.default()
             reader = D.LogReader(paths.profiles)                 # ONE reader, kept for the life of the desk
@@ -1297,7 +1423,7 @@ class Desk(App):
         self.collector = collector
 
     def on_mount(self) -> None:
-        self.push_screen(GridScreen())
+        self.push_screen(TableScreen())
         self.look_at_listener()
         if self.autostart:
             self.action_reread()
@@ -1319,7 +1445,7 @@ class Desk(App):
         if self.snapshot is None:
             return
         for screen in self.screen_stack:
-            if isinstance(screen, (GridScreen, TreeScreen)):
+            if isinstance(screen, TableScreen):
                 try:
                     screen.query_one("#systems", Static).update(
                         systems_text(self.snapshot, self.text_width(), now))
@@ -1356,6 +1482,10 @@ class Desk(App):
         except Exception as e:                       # noqa: BLE001  a failed read must never take the desk down
             self.call_from_thread(self.read_failed, f"{type(e).__name__}: {e}")
             return
+        try:
+            self.learn_speeds(snap)
+        except Exception:                            # noqa: BLE001
+            pass
         self.call_from_thread(self.apply_snapshot, snap)
 
     def watch_step(self) -> None:
@@ -1391,21 +1521,17 @@ class Desk(App):
 
     def read_failed(self, why: str) -> None:
         for screen in self.screen_stack:
-            if isinstance(screen, (GridScreen, TreeScreen)):
+            if isinstance(screen, TableScreen):
                 screen.query_one("#warnings", Static).update(line(D.RED, f"this read failed ({why[:160]}); "
                                                                          "showing the last good one"))
 
     def apply_snapshot(self, snap: D.Snapshot) -> None:
         self.snapshot = snap
         for screen in self.screen_stack:
-            if isinstance(screen, (GridScreen, TreeScreen)):
+            if isinstance(screen, TableScreen):
                 screen.show(snap)
         if self.usage is not None and self.autostart and self.usage.due(self.usage_services()):
             self.read_usage_in_background()
-
-    def open_tree(self, index: int) -> None:
-        if self.snapshot and self.snapshot.agents:
-            self.push_screen(TreeScreen(index))
 
     # -- changing a setting ------------------------------------------------------------------------------------
     def voice_agent(self, v) -> tuple[Optional[A.Agent], dict]:
@@ -1416,202 +1542,302 @@ class Desk(App):
         key = getattr(v, "voice_key", "") or getattr(v, "key", "")
         return next((a for a in A.agents(cfg) if a.key == key), None), cfg
 
-    def open_setting(self, v: D.AgentView, setting: str) -> None:
-        build = {"model": self.model_popup, "backups": self.backups_popup, "voice": self.voice_popup,
-                 "voice_zh": self.voice_popup, "speed": self.voice_popup, "effect": self.voice_popup,
-                 "team_room": self.team_room_popup, "talk": self.talk_popup}.get(setting)
-        if setting.startswith("drift:"):
-            build = self.drift_popup
-        elif setting.startswith("vplace:"):
-            build = self.place_popup
-        if not build:
+    def learn_speeds(self, snap: Optional[D.Snapshot]) -> None:
+        """Which agents' speaking speed cannot be changed (their voice has no speed setting). Asked once per
+        version of the Voice Desk list, by running the real change on throw-away copies; never on the live files."""
+        if snap is None:
             return
-        popup, jobs_for = build(v, setting)
-        self.push_screen(popup, lambda changes: self.run_jobs(jobs_for(changes)) if changes else None)
+        try:
+            stamp = os.stat(self.edit.voice.toml).st_mtime_ns
+        except OSError:
+            return
+        if stamp == self.speed_stamp:
+            return
+        why: dict = {}
+        for v in snap.agents:
+            if v.voice and v.voice_key:
+                try:
+                    why[v.voice_key] = E.speed_fixed(v.voice_key, self.edit)
+                except Exception:                        # noqa: BLE001  a failed look must never take the desk down
+                    why[v.voice_key] = ""
+        self.speed_why, self.speed_stamp = why, stamp
 
-    def model_popup(self, v: D.AgentView, _setting: str):
-        edit, loader, dry = self.edit, self.loader, not self.is_armed
+    def spec_for(self, col: Any, setting: str) -> Optional[Spec]:
+        """The menu for one cell: its choices, what each would change, and the jobs that change it."""
+        if setting.startswith("drift:"):
+            return self.spec_drift(col, setting)
+        if setting.startswith("vplace:"):
+            return self.spec_place(col, setting)
+        if setting.startswith("rung:"):
+            return self.spec_rung(col, setting.split(":", 1)[1])
+        if setting.startswith("talk:"):
+            return self.spec_talk(col, setting.split(":", 1)[1])
+        build = {"model": self.spec_model, "effort": self.spec_effort, "extras": self.spec_extras,
+                 "team_room": self.spec_team_room}.get(setting)
+        if build:
+            return build(col)
+        if setting in ("voice", "voice_zh", "speed", "effect"):
+            return self.spec_voice(col, setting)
+        return None
+
+    def open_cell(self, row: Row, col: Any, cell: Cell, anchor: Optional[tuple[int, int]] = None) -> None:
+        spec = self.spec_for(col, cell.setting)
+        if spec is None:
+            return
+        tester = None
+        if spec.testable and spec.agent is not None and self.tester:
+            agent = spec.agent
+            tester = lambda lang, voice: self.tester(agent, lang, voice)        # noqa: E731
+        self.push_screen(CellMenu(spec, anchor, dry=not self.is_armed, tester=tester),
+                         lambda token: self.run_jobs(spec.jobs(token)) if token is not None else None)
+
+    def open_row(self, row: Row, anchor: Optional[tuple[int, int]] = None) -> None:
+        """Enter on a row's name: the same choices, applied to every agent the row can be changed for, after one
+        confirmation that lists each agent's before and after."""
+        screen = self.table_screen()
+        if screen is None:
+            return
+        specs: list[tuple[Any, Spec]] = []
+        skipped: list[tuple[str, str]] = []
+        for col in screen.cols:
+            cell = screen.cells.get((row.key, col_id(col)))
+            if cell is None or cell.blank:
+                continue
+            same = (cell.setting == row.key or (row.key == "rung:main" and cell.setting == "model")
+                    or (row.key.startswith("presence:") and cell.setting == "team_room"))
+            if not cell.setting or not same:
+                skipped.append((col.name, cell.fixed or "changed behind the desk's back: answer that on its own cell"))
+                continue
+            spec = self.spec_for(col, cell.setting)
+            if spec is None or spec.locked or not spec.options:
+                skipped.append((col.name, (spec.locked if spec else "") or "nothing to choose here"))
+                continue
+            specs.append((col, spec))
+        if not specs or row.key == "extras":
+            self.push_screen(NoticePopup(row.label.strip() + ": every agent", Text(
+                "This row cannot be changed for every agent at once: change it cell by cell."
+                if row.key == "extras" else "No agent can be changed on this row from the desk.")))
+            return
+        tokens: list[str] = []
+        labels: dict = {}
+        for _col, spec in specs:
+            for o in spec.options:
+                if not o.disabled and o.token not in labels:
+                    labels[o.token] = o.label
+                    tokens.append(o.token)
+        options = [Opt(tok, labels[tok], now=all(any(o.token == tok and o.now for o in spec.options)
+                                                 for _c, spec in specs)) for tok in tokens]
+
+        def plan(token: str) -> tuple[list[str], list]:
+            lines, jobs = [], []
+            for col, spec in specs:
+                cur = spec.current
+                was = cur.label if cur else "not set"
+                pick = next((o for o in spec.options if o.token == token), None)
+                if pick is None or pick.disabled:
+                    lines.append(f"{col.name}: stays {was} ({'not a choice for this agent' if pick is None else pick.note or 'not a choice here'})")
+                elif pick.now:
+                    lines.append(f"{col.name}: stays {was} (already)")
+                else:
+                    lines.append(f"{col.name}: {was} -> {pick.label}")
+                    jobs += spec.jobs(token)
+            lines += [f"{name}: not changed ({why})" for name, why in skipped]
+            return lines, jobs
+
+        def describe(token: str) -> list[str]:
+            lines, jobs = plan(token)
+            return lines if jobs else []
+
+        combined = Spec(f"{row.label.strip()}: every agent", options, describe, lambda token: plan(token)[1],
+                        note="One choice for every agent this row can be changed for. The next step lists each "
+                             "agent's before and after.", needs=specs[0][1].needs)
+        self.push_screen(CellMenu(combined, anchor, dry=not self.is_armed),
+                         lambda token: self.run_jobs(combined.jobs(token)) if token is not None else None)
+
+    def spec_model(self, v: D.AgentView) -> Spec:
+        edit, loader = self.edit, self.loader
+        title = f"{v.name}: language model"
         if v.model_locked or not v.model:
-            why = (f"{v.name}'s model is locked: it is shown here, never changed from the desk." if v.model
-                   else "The model could not be read, so it cannot be changed from here.")
-            return EditPopup(f"{v.name}: language model", [], lambda c: [], locked=why, dry=dry), lambda c: []
+            return Spec(title, locked=(f"{v.name}'s model is locked: it is shown here, never changed from the desk."
+                                       if v.model else "The model could not be read, so it cannot be changed from here."))
         ms = v.model
-        efforts = list(E.EFFORTS) if ms.effort in dict(E.EFFORTS) else [(ms.effort, effort_words(ms.effort))] + list(E.EFFORTS)
-        groups = [
-            Group("model", f"Model, on {D.service_name(ms.service)}", "radio",
-                  [Opt(m, D.model_name(m), m == ms.model) for m in E.model_choices(ms.service, ms.model)]),
-            Group("effort", "Thinking effort", "radio", [Opt(e, words, e == ms.effort) for e, words in efforts])]
+        note = f"On {D.service_name(ms.service)}." + (f" Note for {v.name}: {v.model_note}." if v.model_note else "")
+        return Spec(title, [Opt(m, D.model_name(m), m == ms.model) for m in E.model_choices(ms.service, ms.model)],
+                    lambda m: [f"{v.name}'s model changes from {D.model_name(ms.model)} to {D.model_name(m)}."],
+                    lambda m: [lambda: E.change_model(v.profile, m, edit, loader=loader)],
+                    note=note, needs=E.NEEDS["model"])
 
-        def describe(c: dict) -> list[str]:
-            out = []
-            if "model" in c:
-                out.append(f"{v.name}'s model changes from {D.model_name(ms.model)} to {D.model_name(c['model'])}.")
-            if "effort" in c:
-                out.append(f"{v.name}'s thinking effort changes from {ms.effort} to {c['effort']}.")
-            return out
+    def spec_effort(self, v: D.AgentView) -> Spec:
+        edit, loader = self.edit, self.loader
+        title = f"{v.name}: thinking effort"
+        if v.model_locked or not v.model:
+            return Spec(title, locked=f"{v.name}'s thinking effort is locked with its model.")
+        now = v.model.effort
+        efforts = list(E.EFFORTS) if now in dict(E.EFFORTS) else [(now, effort_words(now))] + list(E.EFFORTS)
+        return Spec(title, [Opt(e, words, e == now) for e, words in efforts],
+                    lambda e: [f"{v.name}'s thinking effort changes from {now} to {e}."],
+                    lambda e: [lambda: E.change_effort(v.profile, e, edit, loader=loader)],
+                    note="How hard it thinks before it answers.", needs=E.NEEDS["effort"])
 
-        def jobs(c: dict) -> list:
-            out = []
-            if "model" in c:
-                out.append(lambda: E.change_model(v.profile, c["model"], edit, loader=loader))
-            if "effort" in c:
-                out.append(lambda: E.change_effort(v.profile, c["effort"], edit, loader=loader))
-            return out
-
-        note = "Pick a model and how hard it thinks."
-        if v.model_note:
-            note += f" Note for {v.name}: {v.model_note}."
-        return EditPopup(f"{v.name}: language model", groups, describe, note=note, dry=dry), jobs
-
-    def backups_popup(self, v: D.AgentView, _setting: str):
-        edit, loader, dry = self.edit, self.loader, not self.is_armed
+    def spec_rung(self, v: D.AgentView, rung: str) -> Spec:
+        """One rung of the fallback ladder: the model this agent uses there, or off. The order is never a choice."""
+        edit, loader = self.edit, self.loader
+        if rung == D.MAIN_RUNG:
+            return self.spec_model(v)
+        title = f"{v.name}: {E.RUNG_NAME[rung]}"
         if v.backups_locked:
-            return (EditPopup(f"{v.name}: backups", [], lambda c: [], dry=dry,
-                              locked=f"{v.name} has no backups by design, and the desk does not change that."),
-                    lambda c: [])
-        pairs = {f"{b.service}|{b.model}": b for b in v.backups}
-        group = Group("backups", "Backups, in the order they are tried", "toggle",
-                      [Opt(tok, f"{b.position if b.on else '-'}  {backup_words(b, short=False)}", b.on, note=b.note)
-                       for tok, b in pairs.items()])
+            return Spec(title, locked=f"{v.name} has no backups by design, and the desk does not change that.")
+        lad = D.ladder(v)
+        r = lad.rung(rung)
+        b = r.backup if r else None
+        on = bool(b and b.on)
+        have = b.model if b else None
+        options = [Opt(m, D.model_name(m), on and m == have) for m in E.rung_choices(rung, have)]
+        options.append(Opt("", "off: skip this rung", not on))
 
-        def describe(c: dict) -> list[str]:
-            return [f"{v.name}'s backup {backup_words(pairs[tok], short=False)} is switched {'on' if on else 'off'}"
-                    + ("." if on else " (the desk remembers it, so it can be switched on again).")
-                    for tok, on in c.get("backups", {}).items()]
+        def describe(m: str) -> list[str]:
+            was = D.model_name(have) if on else "off"
+            out = [f"{v.name}'s {E.RUNG_NAME[rung]} changes from {was} to {D.model_name(m) if m else 'off'}."]
+            if not m:
+                out.append("The desk remembers it, so it can be switched on again.")
+            if not lad.in_order:
+                out.append("The same change writes the list in the standard order (it is not in it now).")
+            return out
 
-        def jobs(c: dict) -> list:
-            return [(lambda tok=tok, on=on: E.set_backup(v.profile, pairs[tok].service, pairs[tok].model, on, edit,
-                                                         loader=loader))
-                    for tok, on in c.get("backups", {}).items()]
+        note = ("The order of the ladder is fixed: Claude subscription, Antigravity (Claude, then Gemini), ChatGPT, "
+                "NVIDIA. Here you only pick the model for this rung, or off.")
+        return Spec(title, options, describe,
+                    lambda m: [lambda: E.set_rung(v.profile, rung, m or None, edit, loader=loader)],
+                    note=note, needs=E.NEEDS["ladder"])
 
-        return EditPopup(f"{v.name}: backups", [group], describe, dry=dry,
-                         note="A backup answers only when the model before it fails. Space switches one on or off."), jobs
+    def spec_extras(self, v: D.AgentView) -> Spec:
+        """Backups that are not on the ladder: take one off the list, or put a remembered one back."""
+        edit, loader = self.edit, self.loader
+        title = f"{v.name}: extra backups, not on the ladder"
+        if v.backups_locked:
+            return Spec(title, locked=f"{v.name} has no backups by design, and the desk does not change that.")
+        lad = D.ladder(v)
+        options = [Opt("", "leave it as it is", True)]
+        by: dict = {}
+        for b in lad.extras:
+            tok = f"off|{b.service}|{b.model}"
+            by[tok] = b
+            options.append(Opt(tok, f"take {backup_words(b, short=False)} off the list"))
+        for b in lad.extras_off:
+            tok = f"on|{b.service}|{b.model}"
+            by[tok] = b
+            options.append(Opt(tok, f"put {backup_words(b, short=False)} back on the list", note=b.note))
 
-    def drift_popup(self, v: D.AgentView, setting: str):
+        def describe(tok: str) -> list[str]:
+            b = by[tok]
+            on = tok.startswith("on|")
+            return [f"{v.name}'s backup {backup_words(b, short=False)} is switched {'on' if on else 'off'}"
+                    + ("." if on else " (the desk remembers it, so it can be switched on again).")]
+
+        return Spec(title, options, describe,
+                    lambda tok: [lambda: E.set_backup(v.profile, by[tok].service, by[tok].model,
+                                                      tok.startswith("on|"), edit, loader=loader)],
+                    note="These are on the list but not on the standard ladder.", needs=E.NEEDS["backup"])
+
+    def spec_drift(self, v: D.AgentView, setting: str) -> Spec:
         """Something changed a setting behind the desk's back: put it back, or accept it."""
-        edit, loader, dry = self.edit, self.loader, not self.is_armed
+        edit, loader = self.edit, self.loader
         i = int(setting.split(":", 1)[1])
         if i >= len(v.drifts):
-            return EditPopup(f"{v.name}: changed", [], lambda c: [], locked="That change is no longer there.", dry=dry), \
-                lambda c: []
+            return Spec(f"{v.name}: changed", locked="That change is no longer there.")
         d = v.drifts[i]
-        group = Group("answer", "What should the desk do?", "radio", [
-            Opt("put", f"put it back: {d.words(d.want)} again (what the desk set)"),
-            Opt("accept", f"accept it: keep {d.words(d.have)}, and the desk expects that from now on")])
 
-        def describe(c: dict) -> list[str]:
-            if c.get("answer") == "put":
+        def describe(tok: str) -> list[str]:
+            if tok == "put":
                 return [f"{v.name}'s {d.what} is put back to {d.words(d.want)}, through the desk's own safe path "
                         "(backup, read back, u undoes it)."]
-            if c.get("answer") == "accept":
-                return [f"{v.name}'s {d.what} stays {d.words(d.have)}. Only the desk's own record changes; "
-                        "no agent's settings file is touched."]
-            return []
+            return [f"{v.name}'s {d.what} stays {d.words(d.have)}. Only the desk's own record changes; "
+                    "no agent's settings file is touched."]
 
-        def jobs(c: dict) -> list:
-            if c.get("answer") == "put":
-                return [lambda: W.put_back(d, edit, loader=loader)]
-            if c.get("answer") == "accept":
-                return [lambda: W.accept(d, edit)]
-            return []
+        return Spec(f"{v.name}: {d.what} was changed behind the desk's back",
+                    [Opt("put", f"put it back: {d.words(d.want)} again (what the desk set)"),
+                     Opt("accept", f"accept it: keep {d.words(d.have)}, and the desk expects that from now on")],
+                    describe,
+                    lambda tok: [lambda: W.put_back(d, edit, loader=loader)] if tok == "put"
+                    else [lambda: W.accept(d, edit)], note=d.sentence)
 
-        return EditPopup(f"{v.name}: {d.what} was changed behind the desk's back", [group], describe,
-                         note=d.sentence, dry=dry), jobs
-
-    def place_popup(self, v, setting: str):
+    def spec_place(self, v, setting: str) -> Spec:
         """Spoken replies at one place: the old Voice Desk grid's own switch (its code does the change)."""
-        edit, dry = self.edit, not self.is_armed
+        edit = self.edit
         place = setting.split(":", 1)[1]
         key = getattr(v, "voice_key", "") or getattr(v, "key", "")
         name = D.place_words(place)
+        title = f"{v.name}: spoken replies, {name}"
         try:
-            title, options, why = E.voice_place_menu(key, place, edit)
+            _title, options, why = E.voice_place_menu(key, place, edit)
         except Exception as e:                           # noqa: BLE001
-            title, options, why = "", [], f"the switch could not be read ({type(e).__name__})"
+            options, why = [], f"the switch could not be read ({type(e).__name__})"
         if not options:
-            return (EditPopup(f"{v.name}: spoken replies, {name}", [], lambda c: [], dry=dry,
-                              locked=(why or "nothing to switch here")[:1].upper() + (why or "nothing to switch here")[1:]),
-                    lambda c: [])
+            why = why or "nothing to switch here"
+            return Spec(title, locked=why[:1].upper() + why[1:])
         labels = {tok: label for tok, label, _ in options}
-        group = Group("place", title or name, "radio", [Opt(tok, label, cur) for tok, label, cur in options])
+        return Spec(title, [Opt(tok, label, cur) for tok, label, cur in options],
+                    lambda tok: [f"{v.name}: spoken replies, {name}: {labels[tok]}.",
+                                 "The Voice Desk's own switch code makes the change: every file is backed up, "
+                                 "written, read back and put back at once if it does not read back."],
+                    lambda tok: [lambda: E.set_voice_place(key, place, tok, edit)],
+                    note="This is the same switch the Voice Desk dashboard had.", needs=E.NEEDS["voice_place"])
 
-        def describe(c: dict) -> list[str]:
-            if "place" not in c:
-                return []
-            return [f"{v.name}: spoken replies, {name}: {labels[c['place']]}.",
-                    "The Voice Desk's own switch code makes the change: every file is backed up, written, read back "
-                    "and put back at once if it does not read back."]
-
-        def jobs(c: dict) -> list:
-            return [lambda: E.set_voice_place(key, place, c["place"], edit)] if "place" in c else []
-
-        return EditPopup(f"{v.name}: spoken replies, {name}", [group], describe, dry=dry,
-                         note="This is the same switch the Voice Desk dashboard had."), jobs
-
-    def voice_popup(self, v, setting: str):
-        edit, dry = self.edit, not self.is_armed
+    def spec_voice(self, v, setting: str) -> Spec:
+        edit = self.edit
         agent, cfg = self.voice_agent(v)
+        title = f"{v.name}: " + {"voice": "English voice", "voice_zh": "Chinese voice", "speed": "speaking speed",
+                                 "effect": "voice effect"}[setting]
         if agent is None:
-            return (EditPopup(f"{v.name}: voice", [], lambda c: [], dry=dry,
-                              locked=f"{v.name} has no voice in the Voice Desk list, so there is nothing to change."),
-                    lambda c: [])
-        if setting == "effect":
-            opts = [Opt(tok, label, cur, disabled) for tok, label, cur, disabled in E.voice_options(agent, "effect", cfg)]
-            groups = [Group("effect", f"Voice effect on {D.voice_label(agent.voice)}", "radio", opts)]
-        elif setting == "speed":
-            now = E.speed_word(agent.speed)
-            opts = [Opt(word, f"{word} ({value:g})", word == now) for word, value in E.SPEEDS]
-            groups = [Group("speed", "Speaking speed" + ("" if any(o.now for o in opts) else f" (now: {now})"),
-                            "radio", opts)]
-        else:
-            lang = "English" if setting == "voice" else "Chinese"
-            opts = [Opt(tok, label, cur, disabled) for tok, label, cur, disabled in E.voice_options(agent, setting, cfg)]
-            groups = [Group(setting, f"{lang} voice (one voice, silent if it fails)", "radio", opts,
-                            testable="en" if setting == "voice" else "zh")]
+            return Spec(title, locked=f"{v.name} has no voice in the Voice Desk list, so there is nothing to change.")
         speeds = dict(E.SPEEDS)
-
-        def describe(c: dict) -> list[str]:
-            out = []
-            for key, tok in c.items():
-                if key == "speed":
-                    out.append(f"{v.name}'s speaking speed changes from {E.speed_word(agent.speed)} to {tok}.")
-                elif key == "effect":
-                    out.append(f"{v.name}'s voice effect changes from {agent.effect or 'none'} to {tok}.")
-                else:
-                    before = agent.voice if key == "voice" else agent.voice_zh
-                    lang = "English" if key == "voice" else "Chinese"
-                    out.append(f"{v.name}'s {lang} voice changes from {D.voice_label(before)} to "
-                               f"{D.voice_label(tok) if tok else 'silent'}.")
-            return out
-
-        def jobs(c: dict) -> list:
-            return [(lambda key=key, tok=tok: E.change_voice(
-                        agent.key, key, speeds[tok] if key == "speed" else (tok or None), edit))
-                    for key, tok in c.items()]
-
-        tester = (lambda lang, voice: self.tester(agent, lang, voice)) if self.tester else None
         note = "Only the voices this agent's own speaker can make are listed. One voice, silent if it fails."
         lands = getattr(v, "takes_effect", "")
         if lands:
             note += f" Where it lands: {lands}."
-        return EditPopup(f"{v.name}: voice", groups, describe, tester=tester, dry=dry, note=note), jobs
+        testable = ""
+        if setting == "effect":
+            options = [Opt(tok, label, cur, off) for tok, label, cur, off in E.voice_options(agent, "effect", cfg)]
+            note = f"The effect on {D.voice_label(agent.voice)}."
+        elif setting == "speed":
+            if agent.key not in self.speed_why:
+                self.speed_why[agent.key] = E.speed_fixed(agent.key, edit)
+            why = self.speed_why[agent.key]
+            if why:
+                return Spec(title, locked=why[0].upper() + why[1:] + ".")
+            now = E.speed_word(agent.speed)
+            options = [Opt(word, f"{word} ({value:g})", word == now) for word, value in E.SPEEDS]
+            note = "How fast it speaks." + ("" if any(o.now for o in options) else f" Now: {now}.")
+        else:
+            options = [Opt(tok, label, cur, off) for tok, label, cur, off in E.voice_options(agent, setting, cfg)]
+            testable = "en" if setting == "voice" else "zh"
 
-    def team_room_popup(self, v: D.AgentView, _setting: str):
+        def describe(tok: str) -> list[str]:
+            if setting == "speed":
+                return [f"{v.name}'s speaking speed changes from {E.speed_word(agent.speed)} to {tok}."]
+            if setting == "effect":
+                return [f"{v.name}'s voice effect changes from {agent.effect or 'none'} to {tok}."]
+            before = agent.voice if setting == "voice" else agent.voice_zh
+            lang = "English" if setting == "voice" else "Chinese"
+            return [f"{v.name}'s {lang} voice changes from {D.voice_label(before)} to "
+                    f"{D.voice_label(tok) if tok else 'silent'}."]
+
+        return Spec(title, options, describe,
+                    lambda tok: [lambda: E.change_voice(agent.key, setting,
+                                                        speeds[tok] if setting == "speed" else (tok or None), edit)],
+                    note=note, needs=E.NEEDS["voice"], testable=testable, agent=agent)
+
+    def spec_team_room(self, v: D.AgentView) -> Spec:
         """In or out of the Team Room: ONE switch for the terminal room and the Telegram group together."""
-        edit, loader, runner, dry = self.edit, self.loader, self.runner, not self.is_armed
+        edit, loader, runner = self.edit, self.loader, self.runner
         title = f"{v.name}: Team Room and Telegram team group"
         if v.room_lead or v.in_room is None:
-            why = (f"{v.name} leads the Team Room and cannot be taken out of it." if v.room_lead else
-                   "The Team Room members file could not be read, so the desk will not change it.")
-            return EditPopup(title, [], lambda c: [], locked=why, dry=dry), lambda c: []
+            return Spec(title, locked=(f"{v.name} leads the Team Room and cannot be taken out of it." if v.room_lead
+                                       else "The Team Room members file could not be read, so the desk will not change it."))
         has_bot = any(p.key == "tg_private" and p.state == D.ON for p in v.presence)
-        group = Group("room", "The Team Room (terminal) and the Telegram team group: one switch for both", "radio",
-                      [Opt("in", "in the room", bool(v.in_room)), Opt("out", "out of the room", not v.in_room)])
 
-        def describe(c: dict) -> list[str]:
-            if "room" not in c:
-                return []
-            joining = c["room"] == "in"
+        def describe(tok: str) -> list[str]:
+            joining = tok == "in"
             out = [f"{v.name} {'joins' if joining else 'leaves'} the Team Room: the terminal room and the Telegram "
                    "group change together, or not at all.",
                    "The room is rebuilt, so the chat on screen starts fresh. The old lines stay in the saved history."]
@@ -1621,86 +1847,73 @@ class Desk(App):
                            "Its bot is taken out of the Telegram group. Putting it back later is Peter's own tap in Telegram.")
             return out
 
-        def jobs(c: dict) -> list:
-            if "room" not in c:
-                return []
-            return [lambda: E.set_team_room(v.profile, c["room"] == "in", edit, loader=loader, runner=runner)]
+        return Spec(title, [Opt("in", "in the room", bool(v.in_room)), Opt("out", "out of the room", not v.in_room)],
+                    describe,
+                    lambda tok: [lambda: E.set_team_room(v.profile, tok == "in", edit, loader=loader, runner=runner)],
+                    note="One switch moves both places: the Team Room in the terminal and the Telegram team group.",
+                    needs=E.NEEDS["team_room"])
 
-        note = ("One switch moves both places. The desk runs the Team Room's own add or kick, checks both doors, and "
-                "runs it backwards if they do not agree.")
-        return EditPopup(title, [group], describe, note=note, dry=dry), jobs
-
-    def talk_popup(self, v: D.AgentView, _setting: str):
+    def spec_talk(self, v: D.AgentView, rule: str) -> Spec:
         """Who it may talk to: a few plain choices, kept in the one rules file the Team Room can read."""
-        edit, dry = self.edit, not self.is_armed
+        edit = self.edit
         rules = {r.key: r for r in v.talk_rules}
-        if not rules:
-            return (EditPopup(f"{v.name}: who it may talk to", [], lambda c: [], dry=dry,
-                              locked="The rules file could not be read, so there is nothing to change."), lambda c: [])
+        title = f"{v.name}: " + dict(TALK_ROW).get(rule, rule).lower()
+        if rule not in rules:
+            return Spec(title, locked="The rules file could not be read, so there is nothing to change.")
         lead = next((a for a in (self.snapshot.agents if self.snapshot else ()) if a.room_lead), None)
         lead_name, lead_profile = (lead.name, lead.profile) if lead else ("the lead", "orchestrator")
-        sp, ho, tk, an = rules["speaks"], rules["hands_out"], rules["takes_from"], rules["answers"]
-        groups = [
-            Group("speaks", "May speak in the Team Room", "radio",
-                  [Opt("yes", "yes", sp.token == "yes"),
-                   Opt("no", "no", sp.token == "no", disabled=bool(sp.locked), note=sp.locked)]),
-            Group("hands_out", f"Hands out work (only {lead_name} by default)", "radio",
-                  [Opt("yes", "yes", ho.token == "yes"), Opt("no", "no", ho.token == "no")]),
-            Group("takes_from", "Takes work from", "radio",
-                  [Opt("lead", lead_name, tk.token == "lead", disabled=v.room_lead,
-                       note="this is the lead" if v.room_lead else ""),
-                   Opt("cards", "job cards only", tk.token == "cards"),
-                   Opt("nobody", "nobody (Peter only)", tk.token == "nobody")]),
-            Group("answers", "Answers", "radio",
-                  [Opt("always", "always", an.token == "always", disabled=bool(an.locked), note=an.locked),
-                   Opt("when_named", "when named in the line", an.token == "when_named", disabled=bool(an.locked),
-                       note=an.locked)])]
+        r = rules[rule]
+        if rule == "speaks":
+            options = [Opt("yes", "yes", r.token == "yes"),
+                       Opt("no", "no", r.token == "no", disabled=bool(r.locked), note=r.locked)]
+        elif rule == "hands_out":
+            options = [Opt("yes", "yes", r.token == "yes"), Opt("no", "no", r.token == "no")]
+        elif rule == "takes_from":
+            options = [Opt("lead", lead_name, r.token == "lead", disabled=v.room_lead,
+                           note="this is the lead" if v.room_lead else ""),
+                       Opt("cards", "job cards only", r.token == "cards"),
+                       Opt("nobody", "nobody (Peter only)", r.token == "nobody")]
+        else:
+            options = [Opt("always", "always", r.token == "always", disabled=bool(r.locked), note=r.locked),
+                       Opt("when_named", "when named in the line", r.token == "when_named", disabled=bool(r.locked),
+                           note=r.locked)]
         takes_words = {"lead": f"takes work from {lead_name}", "cards": "takes work only as job cards",
                        "nobody": "takes work from nobody (Peter only)"}
+        follows = bool(self.snapshot and self.snapshot.room_follows_rules)
 
-        def describe(c: dict) -> list[str]:
-            out = []
-            if "speaks" in c:
-                out.append(f"{v.name} {'may' if c['speaks'] == 'yes' else 'may not'} speak in the Team Room.")
-            if "hands_out" in c:
-                out.append(f"{v.name} {'hands' if c['hands_out'] == 'yes' else 'does not hand'} out work.")
-            if "takes_from" in c:
-                out.append(f"{v.name} {takes_words[c['takes_from']]}.")
-            if "answers" in c:
-                out.append(f"{v.name} answers {'every line' if c['answers'] == 'always' else 'when named in the line'}.")
-            if out:
-                out.append("The rule is written into the desk's rules file. " + (
-                    "The Team Room reads that file." if self.snapshot and self.snapshot.room_follows_rules else
-                    "The Team Room does not read that file yet: recorded, not yet enforced."))
-            return out
+        def describe(tok: str) -> list[str]:
+            if rule == "speaks":
+                first = f"{v.name} {'may' if tok == 'yes' else 'may not'} speak in the Team Room."
+            elif rule == "hands_out":
+                first = f"{v.name} {'hands' if tok == 'yes' else 'does not hand'} out work."
+            elif rule == "takes_from":
+                first = f"{v.name} {takes_words[tok]}."
+            else:
+                first = f"{v.name} answers {'every line' if tok == 'always' else 'when named in the line'}."
+            return [first, "The rule is written into the desk's rules file. " + (
+                "The Team Room reads that file." if follows else
+                "The Team Room does not read that file yet: recorded, not yet enforced.")]
 
-        def changes_for(c: dict) -> dict:
-            out: dict = {}
-            if "speaks" in c:
-                out["speaks_in_team_room"] = c["speaks"] == "yes"
-            if "hands_out" in c:
-                out["hands_out_work"] = c["hands_out"] == "yes"
-            if "takes_from" in c:
-                out["only_job_cards"] = c["takes_from"] == "cards"
-                out["takes_work_from"] = "" if c["takes_from"] == "nobody" else lead_profile
-            if "answers" in c:
-                out["answers"] = c["answers"]
-            return out
+        def changes_for(tok: str) -> dict:
+            if rule == "speaks":
+                return {"speaks_in_team_room": tok == "yes"}
+            if rule == "hands_out":
+                return {"hands_out_work": tok == "yes"}
+            if rule == "takes_from":
+                return {"only_job_cards": tok == "cards", "takes_work_from": "" if tok == "nobody" else lead_profile}
+            return {"answers": tok}
 
-        def jobs(c: dict) -> list:
-            todo = changes_for(c)
-            return [lambda: E.change_rules(v.profile, todo, edit)] if todo else []
-
-        note = ("Each line of the tree says where a rule stands: how the room works today, enforced, or recorded and "
-                "not yet enforced.")
-        return EditPopup(f"{v.name}: who it may talk to", groups, describe, note=note, dry=dry), jobs
+        return Spec(title, options, describe,
+                    lambda tok: [lambda: E.change_rules(v.profile, changes_for(tok), edit)],
+                    note="Where the rule stands today: " + r.standing + ".", needs=E.NEEDS["rule"])
 
     @work(thread=True, group="acd-change")
     def run_jobs(self, jobs: list) -> None:
         results = []
         for job in jobs:
             try:
-                results.append(job())
+                got = job()
+                results += got if isinstance(got, list) else [got]
             except Exception as e:                       # noqa: BLE001  a failed change must never take the desk down
                 results.append(E.Result(False, f"Not changed. {type(e).__name__}: {e}"))
         self.call_from_thread(self.show_results, results)
@@ -1712,47 +1925,55 @@ class Desk(App):
             self.push_screen(NoticePopup(title, body))
         self.action_reread()
 
-    def action_assistants(self) -> None:
-        """Claude, Gemini and Codex: pick one of their voice settings, then the usual pop-up opens."""
-        snap = self.snapshot
-        if snap is None or not snap.others:
-            self.push_screen(NoticePopup("Assistants' voices", Text("No assistant is in the Voice Desk list.")))
+    # -- the standard ladder, for every agent at once ------------------------------------------------------------
+    def action_standard_ladder(self) -> None:
+        """s: show what putting every agent on the standard ladder would change (read-only), then ask."""
+        self.plan_ladder_in_background()
+
+    @work(thread=True, exclusive=True, group="acd-ladder-plan")
+    def plan_ladder_in_background(self) -> None:
+        try:
+            plans = E.plan_standard_ladder(self.edit, loader=self.loader)
+        except Exception as e:                           # noqa: BLE001
+            self.call_from_thread(self.push_screen, NoticePopup(
+                "The standard ladder", Text(f"The plan could not be made ({type(e).__name__}: {e}).")))
             return
-        rows: list[tuple[str, str]] = []
-        for o in snap.others:
-            rows.append(("", f"{o.name}   ({o.takes_effect})"))
-            rows.append((f"{o.key}|voice", f"    English voice: {D.voice_label(o.english)}"))
-            rows.append((f"{o.key}|voice_zh", f"    Chinese voice: {D.voice_label(o.chinese)}"))
-            for p in o.voice_places:
-                if p.can_switch:
-                    rows.append((f"{o.key}|vplace:{p.key}",
-                                 f"    Spoken replies, {D.place_words(p.key)}: {p.value}"))
-        by_key = {o.key: o for o in snap.others}
+        self.call_from_thread(self.ask_standard_ladder, plans)
 
-        def picked(token: Optional[str]) -> None:
-            if not token:
-                return
-            key, setting = token.split("|", 1)
-            build = self.place_popup if setting.startswith("vplace:") else self.voice_popup
-            popup, jobs_for = build(by_key[key], setting)
-            self.push_screen(popup, lambda changes: self.run_jobs(jobs_for(changes)) if changes else None)
-
-        self.push_screen(PickPopup("Claude, Gemini and Codex: voices", rows,
-                                   note="Called by name through the Voice Desk. Pick a setting to change."), picked)
+    def ask_standard_ladder(self, plans: list) -> None:
+        edit, loader = self.edit, self.loader
+        body = [Text("The standard ladder, the same order for every agent:", style="bold"),
+                Text("  1 the main model   2 Antigravity (Claude, then Gemini)   3 ChatGPT   4 NVIDIA Nemotron"),
+                Text("")]
+        for plan in plans:
+            body.append(Text(plan.name, style="bold"))
+            for ln in E.plan_lines(plan):
+                for i, part in enumerate(textwrap.wrap(ln, 86) or [""]):
+                    body.append(Text(("  " if i == 0 else "            ") + part,
+                                     style=COLOUR[D.RED] if ln.startswith("- ") else
+                                     COLOUR[D.GREEN] if ln.startswith("+ ") else DIM))
+        todo = [p for p in plans if p.changes]
+        body.append(Text(""))
+        if not todo:
+            body.append(Text("Every agent is already on the standard ladder: nothing to change."))
+            self.push_screen(NoticePopup("The standard ladder", join(body)))
+            return
+        body += [Text("u undoes the newest of these changes, one agent at a time.", style=DIM), self.dry_line()]
+        self.push_screen(
+            NoticePopup("Put every agent on the standard ladder?", join(body),
+                        ask=f"yes, set the standard ladder for {len(todo)} agent{'s' if len(todo) != 1 else ''}"),
+            lambda yes: self.run_jobs([lambda: E.apply_standard_ladder(edit, loader=loader)]) if yes else None)
 
     # -- what only the old dashboard could do: the voice test, add / remove an agent, the listener ------------------
-    def chosen(self) -> Optional[D.AgentView]:
-        """The agent under the cursor: the grid's row, or the tree's agent."""
-        snap = self.snapshot
-        if snap is None or not snap.agents:
+    def table_screen(self) -> Optional["TableScreen"]:
+        return next((s for s in reversed(self.screen_stack) if isinstance(s, TableScreen)), None)
+
+    def chosen(self) -> Any:
+        """The agent (or assistant) whose column the cursor is in; None on the row names."""
+        screen = self.table_screen()
+        if screen is None or self.snapshot is None:
             return None
-        for screen in reversed(self.screen_stack):
-            if isinstance(screen, TreeScreen):
-                return screen.view()
-            if isinstance(screen, GridScreen):
-                row = screen.query_one("#grid", DataTable).cursor_row
-                return snap.agents[row] if 0 <= row < len(snap.agents) else None
-        return None
+        return screen.at()[1]
 
     def dry_line(self) -> Text:
         if self.is_armed:
@@ -1823,7 +2044,7 @@ class Desk(App):
             if not any(tok == SILENT for tok, _ in voices):
                 voices.append((SILENT, "silent: no voice"))
             self.push_screen(PickPopup(f"{display}: its English voice", voices,
-                                       note="One voice, silent if it fails. A Chinese voice can be added later in its tree."),
+                                       note="One voice, silent if it fails. A Chinese voice can be added later in its column."),
                              lambda tok: confirm(profile, display, names, "" if tok == SILENT else tok) if tok else None)
 
         def ask_names(profile: Optional[str], display: str) -> None:

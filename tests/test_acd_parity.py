@@ -115,92 +115,6 @@ async def settle(app, pilot) -> None:
     await pilot.pause()
 
 
-# ================================== Job A ======================================================================
-class TheTreeStopsAtItsEnds(unittest.IsolatedAsyncioTestCase):
-    async def test_down_on_the_last_setting_stays_there_and_says_so_and_up_on_the_first_too(self):
-        w = F.with_grid(F.edit_world())
-        app = make_app(w)
-        async with app.run_test(size=(200, 40)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            app.open_tree(1)                                          # Kylie
-            await pilot.pause()
-            tree = app.screen.query_one("#tree", OptionList)
-            self.assertIsInstance(tree, acd.TreeList)
-            settings = [i for i, s in enumerate(app.screen.settings) if s]
-            self.assertEqual(tree.highlighted, settings[0])
-            await pilot.press("up")                                   # already on the first: no jump to the end
-            await pilot.pause()
-            self.assertEqual(tree.highlighted, settings[0])
-            self.assertIn("first setting", str(app.screen.query_one("#keys", Static).render()))
-            for _ in range(len(settings) - 1):
-                await pilot.press("down")
-                await pilot.pause()
-            self.assertEqual(tree.highlighted, settings[-1])
-            self.assertEqual(str(app.screen.query_one("#keys", Static).render()), acd.TREE_KEYS)
-            for _ in range(3):                                        # three more presses: it never wraps round
-                await pilot.press("down")
-                await pilot.pause()
-                self.assertEqual(tree.highlighted, settings[-1])
-            keys = str(app.screen.query_one("#keys", Static).render())
-            self.assertIn("last setting: nothing is below it", keys)
-            self.assertEqual(tree.scroll_y, tree.max_scroll_y)
-            self.assertEqual(tree._lines[-1][0], len(app.screen.settings) - 1)
-            last_block = str(tree.get_option_at_index(len(app.screen.settings) - 1).prompt).split("\n")
-            self.assertEqual(last_block[-1].strip(), "")              # the blank line under the end marker is drawn
-            self.assertIn("nothing below this line", last_block[-2])
-            self.assertEqual(tree._heights[len(app.screen.settings) - 1], len(last_block))
-            await pilot.press("up")                                   # moving again brings the usual hints back
-            await pilot.pause()
-            self.assertEqual(tree.highlighted, settings[-2])
-            self.assertEqual(str(app.screen.query_one("#keys", Static).render()), acd.TREE_KEYS)
-
-    async def test_every_plain_line_is_on_screen_at_some_step_on_the_way_down_and_on_the_way_up(self):
-        w = F.with_grid(F.edit_world())
-        app = make_app(w)
-        async with app.run_test(size=(200, 34)) as pilot:             # short: the tree is much taller than this
-            await pilot.pause()
-            await show(app, pilot)
-            app.open_tree(1)
-            await pilot.pause()
-            tree = app.screen.query_one("#tree", OptionList)
-            total = len(tree._lines)
-            room = tree.scrollable_content_region.height
-            self.assertGreater(total, room)
-            settings = [i for i, s in enumerate(app.screen.settings) if s]
-
-            def on_screen() -> set:
-                top = int(tree.scroll_y)
-                return set(range(top, min(total, top + room)))
-
-            seen = on_screen()
-            for _ in range(len(settings)):
-                await pilot.press("down")
-                await pilot.pause()
-                await pilot.pause()
-                seen |= on_screen()
-                at = tree.highlighted
-                first = tree._index_to_line[at]
-                self.assertTrue(set(range(first, first + tree._heights[at])) <= on_screen(), "the chosen setting is visible")
-            self.assertEqual(seen, set(range(total)), "no line of the tree was skipped on the way down")
-            seen = on_screen()
-            for _ in range(len(settings)):
-                await pilot.press("up")
-                await pilot.pause()
-                await pilot.pause()
-                seen |= on_screen()
-            self.assertEqual(seen, set(range(total)), "nor on the way up")
-
-    def test_the_end_of_the_tree_is_marked_and_a_blank_line_follows_it(self):
-        w = F.with_grid(F.edit_world())
-        v = F.agent(F.edit_collect(w), "assistant")
-        lines = acd.tree_text(v).plain.split("\n")
-        self.assertEqual(lines[-1].strip(), "")                       # a blank line: the marker is not flush with the hints
-        self.assertEqual(lines[-2], acd.END_OF_TREE.format(name="Kylie"))
-        self.assertIn("nothing below this line", lines[-2])
-        self.assertEqual(acd.tree_rows(v)[-1][1], None)               # the marker is not a setting
-
-
 class SaidOnce(unittest.TestCase):
     def snap(self):
         w = F.make_world()
@@ -224,41 +138,11 @@ class SaidOnce(unittest.TestCase):
         F.add_agent(w, "orchestrator")
         F.add_agent(w, "assistant")
         snap = F.collect(w)
-        for index in (0, 1):
-            lines = acd.agent_list_text(snap, index).plain.split("\n")
-            at = lines.index(acd.ROOM_HEADING)
-            self.assertIn("leads the Team Room", lines[at + 1])
-            self.assertEqual(lines[at - 1], "")                       # set apart from the list of agents
-        self.assertIn("TEAM ROOM", acd.ROOM_HEADING)
+        for v in snap.agents:                                         # the same words under every agent's column
+            cell = acd.cell_of(acd.Row("presence:team_room", "Team Room"), v, None, snap.room_note)
+            self.assertIn(f"{acd.ROOM_HEADING}: Jarvis leads the Team Room.", cell.detail[-1])
+        self.assertIn("Team Room", acd.ROOM_HEADING)
         self.assertIn("all agents", acd.ROOM_HEADING)
-
-
-class TheMousePointer(unittest.IsolatedAsyncioTestCase):
-    async def test_the_pointer_over_another_row_never_looks_like_a_second_chosen_agent(self):
-        w = F.with_grid(F.edit_world())
-        app = make_app(w)
-        async with app.run_test(size=(200, 56)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            table = app.screen.query_one("#grid", DataTable)
-            self.assertIsInstance(table, acd.QuietTable)
-            await pilot.press("down")
-            await pilot.pause()
-
-            def background(y: int) -> set:
-                return {seg.style.bgcolor.name for seg in table.render_line(y) if seg.style and seg.style.bgcolor}
-
-            second = 1 + table.ordered_rows[0].height
-            plain = background(1)
-            self.assertNotEqual(plain, background(second), "the chosen row does stand out")
-            await pilot.hover(table, offset=(5, 2))                   # the pointer rests on the first row
-            await pilot.pause()
-            self.assertEqual(table.cursor_row, 1)
-            self.assertEqual(background(1), plain, "the row under the pointer looks like any other row")
-            self.assertFalse(table._show_hover_cursor)
-            await pilot.click(table, offset=(5, 2))                   # a click still chooses a row
-            await pilot.pause()
-            self.assertEqual(table.cursor_row, 0)
 
 
 class TheAllowanceKeepsItsLastKnownNumbers(unittest.TestCase):
@@ -300,7 +184,7 @@ class TheAllowanceKeepsItsLastKnownNumbers(unittest.TestCase):
         clock[0] = w.now
         r.refresh({AGY: "assistant"})
         snap = D.collect(w.paths, yaml_loader=F.loader, now=w.now, usage=r.cached())
-        tree = " ".join(acd.tree_text(F.agent(snap, "assistant")).plain.replace("│", " ").split())
+        tree = acd.column_story(snap, F.agent(snap, "assistant"))
         self.assertIn("allowance: last known, read 20 minutes ago", tree)
         self.assertIn("allowance: Gemini (Weekly): 62% left", tree)
         self.assertNotIn("Hermes has no sign-in for it", tree)
@@ -608,7 +492,7 @@ class OnTheScreen(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(200, 56)) as pilot:
             await pilot.pause()
             await show(app, pilot)
-            await pilot.press("down")                                 # Kylie
+            await pilot.press("right")                                # Kylie's column
             await pilot.press("t")
             await pilot.pause()
             self.assertIsInstance(app.screen, acd.PickPopup)
@@ -652,7 +536,7 @@ class OnTheScreen(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(200, 56)) as pilot:
             await pilot.pause()
             await show(app, pilot)
-            await pilot.press("down")                                 # Kylie
+            await pilot.press("right")                                # Kylie's column
             await pilot.press("d")
             await pilot.pause()
             self.assertEqual(app.screen.rows[0], ("kylie", "Kylie"))   # the chosen agent is offered first

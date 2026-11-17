@@ -596,6 +596,128 @@ class AgentView:
         return GREY
 
 
+# ---- the fallback ladder: one order for every agent (Peter, 2026-11-17) ---------------------------------------
+AGY = "antigravity-subscription-directsdk"
+MAIN_RUNG = "main"
+EXTRA_RUNG = "extra"
+# (key, the row's name, the service). Rung 2 has two lines: Claude on Antigravity first, Gemini there second.
+LADDER = (
+    ("ag_claude", "2  Antigravity: Claude first", AGY),
+    ("ag_gemini", "2  Antigravity: then Gemini", AGY),
+    ("codex", "3  ChatGPT (Codex)", "openai-codex"),
+    ("nvidia", "4  NVIDIA Nemotron", "nvidia"),
+)
+LADDER_KEYS = tuple(k for k, _, _ in LADDER)
+RUNG_LABEL = {MAIN_RUNG: "1  Main model", EXTRA_RUNG: "Extra, not on the ladder", **{k: label for k, label, _ in LADDER}}
+RUNG_WORDS = {MAIN_RUNG: "rung 1", "ag_claude": "rung 2", "ag_gemini": "rung 2", "codex": "rung 3", "nvidia": "rung 4",
+              EXTRA_RUNG: "an extra backup that is not on the ladder"}
+NOT_STANDARD = "not in the standard order"
+
+
+def rung_of(service: str, model: str) -> str:
+    """Which rung of the ladder a backup sits on; "" when it is not on the ladder at all."""
+    if service == AGY:
+        low = (model or "").lower()
+        return "ag_claude" if low.startswith("claude") else "ag_gemini" if low.startswith("gemini") else ""
+    return {"openai-codex": "codex", "nvidia": "nvidia"}.get(service, "")
+
+
+@dataclass(frozen=True)
+class Rung:
+    """One rung of one agent's ladder."""
+    key: str                        # main / ag_claude / ag_gemini / codex / nvidia
+    backup: Optional[Backup] = None  # the entry on this rung: listed (on) or remembered (off); None = nothing
+    status: str = GREY
+    trouble: str = ""               # "allowance used up until Fri 20 Nov": it is on, but cannot answer
+    answered: bool = False          # the last reply came from this rung
+    out_of_order: bool = False      # it is on the list, but not where the standard order puts it
+
+    @property
+    def on(self) -> bool:
+        return self.backup is not None and self.backup.on
+
+
+@dataclass(frozen=True)
+class Ladder:
+    rungs: tuple = ()               # the four backup rungs, in ladder order (rung 1 is the main model)
+    extras: tuple = ()              # listed backups that are not on the ladder (or a second one on a rung)
+    extras_off: tuple = ()          # remembered-off backups that are not on the ladder
+    in_order: bool = True
+    order_note: str = ""            # why it is not in the standard order, in plain words
+    answered: str = ""              # the rung key that answered the last reply ("" = unknown)
+    below: str = ""                 # when the last reply came from below rung 1: "rung 2 (Gemini 3.8 Flash on Antigravity)"
+
+    def rung(self, key: str) -> Optional[Rung]:
+        return next((r for r in self.rungs if r.key == key), None)
+
+
+def ladder(v: "AgentView") -> Ladder:
+    """One agent's backups laid on the standard ladder. Read-only and truthful: a list that is not in ladder
+    order is shown as it is and flagged, never silently reordered."""
+    listed = [b for b in v.backups if b.on]
+    off = [b for b in v.backups if not b.on]
+    on_rung: dict = {}
+    extras: list = []
+    for b in listed:
+        key = rung_of(b.service, b.model)
+        if key and key not in on_rung:
+            on_rung[key] = b
+        else:
+            extras.append(b)
+    off_rung: dict = {}
+    extras_off: list = []
+    for b in off:
+        key = rung_of(b.service, b.model)
+        if key:
+            off_rung.setdefault(key, b)
+        else:
+            extras_off.append(b)
+    # the order the settings file really has, against the standard one
+    seen = [rung_of(b.service, b.model) for b in listed if on_rung.get(rung_of(b.service, b.model)) is b]
+    want = [k for k in LADDER_KEYS if k in on_rung]
+    misplaced = {k for i, k in enumerate(seen) if i >= len(want) or want[i] != k}
+    first_extra = next((i for i, b in enumerate(listed) if b in extras), None)
+    last_rung = max((i for i, b in enumerate(listed) if b not in extras), default=-1)
+    extra_inside = first_extra is not None and first_extra < last_rung
+    notes = []
+    if misplaced:
+        notes.append("the file tries " + ", then ".join(_rung_short(on_rung[k]) for k in seen)
+                     + "; the standard order is " + ", then ".join(_rung_short(on_rung[k]) for k in want))
+    if extra_inside:
+        notes.append("an extra backup sits between the rungs")
+    answered = ""
+    below = ""
+    if v.last and v.model:
+        r = v.last
+        got = (r.answered_service, r.answered_model)
+        if got == (v.model.service, v.model.model):
+            answered = MAIN_RUNG
+        elif any((b.service, b.model) == got for b in extras):
+            answered = EXTRA_RUNG
+        elif r.answered_service == v.model.service:
+            answered = MAIN_RUNG
+        else:
+            answered = rung_of(r.answered_service, r.answered_model) or EXTRA_RUNG
+        if answered != MAIN_RUNG and r.status != BLUE:
+            below = (f"{RUNG_WORDS[answered]} ({model_name(r.answered_model)} on "
+                     f"{service_name(r.answered_service)})")
+    rungs = []
+    for key in LADDER_KEYS:
+        b = on_rung.get(key) or off_rung.get(key)
+        if b is None:
+            rungs.append(Rung(key, answered=answered == key))
+            continue
+        trouble = backup_trouble(v.health, b) if b.on else ""
+        status = GREY if not b.on else RED if trouble else YELLOW if key in misplaced else GREEN
+        rungs.append(Rung(key, b, status, trouble, answered == key, b.on and key in misplaced))
+    return Ladder(tuple(rungs), tuple(extras), tuple(extras_off), not misplaced and not extra_inside,
+                  NOT_STANDARD + ": " + "; ".join(notes) if notes else "", answered, below)
+
+
+def _rung_short(b: Backup) -> str:
+    return f"{model_name(b.model)} on {service_name(b.service, short=True)}"
+
+
 @dataclass(frozen=True)
 class OtherAssistant:
     """Claude, Gemini, Codex: called by name through the Voice Desk. Voice and call names only."""
@@ -1170,7 +1292,7 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
         who = sorted({d.name for d in drifted})
         out.append(Warning(RED, _count(len(drifted), "setting was", "settings were")
                            + " changed behind the desk's back (" + ", ".join(who)
-                           + "): open the agent's tree to put it back or accept it"))
+                           + "): press Enter on the red cell to put it back or accept it"))
     if watch is not None and watch.paused:
         out.append(Warning(YELLOW, "the watcher is paused (p resumes): the desk is not checking for changes "
                                    "made behind its back"))
@@ -1186,10 +1308,14 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
     broken = [v.name for v in views if v.error]
     if broken:
         out.append(Warning(RED, "settings file could not be read for: " + ", ".join(broken)))
-    dropped = [v for v in views if v.last and v.last.dropped]
-    if dropped:
-        out.append(Warning(RED, _count(len(dropped), "agent", "agents")
-                           + " had the main model fail on the last reply and a backup answered"))
+    slipped = [(v, ladder(v).below) for v in views if not v.error]
+    slipped = [(v, where) for v, where in slipped if where]
+    if slipped:
+        dropped = [v for v, _ in slipped if v.last and v.last.dropped]
+        head = (_count(len(slipped), "agent", "agents") + " had the main model fail on the last reply and a backup "
+                "answered" if len(dropped) == len(slipped) else
+                _count(len(slipped), "agent", "agents") + " answered the last reply from below rung 1 of the ladder")
+        out.append(Warning(RED, head + ": " + ", ".join(f"{v.name} on {where}" for v, where in slipped)))
     dead_main = {v.profile for v in views for h in v.health if h.main and h.kind == H.SIGNIN_DEAD}
     good_main = {v.profile for v in views for h in v.health if h.main and h.state == H.GOOD}
     # the same evidence as the row: a main service that is working now is not "could not sign in", whatever
@@ -1211,7 +1337,7 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
     for service, who in used_up.items():
         name = service_name(service)
         out.append(Warning(RED, f"{name[0].upper() + name[1:]}: an allowance is used up for "
-                           + _count(len(who), "agent", "agents") + " (the tree says which model and when it resets)"))
+                           + _count(len(who), "agent", "agents") + " (the strip under the table says which model and when it resets)"))
     stale = sum(v.old_chats for v in views)
     if stale:
         out.append(Warning(YELLOW, _count(stale, "open chat is", "open chats are")

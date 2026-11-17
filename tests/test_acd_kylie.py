@@ -42,7 +42,7 @@ class BannerFollowsTheRows(unittest.TestCase):
         dead_then(w, "assistant", F.turn(w.now - 60, "new", "claude-opus-5-5", "anthropic"))
         snap = F.collect(w)
         v = F.agent(snap, "assistant")
-        self.assertIn("signed in, working", acd.cell_model_set(v).plain)
+        self.assertEqual(acd.cell_at("signin", v).words, "Claude sub., signed in")
         self.assertEqual(v.signin_failed, "")
         texts = [x.text for x in snap.warnings]
         self.assertFalse(any("could not sign in" in x for x in texts), texts)
@@ -54,7 +54,7 @@ class BannerFollowsTheRows(unittest.TestCase):
         dead_then(w, "assistant", F.turn(w.now - 60, "new", "claude-opus-5-5", "anthropic"))    # fixed
         dead_then(w, "builder")                                                                 # still dead
         snap = F.collect(w)
-        rows_dead = [v.name for v in snap.agents if "sign-in dead" in acd.cell_model_set(v).plain]
+        rows_dead = [v.name for v in snap.agents if "sign-in dead" in acd.cell_at("signin", v).words]
         self.assertEqual(rows_dead, ["Builder"])
         texts = [x.text for x in snap.warnings]
         self.assertTrue(any("could not sign in for 1 agent" in x for x in texts), texts)
@@ -96,13 +96,13 @@ class BackupsSayWhenTheyCannotAnswer(unittest.TestCase):
         self.assertEqual(D.backup_trouble(v.health, first, w.now), f"allowance used up until {day}")
         self.assertEqual(D.backup_trouble(v.health, second, w.now), "")      # same service, another model: fine
         self.assertEqual(D.backup_trouble(v.health, third, w.now), "")
-        grid = acd.cell_backups(v).plain.split("\n")
-        self.assertEqual(grid[0], "on  Claude Opus 5.5 via Antigravity")     # "on" stays: it is the setting
-        self.assertEqual(grid[1].strip(), f"used up until {day}")
-        self.assertEqual(len(grid), 4)                                       # one extra line, for that backup only
-        tree = acd.tree_text(v).plain
-        self.assertIn(f"(on, but allowance used up until {day}: it cannot answer until then)", tree)
-        self.assertEqual(tree.count("on, but"), 1)
+        cell = acd.cell_at("rung:ag_claude", v)                             # the model stays shown: it is the setting
+        self.assertEqual((cell.words, cell.status), (f"Claude Opus 5.5, used up until {day}", D.RED))
+        self.assertEqual(acd.cell_at("rung:ag_gemini", v).status, D.GREEN)   # the same service, another model: fine
+        self.assertEqual(acd.cell_at("rung:nvidia", v).status, D.GREEN)
+        story = acd.column_story(F.collect(w), v)
+        self.assertIn(f"It is on, but allowance used up until {day}: it cannot answer until then.", story)
+        self.assertEqual(story.count("It is on, but"), 1)
 
     def test_a_backup_on_a_service_with_a_dead_sign_in_is_marked_and_an_off_backup_never_is(self):
         dead = D.ServiceView("anthropic", H.FAILING, D.RED, "x", H.SIGNIN_DEAD, True)
@@ -151,19 +151,21 @@ class PlainWords(unittest.TestCase):
         F.add_agent(w, "simba", model="x-ai/grok-4.20", service="openrouter", effort="none")
         v = F.agent(F.collect(w), "simba")
         self.assertEqual(next(p for p in v.presence if p.key == "iphone_voice").state, D.UNKNOWN)
-        cell = acd.cell_presence(v)
-        lines = cell.plain.split("\n")
-        self.assertIn(acd.MARK + " iPhone: no shortcut", lines)
-        self.assertFalse(any(ln.startswith("?") for ln in lines), lines)
-        self.assertIn("no Siri shortcut for this agent was found", acd.tree_text(v).plain)   # the tree has the long reason
+        cell = acd.cell_at("presence:iphone_voice", v)
+        self.assertEqual(acd.cell_text(cell).plain, acd.MARK + " no shortcut")
+        self.assertEqual(cell.status, D.GREY)
+        self.assertNotIn("?", cell.words)
+        self.assertIn("no Siri shortcut for this agent was found", " ".join(cell.detail))   # the strip has the long reason
 
     def test_the_key_hints_show_the_letters_the_way_they_are_typed(self):
-        for hint in (acd.GRID_KEYS, acd.TREE_KEYS):
-            for word in ("u undo", "r restart review", "p pause watcher", "c read again", "q close"):
-                self.assertIn(word, hint)
-            for word in ("U undo", "R restart", "P pause", "C read", "Q close", "A assistants"):
-                self.assertNotIn(word, hint)
-        self.assertIn("a assistants' voices", acd.GRID_KEYS)
+        for word in ("u undo", "r restart review", "p pause watcher", "c read again", "q close", "s standard ladder"):
+            self.assertIn(word, acd.TABLE_KEYS)
+        hint = "   ".join(acd.TABLE_KEYS)
+        for word in ("U undo", "R restart", "P pause", "C read", "Q close", "S standard"):
+            self.assertNotIn(word, hint)
+        for width in (200, 120, 70):                        # a narrow window breaks between two keys, never inside one
+            rows = acd.keys_text(width).plain.split("\n")
+            self.assertEqual([part for r in rows for part in r.split("   ")], list(acd.TABLE_KEYS), width)
 
     def test_the_two_hard_sentences_are_ordinary_english_with_no_setting_names(self):
         self.assertNotIn("shown apart", H.TWIN_NOTE)
@@ -179,83 +181,9 @@ class PlainWords(unittest.TestCase):
     def test_the_real_tree_of_a_voice_agent_no_longer_names_the_setting(self):
         w = F.with_grid(F.edit_world())
         v = F.agent(F.edit_collect(w), "assistant")
-        tree = acd.tree_text(v).plain
-        self.assertNotIn("auto_enable", tree)
-        self.assertIn("keeps its own choice until it is closed", " ".join(tree.split()).replace("│ ", ""))
-
-
-# ---- 3, 5 and 8: the screen ------------------------------------------------------------------------------------
-class TheScreen(unittest.IsolatedAsyncioTestCase):
-    async def test_the_highlighted_row_keeps_its_own_colours(self):
-        w = F.with_grid(F.edit_world())
-        app = make_app(w)
-        async with app.run_test(size=(200, 56)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            table = app.screen.query_one("#grid", DataTable)
-            self.assertEqual(table.cursor_foreground_priority, "renderable")
-            self.assertEqual(table.cursor_row, 0)
-            strip = table.render_line(1)                      # the first line of the highlighted row
-            colours = {seg.style.color.name for seg in strip if seg.style and seg.style.color and seg.text.strip()}
-            self.assertIn(acd.COLOUR[D.GREEN], colours, "a green square must stay green under the highlight")
-            self.assertGreater(len(colours), 1)               # not everything painted one colour
-
-    async def test_agents_below_the_bottom_edge_are_named_and_scrolling_to_them_clears_the_line(self):
-        w = F.with_grid(F.edit_world())
-        app = make_app(w)
-        async with app.run_test(size=(200, 30)) as pilot:    # a short window: five agents cannot all fit
-            await pilot.pause()
-            await show(app, pilot)
-            await pilot.pause()
-            more = app.screen.query_one("#more", Static)
-            self.assertTrue(more.display)
-            text = str(more.render())
-            self.assertIn("more below, press down:", text)
-            self.assertIn("Simba", text)
-            self.assertNotIn("Jarvis", text)
-            table = app.screen.query_one("#grid", DataTable)
-            for _ in range(table.row_count):
-                await pilot.press("down")
-                await pilot.pause()
-            await pilot.pause()
-            self.assertEqual(table.cursor_row, table.row_count - 1)
-            self.assertFalse(more.display, str(more.render()))
-        async with make_app(w).run_test(size=(200, 90)) as pilot:   # a tall window: everything fits, no line
-            app2 = pilot.app
-            await pilot.pause()
-            await show(app2, pilot)
-            await pilot.pause()
-            self.assertFalse(app2.screen.query_one("#more", Static).display)
-
-    async def test_the_arrow_keys_reach_the_last_branch_of_the_tree_and_come_back_to_the_top(self):
-        w = F.with_grid(F.edit_world())
-        app = make_app(w)
-        async with app.run_test(size=(200, 40)) as pilot:
-            await pilot.pause()
-            await show(app, pilot)
-            app.open_tree(1)                                  # Kylie
-            await pilot.pause()
-            self.assertIn("Who it may talk to", app.screen.tree_plain())
-            tree = app.screen.query_one("#tree", OptionList)
-            self.assertGreater(tree.max_scroll_y, 0, "the tree must be taller than this window for the test to mean anything")
-            self.assertEqual(tree.scroll_y, 0)
-            settings = [i for i, s in enumerate(app.screen.settings) if s]
-            for _ in range(len(settings) + 2):
-                if tree.highlighted == settings[-1]:
-                    break
-                await pilot.press("down")
-                await pilot.pause()
-            await pilot.pause()
-            self.assertEqual(tree.highlighted, settings[-1])
-            self.assertEqual(app.screen.settings[settings[-1]], "talk")     # the last setting is a talk rule
-            self.assertEqual(tree.scroll_y, tree.max_scroll_y, "the very bottom of the tree is on screen")
-            for _ in range(len(settings) + 2):
-                if tree.highlighted == settings[0]:
-                    break
-                await pilot.press("up")
-                await pilot.pause()
-            await pilot.pause()
-            self.assertEqual(tree.scroll_y, 0, "and the headings above the first setting come back")
+        story = acd.column_story(F.edit_collect(w), v)
+        self.assertNotIn("auto_enable", story)
+        self.assertIn("keeps its own choice until it is closed", story)
 
 
 if __name__ == "__main__":
