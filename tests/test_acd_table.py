@@ -423,7 +423,9 @@ class TableFacts(unittest.TestCase):
             self.assertTrue(acd.cell_at(key, claude).blank, key)
         self.assertEqual(acd.cell_at("voice", claude).setting, "voice")
         names = acd.cell_at("names", claude)
-        self.assertEqual((names.status, names.setting), (D.GREEN, ""))
+        # the names themselves are never changed; with the Voice Desk grid known, Enter opens the here / not here
+        # marks and the activation phrases (tests/test_acd_two_keys.py)
+        self.assertEqual((names.status, names.setting), (D.GREEN, "wire:*"))
         self.assertIn("claude", names.words)
         self.assertEqual(acd.cell_at("vplace:terminal", claude).setting, "vplace:terminal")
         self.assertTrue(acd.cell_at("names", F.agent(snap, "assistant")).blank)

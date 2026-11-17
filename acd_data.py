@@ -491,11 +491,33 @@ def plain_why(why: str) -> str:
     return _SETTING_NAME.sub("", why)
 
 
+@dataclass(frozen=True)
+class Wire:
+    """One place of the Voice Desk list's own "here / not here" marks and activation phrases (the old dashboard's
+    X and P keys). Both are marks the list keeps and the desk shows: neither switches anything."""
+    place: str                      # terminal / tg_dm / tg_group / mic / iphone
+    here: bool                      # is the agent marked here at this place
+    here_stored: bool               # True = the list says so itself; False = it follows what is wired today
+    phrase: str                     # the activation phrase shown (the stored one, else today's)
+    phrase_stored: bool
+    wired: bool = True              # False = marked here, but nothing makes it speak there yet
+    hint: str = ""                  # what an unwired place would need, in plain words
+
+
+WIRE_OF = {"terminal": "terminal", "tg_private": "tg_dm", "tg_group": "tg_group", "mac_voice": "mic",
+           "iphone_voice": "iphone"}       # a row of WHERE IT SHOWS UP -> the Voice Desk list's place
+
+
 def voice_places(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader", now: float) -> dict:
     """agent key -> the VoicePlace lines, read with the Voice Desk grid's own code (same files, same reader rules).
     Empty when the grid's files are not known (tests that do not care)."""
+    return grid_view(paths, agents_cfg, reader, now)[0]
+
+
+def grid_view(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader", now: float) -> tuple[dict, dict]:
+    """(agent key -> the VoicePlace lines, agent key -> the Wire marks), from ONE read of the Voice Desk grid."""
     if paths.grid is None or agents_cfg is None:
-        return {}
+        return {}, {}
     try:
         import gridevidence
         import gridstate as G
@@ -504,10 +526,23 @@ def voice_places(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader"
             reader.grid_reader = gridevidence.LogReader(paths.grid.profiles)
         rows = gridevidence.build(agents_cfg, paths.grid, reader.grid_reader, now)
     except Exception:                               # noqa: BLE001  never let the voice grid take the desk down
-        return {}
+        return {}, {}
     out: dict = {}
+    wiring: dict = {}
     for row in rows:
         lines = []
+        stored = isinstance(row.agent.raw.get("here"), list)
+        marks = []
+        for place in G.PLACE_KEYS:
+            try:
+                here = row.is_here(place)
+                phrase, kept = row.phrase(place)
+                unwired = G.unwired(row.cells[place], place)
+                marks.append(Wire(place, here, stored, phrase, kept, not unwired,
+                                  G.wiring_hint(row.agent, place) if unwired else ""))
+            except Exception:                       # noqa: BLE001
+                continue
+        wiring[row.agent.key] = tuple(marks)
         for place in G.PLACE_KEYS:
             cell, ev = row.cells[place], row.evidence.get(place)
             if cell.value == G.NA:
@@ -521,7 +556,7 @@ def voice_places(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader"
             lines.append(VoicePlace(place, cell.label, cell.note, status, ev.headline if ev else "", can, why,
                                     cell.problem))
         out[row.agent.key] = tuple(lines)
-    return out
+    return out, wiring
 
 
 # ---- who may talk to whom (version three) ---------------------------------------------------------------
@@ -592,6 +627,7 @@ class AgentView:
     drifts: tuple = ()                                # acd_watch.Drift: settings changed behind the desk's back
     voice_places: tuple = ()                          # VoicePlace lines: spoken replies, place by place
     effect: Optional[str] = None                      # a voice effect, for the one voice that has one (Simba)
+    wiring: tuple = ()                                # Wire marks: here / not here and the phrase, place by place
 
     @property
     def model_status(self) -> str:
@@ -749,6 +785,7 @@ class OtherAssistant:
     key: str = ""                   # its name in the Voice Desk list ([agents.<key>])
     takes_effect: str = ""          # where a voice change lands, in plain words
     voice_places: tuple = ()        # VoicePlace lines (Claude's and Gemini's own terminal voice, the mic window)
+    wiring: tuple = ()              # Wire marks: here / not here and the phrase, place by place
 
 
 @dataclass(frozen=True)
@@ -1227,7 +1264,7 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
     listed_agents = A.agents(agents_cfg) if agents_cfg else []
     keys = {a.profile: a.key for a in listed_agents if a.profile}
     effects = {a.profile: a.effect for a in listed_agents if a.profile and a.effect}
-    places = voice_places(paths, agents_cfg, reader, now)
+    places, wiring = grid_view(paths, agents_cfg, reader, now)
     drifted: dict = {}
     for d in (watch.drifts if watch is not None else ()):
         drifted.setdefault(d.profile, []).append(d)
@@ -1273,10 +1310,12 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
             room_lead=bool(lead) and profile == lead,
             in_room=None if in_room is None else profile in in_room,
             health=health, drifts=tuple(drifted.get(profile, ())),
-            voice_places=places.get(keys.get(profile, ""), ()), effect=effects.get(profile)))
+            voice_places=places.get(keys.get(profile, ""), ()), effect=effects.get(profile),
+            wiring=wiring.get(keys.get(profile, ""), ())))
 
     others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names, a.key,
-                                  TAKES_EFFECT.get(a.target, NOT_VERIFIED), places.get(a.key, ()))
+                                  TAKES_EFFECT.get(a.target, NOT_VERIFIED), places.get(a.key, ()),
+                                  wiring.get(a.key, ()))
                    for a in listed_agents if not a.profile)
     lights: tuple = ()
     if paths.lights is not None and paths.grid is not None:
