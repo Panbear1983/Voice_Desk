@@ -141,6 +141,16 @@ async def render_table(out: Path, collector: Optional[Callable[[], D.Snapshot]] 
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+    async def right_end(app, pilot):
+        for _ in range(len(app.screen.cols)):                    # all the way to the last column
+            await pilot.press("right")
+        await pilot.pause()
+
+    async def blank_cell(app, pilot):
+        names = [c.name for c in app.screen.cols]
+        app.screen.go("model", names[-1])                        # a row that does not apply to this column
+        await pilot.pause()
+
     async def listener(app, pilot):
         await pilot.press("l")
         await pilot.pause()
@@ -148,7 +158,8 @@ async def render_table(out: Path, collector: Optional[Callable[[], D.Snapshot]] 
     return await _shots(out, prefix, make_app, {
         "full": (size, table), "narrow": (narrow, table), "cell_menu": (size, menu), "confirm_line": (size, confirm),
         "ladder_menu": (size, ladder_menu), "row_wide_confirm": (size, row_wide),
-        "standard_ladder": (size, standard), "listener_popup": (size, listener)})
+        "standard_ladder": (size, standard), "standard_ladder_narrow": (narrow, standard),
+        "right_end": (narrow, right_end), "blank_cell": (narrow, blank_cell), "listener_popup": (size, listener)})
 
 
 def main() -> None:

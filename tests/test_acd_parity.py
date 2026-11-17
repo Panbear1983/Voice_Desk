@@ -185,8 +185,8 @@ class TheAllowanceKeepsItsLastKnownNumbers(unittest.TestCase):
         r.refresh({AGY: "assistant"})
         snap = D.collect(w.paths, yaml_loader=F.loader, now=w.now, usage=r.cached())
         tree = acd.column_story(snap, F.agent(snap, "assistant"))
-        self.assertIn("allowance: last known, read 20 minutes ago", tree)
-        self.assertIn("allowance: Gemini (Weekly): 62% left", tree)
+        self.assertIn("Allowance: last known, read 20 minutes ago", tree)
+        self.assertIn("Gemini (Weekly): 62% left", tree)
         self.assertNotIn("Hermes has no sign-in for it", tree)
 
     def test_a_window_that_has_reset_since_is_no_longer_claimed(self):

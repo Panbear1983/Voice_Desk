@@ -45,6 +45,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import os
+import re
 import sys
 import textwrap
 from dataclasses import dataclass, field
@@ -77,8 +78,9 @@ READ_ONLY_LABEL = DRY_LABEL                 # the old name, kept for callers
 COLOUR = {D.GREEN: "#3fb950", D.YELLOW: "#d29922", D.BLUE: "#58a6ff", D.RED: "#f85149", D.GREY: "#8b949e"}
 DIM = "#8b949e"
 MARK = "■"                               # the small square that carries a colour
-LEGEND = ((D.GREEN, "live everywhere"), (D.YELLOW, "saved, waiting on a restart or a fresh chat"),
-          (D.BLUE, "temporary override"), (D.RED, "failed, or changed behind the desk's back"),
+# Red has two meanings and the legend says both: something failed or ran out, or it was changed behind the desk's back.
+LEGEND = ((D.GREEN, "live everywhere"), (D.YELLOW, "waiting on a restart or a fresh chat"),
+          (D.BLUE, "temporary override"), (D.RED, "failed, used up, or changed behind the desk's back"),
           (D.GREY, "off or not applicable"))
 
 
@@ -140,7 +142,7 @@ def state_word(p: D.Presence) -> str:
 
 
 # ---- the table: rows are settings, columns are agents ----------------------------------------------------
-FACT = "a fact read from the logs and the settings, not a setting of its own: there is nothing to change here"
+FACT = "a fact read from the logs and the settings, not a setting of its own"
 ANSWERED = "▶"                           # on the ladder: the rung that answered the agent's last reply
 SHORT_UNKNOWN = {"iphone_voice": "no shortcut"}        # a grey square and the reason, never a bare "?"
 SHORT_ANSWER = {"yes, like everyone": "yes", "yes, like every member": "yes", "yes, the only one who does": "yes",
@@ -150,7 +152,7 @@ PLACE_ROW = {"terminal": "Terminal chat", "tg_private": "Telegram private chat",
              "team_room": "Team Room", "mac_voice": "Mac voice line", "iphone_voice": "iPhone voice (Siri)"}
 VPLACE_ROW = (("terminal", "Speaks in terminal window"), ("tg_dm", "Speaks in Telegram private"),
               ("tg_group", "Speaks in Telegram group"), ("mic", "Speaks on the mic line"),
-              ("iphone", "Speaks on the iPhone (Siri)"))
+              ("iphone", "Speaks on iPhone (Siri)"))
 TALK_ROW = (("speaks", "Speaks in the Team Room"), ("hands_out", "Hands out work"),
             ("takes_from", "Takes work from"), ("answers", "Answers"))
 SECTIONS = ("LANGUAGE MODEL", "FALLBACK LADDER (one order)", "VOICE", "WHERE IT SHOWS UP",
@@ -217,13 +219,14 @@ def rows_of(snap: Optional[D.Snapshot]) -> list[Row]:
 
 
 def _health_lines(h: Optional[D.ServiceView]) -> list[str]:
+    """A service's sign-in in one sentence, then its allowance in ONE sentence (the word is said once)."""
     if h is None:
         return []
     out = [h.words]
     if h.allowance:
-        out += ["allowance: " + ln for ln in h.allowance]
+        out.append("Allowance: " + "; ".join(str(ln).rstrip(".") for ln in h.allowance))
     elif h.allowance_note:
-        out.append("allowance: unknown (" + h.allowance_note + ")")
+        out.append("Allowance: unknown (" + h.allowance_note + ")")
     return out
 
 
@@ -240,7 +243,36 @@ def _short_trouble(trouble: str) -> str:
     return trouble.removeprefix("allowance ")
 
 
-def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None) -> Cell:
+def _back_day(trouble: str) -> str:
+    """"allowance used up until Fri 20 Nov" -> "20 Nov": the day a used-up rung comes back, when the log gave one."""
+    m = re.search(r"until (?:[A-Za-z]{3} )?(\d{1,2} [A-Za-z]{3})", trouble or "")
+    return m.group(1) if m else ""
+
+
+def rung_words(model: Optional[str], trouble: str = "") -> str:
+    """A ladder cell's few words. In trouble the cell is red and says the day it comes back ("Opus, back 20 Nov");
+    the full name and the reason are in the strip."""
+    if not trouble:
+        return D.short_model(model)
+    day = _back_day(trouble)
+    if day:
+        return f"{D.model_family(model)}, back {day}"
+    return f"{D.model_family(model)}, {_short_trouble(trouble)}"
+
+
+def tiny_backup(b: D.Backup) -> str:
+    """"Sonnet 5.5 (Claude)": a backup that is not on the ladder, short enough for a cell."""
+    return f"{D.short_model(b.model)} ({D.SERVICE_TINY.get(b.service, D.service_name(b.service, short=True))})"
+
+
+def last_when(ts: float, now: Optional[float] = None) -> str:
+    """The time of the last reply, short: the clock time today, the day before that. The strip has both."""
+    then = dt.datetime.fromtimestamp(ts)
+    today = dt.datetime.fromtimestamp(now).date() if now is not None else dt.date.today()
+    return then.strftime("%H:%M") if then.date() == today else then.strftime("%-d %b")
+
+
+def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: Optional[float] = None) -> Cell:
     """One agent's cell on one row: the light, the few words, the full story and what Enter does there."""
     key = row.key
     if v.error:
@@ -297,26 +329,28 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None) -> Ce
         return Cell(D.GREEN, words, detail + [E.NEEDS["effort"]], setting="effort")
 
     if key == "signin":
-        service = D.service_name(v.model.service, short=True) if v.model else "unknown"
         if main is None:
             if v.signin_failed and v.model:
-                return Cell(D.RED, f"{service}, could not sign in",
+                return Cell(D.RED, "could not sign in",
                             [f"{D.service_name(v.model.service)} could not sign in during the last day "
                              f"({D.plain_reason(v.signin_failed)})."], fixed=FACT)
-            return Cell(D.GREY, f"{service}, not checked", ["The sign-in has not been checked yet."], fixed=FACT)
-        words = {H.SIGNIN_DEAD: "sign-in dead", H.ALLOWANCE_OUT: "allowance used up"}.get(
-            main.kind, "signed in" if main.state == H.GOOD else "sign-in unknown")
+            return Cell(D.GREY, "not checked", [f"{D.service_name(v.model.service) if v.model else 'The service'}: "
+                                                "the sign-in has not been checked yet."], fixed=FACT)
+        # a green light beside the service's name IS "signed in"; anything else names the trouble instead
+        words = {H.SIGNIN_DEAD: "sign-in dead", H.ALLOWANCE_OUT: "used up"}.get(
+            main.kind, D.service_name(v.model.service, short=True) if main.state == H.GOOD and v.model
+            else "signed in" if main.state == H.GOOD else "sign-in unknown")
         status = main.status if main.state != H.UNKNOWN else D.GREY
         detail = _health_lines(main)
         if main.needs_peter:
             detail.append("Only Peter signing in again fixes this.")
-        return Cell(status, f"{service}, {words}", detail, fixed=FACT)
+        return Cell(status, words, detail, fixed=FACT)
 
     if key == "last":
         if not v.last:
             return Cell(D.GREY, "no reply in the log", ["No reply is in the current log."], fixed=FACT)
         r = v.last
-        return Cell(r.status, f"{D.model_name(r.answered_model)}, {when(r.when)}",
+        return Cell(r.status, f"{D.short_model(r.answered_model)}, {last_when(r.when, now)}",
                     [f"{r.note} ({where(r.where)}, {when(r.when)}).",
                      f"It was answered by {D.model_name(r.answered_model)} on {D.service_name(r.answered_service)}."],
                     fixed=FACT)
@@ -334,9 +368,9 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None) -> Ce
         lad = D.ladder(v)
         failing = main is not None and main.state == H.FAILING
         status = D.RED if failing else v.model_status
-        words = D.model_name(v.model.model) + (", " + {H.SIGNIN_DEAD: "sign-in dead",
-                                                       H.ALLOWANCE_OUT: "used up"}.get(main.kind, "failing")
-                                               if failing else "")
+        words = D.short_model(v.model.model) + (", " + {H.SIGNIN_DEAD: "sign-in dead",
+                                                        H.ALLOWANCE_OUT: "used up"}.get(main.kind, "failing")
+                                                if failing else "")
         detail = [f"Rung 1 is {name}'s main model: {D.model_name(v.model.model)} on "
                   f"{D.service_name(v.model.service)}. Every reply starts here."]
         if lad.answered == D.MAIN_RUNG:
@@ -362,12 +396,12 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None) -> Ce
                         setting=key, marker=bool(r and r.answered))
         b = r.backup
         if not b.on:
-            return Cell(D.GREY, f"off ({D.model_name(b.model)})",
+            return Cell(D.GREY, f"off ({D.short_model(b.model)})",
                         [f"{backup_words(b, short=False)} is switched off for {name}"
                          + (f" ({b.note})" if b.note else "") + ". The desk remembers it and can switch it on again.",
                          E.NEEDS["ladder"]], setting=key, marker=r.answered)
         drift = _drift(v, f"backup|{b.service}|{b.model}")
-        words = D.model_name(b.model) + (", " + _short_trouble(r.trouble) if r.trouble else "")
+        words = rung_words(b.model, r.trouble)
         detail = [f"{name}'s {E.RUNG_NAME[rung]}: {backup_words(b, short=False)}. It answers only when every rung "
                   "above it has failed."]
         if r.trouble:
@@ -392,12 +426,12 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None) -> Ce
                         fixed="there is no extra backup here")
         if not lad.extras:
             b = lad.extras_off[0]
-            return Cell(D.GREY, f"off ({backup_words(b)})",
+            return Cell(D.GREY, f"off ({tiny_backup(b)})",
                         [f"{backup_words(x, short=False)} is switched off for {name}; it is not on the standard "
                          "ladder. The desk remembers it." for x in lad.extras_off], setting="extras")
         first = lad.extras[0]
         trouble = D.backup_trouble(v.health, first)
-        words = backup_words(first) + (f"  +{len(lad.extras) - 1} more" if len(lad.extras) > 1 else "")
+        words = tiny_backup(first) + (f" +{len(lad.extras) - 1}" if len(lad.extras) > 1 else "")
         detail = [f"{backup_words(x, short=False)} is on {name}'s list but is not on the standard ladder "
                   "(Claude subscription, Antigravity, ChatGPT, NVIDIA)." for x in lad.extras]
         if lad.answered == D.EXTRA_RUNG:
@@ -494,7 +528,9 @@ def place_cell(name: str, key: str, places: tuple, has_voice: bool = True) -> Ce
                         fixed=f"{name} has no voice in the Voice Desk list")
         return Cell()
     unknown = p.value.strip() in ("?", "—", "-", "")
-    words = (p.evidence or "not known") if unknown else p.value + (f", {p.evidence}" if p.evidence else "")
+    # the setting in a word; what the logs say really happened is in the strip. Where the desk cannot read the
+    # setting itself, the first thing known about it stands in ("Voice-back"), never a bare "?".
+    words = ((p.evidence or "").split(",")[0].strip() or "not known") if unknown else p.value
     detail = [f"Spoken replies, {D.place_words(place)}: " + ("not known" if unknown else p.value)
               + (f" ({p.evidence})" if p.evidence else "") + "."]
     if p.problem:
@@ -522,7 +558,8 @@ def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
     if key.startswith("vplace:"):
         return place_cell(o.name, key, o.voice_places)
     if key == "names":
-        return Cell(D.GREEN, ", ".join(o.call_names),
+        more = len(o.call_names) - 1
+        return Cell(D.GREEN, (o.call_names[0] + (f" +{more} more" if more > 0 else "")) if o.call_names else "none",
                     [f"The voice line wakes {o.name} when it hears: " + ", ".join(o.call_names) + "."],
                     fixed="the call names are kept in the Voice Desk list; the desk shows them and does not change them")
     return Cell()
@@ -531,10 +568,11 @@ def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
 ROOM_HEADING = "The Team Room (all agents)"      # the note after it is about the room, not the chosen agent
 
 
-def cell_of(row: Row, col: Any, speed_why: Optional[dict] = None, room_note: str = "") -> Cell:
+def cell_of(row: Row, col: Any, speed_why: Optional[dict] = None, room_note: str = "",
+            now: Optional[float] = None) -> Cell:
     if row.section:
         return Cell()
-    cell = agent_cell(row, col, speed_why) if is_agent(col) else other_cell(row, col)
+    cell = agent_cell(row, col, speed_why, now) if is_agent(col) else other_cell(row, col)
     if room_note and row.key == "presence:team_room" and not cell.blank:
         cell.detail.append(f"{ROOM_HEADING}: {room_note}")
     return cell
@@ -553,12 +591,23 @@ def column_story(snap: D.Snapshot, col: Any, speed_why: Optional[dict] = None) -
         if row.section:
             out.append(row.label)
             continue
-        cell = cell_of(row, col, speed_why, snap.room_note)
+        cell = cell_of(row, col, speed_why, snap.room_note, snap.read_at)
         if cell.blank:
             continue
         out.append(f"{row.label}: {cell_text(cell).plain}")
         out.append("    " + strip_text(row, col, cell, 10_000).plain)
     return "\n".join(out)
+
+
+def cut_words(words: str, room: int) -> str:
+    """Cut to `room` characters with an ellipsis, BETWEEN two words whenever there is a space to cut at: a cell
+    never ends in half a word."""
+    if len(words) <= room:
+        return words
+    keep = words[:max(1, room - 1)]
+    if " " in keep and not words[len(keep):len(keep) + 1].isspace():
+        keep = keep[:keep.rindex(" ")]
+    return keep.rstrip(" ,;:(") + "…"
 
 
 def cell_text(cell: Cell, width: int = 0, bright: bool = False) -> Text:
@@ -569,7 +618,7 @@ def cell_text(cell: Cell, width: int = 0, bright: bool = False) -> Text:
     t.append(MARK + " ", style=COLOUR.get(cell.status, DIM))
     words = (ANSWERED + " " if cell.marker else "") + cell.words
     if width and len(words) + 2 > width:
-        words = words[:max(1, width - 3)].rstrip() + "…"
+        words = cut_words(words, width - 2)
     colour = COLOUR[D.RED] if cell.status == D.RED else DIM if cell.status == D.GREY and not bright else ""
     t.append(words, style=colour)
     return t
@@ -580,8 +629,13 @@ def _sentence(words: str) -> str:
     return words if not words or words[-1] in ".!?:" else words + "."
 
 
-def strip_text(row: Row, col: Any, cell: Cell, width: int = 120, armed: bool = False) -> Text:
-    """The strip under the table: the whole story of the chosen cell, and what Enter does there."""
+STRIP_LINES = 3                          # the strip never runs past three lines: the most important facts first
+
+
+def strip_text(row: Row, col: Any, cell: Cell, width: int = 120, armed: bool = False, nudge: bool = False) -> Text:
+    """The strip under the table: the story of the chosen cell, most important first, each fact said ONCE, in at
+    most three lines; then what Enter does there. nudge=True (Enter was pressed on a cell with no menu) lights
+    that last sentence up; it is not said a second time."""
     t = Text()
     if row.section:
         t.append(row.label, style=f"bold {COLOUR[D.BLUE]}")
@@ -594,22 +648,39 @@ def strip_text(row: Row, col: Any, cell: Cell, width: int = 120, armed: bool = F
     head = f"{col.name}, {row.label.strip()}: "
     if cell.blank:
         t.append(head, style=f"bold {COLOUR[D.BLUE]}")
-        t.append("this row does not apply here.", style=DIM)
+        t.append("Nothing to change here: this row does not apply to " + col.name + "." if nudge else
+                 "this row does not apply here.", style=COLOUR[D.YELLOW] if nudge else DIM)
         return t
-    body = " ".join(_sentence(str(x)) for x in cell.detail if x)
-    if cell.setting:
-        body += " Enter opens the choices."
-    elif cell.fixed:
-        body += " No menu here: " + cell.fixed + "."
-    lines = textwrap.wrap(head + body, max(30, width)) or [head]
+    facts: list[str] = []
+    for x in cell.detail:
+        fact = _sentence(str(x)) if x else ""
+        if fact and fact not in facts:
+            facts.append(fact)
+    tail = "Enter opens the choices." if cell.setting else \
+        _sentence("Nothing to change here: " + cell.fixed) if cell.fixed else ""
+    width = max(30, width)
+
+    def wrapped(some: list[str]) -> list[str]:
+        return textwrap.wrap(head + " ".join(some + ([tail] if tail else [])), width) or [head]
+
+    lines = wrapped(facts)
+    while len(lines) > STRIP_LINES and len(facts) > 1:      # the least important fact is the last one: it goes first
+        facts.pop()
+        lines = wrapped(facts)
+    if len(lines) > STRIP_LINES:                            # one fact alone is too long: it is cut between two words
+        lines = lines[:STRIP_LINES]
+        lines[-1] = cut_words(lines[-1] + " …", width)
+    at = 0
+    tail_from = len(head + " ".join(facts)) + (1 if facts else 0) if tail else None
     for i, ln in enumerate(lines):
         if i:
             t.append("\n")
-        if i == 0:
-            t.append(ln[:len(head)], style=f"bold {COLOUR[D.BLUE]}")
-            t.append(ln[len(head):])
-        else:
-            t.append(ln)
+        for j, ch in enumerate(ln):
+            pos = at + j
+            style = f"bold {COLOUR[D.BLUE]}" if pos < len(head) else \
+                (COLOUR[D.YELLOW] if nudge and not cell.setting else DIM) if tail_from is not None and pos >= tail_from else ""
+            t.append(ch, style=style)
+        at += len(ln) + 1                                   # the space the wrap swallowed
     return t
 
 
@@ -709,6 +780,34 @@ _POPUP_CSS = """
 #box-keys {{ color: #8b949e; height: auto; }}
 """
 MENU_WIDTH = 64
+END_WORDS = {1: "that is the last choice: nothing is below it", -1: "that is the first choice: nothing is above it"}
+
+
+class EndsList(OptionList):
+    """A list of choices whose arrow keys STOP at the first and the last choice (a plain list jumps round to the
+    other end without a word). It says so through an Edge message."""
+
+    class Edge(Message):
+        def __init__(self, direction: int) -> None:
+            super().__init__()
+            self.direction = direction
+
+    def step(self, direction: int) -> None:
+        n = self.option_count
+        at = self.highlighted if self.highlighted is not None else (-1 if direction > 0 else n)
+        new = at + direction
+        while 0 <= new < n and self.get_option_at_index(new).disabled:
+            new += direction
+        if 0 <= new < n:
+            self.highlighted = new
+        else:
+            self.post_message(self.Edge(direction))
+
+    def action_cursor_down(self) -> None:
+        self.step(1)
+
+    def action_cursor_up(self) -> None:
+        self.step(-1)
 
 
 class CellMenu(ModalScreen[Optional[str]]):
@@ -751,9 +850,9 @@ class CellMenu(ModalScreen[Optional[str]]):
         with Vertical(id="menu"):
             yield Static(self.spec.title, id="menu-title")
             yield Static(self.spec.locked or self.spec.note, id="menu-note")
-            yield OptionList(*([] if self.spec.locked else
-                               [Option(self.row_text(o), disabled=o.disabled) for o in self.spec.options]),
-                             id="menu-list")
+            yield EndsList(*([] if self.spec.locked else
+                             [Option(self.row_text(o), disabled=o.disabled) for o in self.spec.options]),
+                           id="menu-list")
             yield Static("", id="menu-status")
             yield Static("", id="menu-confirm")
             yield Static("", id="menu-keys")
@@ -795,7 +894,7 @@ class CellMenu(ModalScreen[Optional[str]]):
         if self.spec.locked:
             words = "Esc close"
         elif self.confirming is not None:
-            words = "Enter = yes, do exactly that     Esc = back to the choices"
+            words = "Enter = yes, do exactly that\nEsc back to choices; Esc again closes the menu"
         else:
             words = "up / down move   Enter choose   Esc cancel"
             if self.tester and self.spec.testable:
@@ -809,6 +908,14 @@ class CellMenu(ModalScreen[Optional[str]]):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
         self.action_enter()
+
+    def on_ends_list_edge(self, event: EndsList.Edge) -> None:
+        event.stop()
+        self.query_one("#menu-status", Static).update(END_WORDS[event.direction] + ".")
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if self.confirming is None:
+            self.query_one("#menu-status", Static).update("")
 
     def action_enter(self) -> None:
         if self.spec.locked:
@@ -904,6 +1011,127 @@ class NoticePopup(ModalScreen[bool]):
         self.dismiss(False)
 
 
+RUNG_CODE = {"ag_claude": "2a", "ag_gemini": "2b", "codex": "3", "nvidia": "4"}
+LADDER_ORDER = "1 the main model   2a Antigravity: Claude   2b Antigravity: Gemini   3 ChatGPT   4 NVIDIA Nemotron"
+EXTRAS_WORDS = {"keep": "keep extras after rung 4", "drop": "drop extras"}
+
+
+def ladder_words(pairs: list) -> str:
+    """A backups list on one line, each entry with its rung: "2a Opus 5.5 · 2b Gemini Flash · 4 Nemotron 3.5"."""
+    out = []
+    for service, model in pairs:
+        rung = D.rung_of(service, model)
+        out.append(f"{RUNG_CODE[rung]} {D.short_model(model)}" if rung in RUNG_CODE else
+                   f"extra {D.short_model(model)} ({D.SERVICE_TINY.get(service, D.service_name(service, short=True))})")
+    return " · ".join(out) if out else "no backups"
+
+
+def ladder_body(plans: list, mode: str, left_out: list[str], dry: Text, width: int = 108) -> Text:
+    """The standard-ladder box: the order, the keep / drop choice with today's pick marked, then every agent's
+    before and after on one line each, and who is left out and why."""
+    body = [Text("The standard ladder, the same order for every agent:", style="bold"), Text("  " + LADDER_ORDER)]
+    pick = Text("  Backups that are not on the ladder:  ")
+    for key, token in (("k", "keep"), ("x", "drop")):
+        on = mode == token
+        pick.append(f"[{key}] {EXTRAS_WORDS[token]}" + ("  (selected)" if on else ""),
+                    style=f"bold {COLOUR[D.BLUE]}" if on else DIM)
+        pick.append("     ")
+    body += [pick, Text("")]
+    for plan in plans:
+        body.append(Text(plan.name, style="bold"))
+        if plan.error:
+            body.append(Text(f"  could not be read: {plan.error}", style=COLOUR[D.RED]))
+            continue
+        if not plan.changes:
+            body.append(Text("  already on the standard ladder: nothing changes", style=DIM))
+            continue
+        body.append(Text("  - before: " + ladder_words(plan.before), style=COLOUR[D.RED]))
+        body.append(Text("  + after:  " + ladder_words(plan.after), style=COLOUR[D.GREEN]))
+        for part in textwrap.wrap("; ".join(plan.notes), max(40, width - 4)):
+            body.append(Text("    " + part, style=DIM))
+    body.append(Text(""))
+    for name in left_out:
+        body.append(Text(f"{name} is left out: no backups by design, and the desk does not change that.", style=DIM))
+    body += [Text("u undoes the newest of these changes, one agent at a time.", style=DIM), dry]
+    return join(body)
+
+
+class LadderPopup(NoticePopup):
+    """The standard ladder for every agent: each before and after, read-only, with one choice inside the box:
+    k keeps the backups that are not on the ladder (after rung 4), x drops them. The before and after follow the
+    choice. Y sets it (returns "keep" or "drop"); Esc closes (returns None). When the list is longer than the box
+    a line says there is more below."""
+    CSS = _POPUP_CSS.format(name="LadderPopup") + """
+    #box { width: 116; }
+    #box-body { height: auto; max-height: 100%; }
+    #box-more { height: auto; color: #d29922; display: none; }
+    """
+    BINDINGS = [Binding("escape", "no", "close"), Binding("y", "yes", "yes"), Binding("enter", "enter", "ok"),
+                Binding("k", "mode('keep')", "keep extras"), Binding("x", "mode('drop')", "drop extras"),
+                Binding("down", "scroll(1)", "down", show=False), Binding("up", "scroll(-1)", "up", show=False)]
+
+    def __init__(self, plans: dict, left_out: list[str], dry: Text, mode: str = "keep") -> None:
+        super().__init__("Put every agent on the standard ladder?", Text(""), ask="yes")
+        self.plans, self.left_out, self.dry, self.mode = plans, left_out, dry, mode
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="box"):
+            yield Static(self.title_words, id="box-title")
+            with VerticalScroll(id="box-body"):
+                yield Static("", id="box-text")
+            yield Static("", id="box-more")
+            yield Static("", id="box-keys")
+
+    def on_mount(self) -> None:
+        self.show()
+        body = self.query_one("#box-body", VerticalScroll)
+        self.watch(body, "scroll_y", lambda *_: self.more_hint(), init=False)      # however it was scrolled
+
+    def on_resize(self) -> None:
+        self.call_after_refresh(self.more_hint)
+
+    def todo(self) -> int:
+        return sum(1 for p in self.plans[self.mode] if p.changes)
+
+    def show(self) -> None:
+        self.query_one("#box-text", Static).update(ladder_body(self.plans[self.mode], self.mode, self.left_out, self.dry))
+        n = self.todo()
+        yes = f"y = yes, set it for {n} agent{'s' if n != 1 else ''}" if n else "nothing to change with this choice"
+        self.query_one("#box-keys", Static).update(
+            f"{yes}     k keep extras   x drop extras     up / down scroll     Esc = no, close")
+        self.call_after_refresh(self.more_hint)
+
+    def more_hint(self) -> None:
+        try:
+            body, more = self.query_one("#box-body", VerticalScroll), self.query_one("#box-more", Static)
+        except Exception:                               # noqa: BLE001  the box is closing
+            return
+        below = body.max_scroll_y - body.scroll_y
+        more.display = below > 0
+        if below > 0:
+            more.update(f"more below: {int(below)} more line{'s' if below != 1 else ''} (the down arrow scrolls)")
+
+    def action_mode(self, mode: str) -> None:
+        if mode != self.mode:
+            self.mode = mode
+            self.show()
+
+    def action_scroll(self, by: int) -> None:
+        body = self.query_one("#box-body", VerticalScroll)
+        body.scroll_to(y=max(0, min(body.max_scroll_y, body.scroll_y + by)), animate=False, immediate=True)
+        self.more_hint()
+
+    def action_yes(self) -> None:
+        if self.todo():
+            self.dismiss(self.mode)
+
+    def action_enter(self) -> None:
+        pass
+
+    def action_no(self) -> None:
+        self.dismiss(None)
+
+
 class PickPopup(ModalScreen[Optional[str]]):
     """A short list to pick one line from. Enter picks, Esc closes. Returns the line's token, or None."""
     CSS = _POPUP_CSS.format(name="PickPopup")
@@ -917,7 +1145,7 @@ class PickPopup(ModalScreen[Optional[str]]):
         with Vertical(id="box"):
             yield Static(self.title_words, id="box-title")
             yield Static(self.note, id="box-note")
-            yield OptionList(*[Option(label, disabled=not token) for token, label in self.rows], id="box-list")
+            yield EndsList(*[Option(label, disabled=not token) for token, label in self.rows], id="box-list")
             yield Static("Up / Down move   Enter open   Esc close", id="box-keys")
 
     def on_mount(self) -> None:
@@ -1091,8 +1319,18 @@ TABLE_KEYS = ("arrows move cell to cell", "Enter open the choices (on a row's na
               "p pause watcher", "c read again", "q close")
 EDGE_WORDS = {"down": "that is the last row: nothing is below it", "up": "that is the first row: nothing is above it",
               "left": "that is the first column: the row names", "right": "that is the last column"}
-LABEL_WIDTH = 30
+LABEL_WIDTH = 28
 COL_MIN, COL_MAX = 18, 34
+
+
+def label_width(seen: int, width: int, columns: int) -> int:
+    """How wide the pinned row-names column is. When not every column fits beside it, it takes up the few
+    characters left over, so that what scrolls is a whole number of columns: at either end of the sideways scroll
+    no half column sticks out from under the row names."""
+    room, each = seen - (LABEL_WIDTH + 2), width + 2
+    if room <= 0 or columns * each <= room:
+        return LABEL_WIDTH
+    return LABEL_WIDTH + room % each
 
 
 def keys_text(width: int, note: str = "") -> Text:
@@ -1109,7 +1347,8 @@ def column_width(snap: Optional[D.Snapshot], window: int, speed_why: Optional[di
     cols, rows = columns_of(snap), rows_of(snap)
     if not cols:
         return COL_MIN
-    need = max((len(cell_text(cell_of(r, c, speed_why)).plain) for r in rows for c in cols), default=COL_MIN)
+    need = max((len(cell_text(cell_of(r, c, speed_why, now=snap.read_at)).plain) for r in rows for c in cols),
+               default=COL_MIN)
     need = max(need, max(len(c.name) for c in cols), COL_MIN)
     room = max(40, window) - (LABEL_WIDTH + 2) - 2
     fit = room // len(cols) - 2                                 # every column pads one on each side
@@ -1155,13 +1394,52 @@ class DeskTable(DataTable):
         if self.cursor_coordinate.column >= len(self.columns) - 1:
             self.post_message(self.Edge("right"))
             return
-        super().action_cursor_right()
+        self.move_cursor(column=self.cursor_coordinate.column + 1, animate=False)
 
     def action_cursor_left(self) -> None:
         if self.cursor_coordinate.column <= 0:
             self.post_message(self.Edge("left"))
             return
-        super().action_cursor_left()
+        self.move_cursor(column=self.cursor_coordinate.column - 1, animate=False)
+
+    def snap_target(self) -> Optional[int]:
+        """Where the sideways scroll must stand so that the first agent column beside the pinned row names is a
+        WHOLE column (half a column sticking out from under the names looked broken), and the chosen column is
+        fully in view. None when nothing scrolls sideways."""
+        try:
+            widths = [col.get_render_width(self) for col in self.ordered_columns]
+        except Exception:                               # noqa: BLE001
+            return None
+        fixed, rest = sum(widths[:self.fixed_columns]), widths[self.fixed_columns:]
+        seen = (self.scrollable_content_region.width or self.size.width) - fixed
+        if not rest or seen <= 0 or sum(rest) <= seen:
+            return 0
+        starts = [sum(rest[:i]) for i in range(len(rest))]
+        j = max(0, self.cursor_coordinate.column - self.fixed_columns)        # the chosen column among the scrolling ones
+        k = max((i for i, x in enumerate(starts) if x <= self.scroll_x), default=0)     # the column now at the left edge
+        k = min(k, j)                                                          # the chosen one is never left of the edge
+        while k < j and starts[j] + rest[j] - starts[k] > seen:                # ... nor cut off on the right
+            k += 1
+        return starts[k]
+
+    def snap_columns(self) -> None:
+        target = self.snap_target()
+        if target is not None and target != self.scroll_x:
+            self.scroll_to(x=target, animate=False, force=True, immediate=True)
+
+    def _scroll_cursor_into_view(self, animate: bool = False) -> None:
+        """Up and down the plain table's way; sideways by WHOLE columns (see snap_target)."""
+        try:
+            region = self._get_cell_region(self.cursor_coordinate)
+            self.scroll_to_region(region, animate=False, spacing=self._get_fixed_offset(), force=True,
+                                  x_axis=False, immediate=True)
+        except Exception:                               # noqa: BLE001  an empty table has no cell to show
+            return
+        self.snap_columns()
+
+
+CURSOR_BG = "#1f4b82"             # the chosen cell: a clear blue block, the same on a filled cell and a blank one
+PAGE_BG = "#0d1117"
 
 
 class TableScreen(Screen):
@@ -1169,13 +1447,13 @@ class TableScreen(Screen):
     of the chosen cell."""
     CSS = _TOP_CSS + """
     #table { height: 1fr; }
-    #table > .datatable--cursor { background: #12233d; text-style: bold; }
+    #table > .datatable--cursor { background: %s; text-style: bold; }
     #table > .datatable--header { background: #161b22; color: #e6edf3; text-style: bold; }
     #table > .datatable--fixed { background: #0d1117; color: #8b949e; }
-    #table > .datatable--fixed-cursor { background: #12233d; color: #e6edf3; }
+    #table > .datatable--fixed-cursor { background: %s; color: #e6edf3; }
     #more { height: auto; padding: 0 1; color: #d29922; display: none; }
     #strip { height: auto; max-height: 9; padding: 0 1; background: #161b22; border-top: solid #30363d; }
-    """
+    """ % (CURSOR_BG, CURSOR_BG)
     BINDINGS = [*_SHARED_KEYS]
 
     def compose(self) -> ComposeResult:
@@ -1220,13 +1498,15 @@ class TableScreen(Screen):
         keep_row = self.rows[table.cursor_coordinate.row].key if self.rows and table.row_count else ""
         keep_col = table.cursor_coordinate.column if table.row_count else 1
         keep_scroll = (table.scroll_x, table.scroll_y)
-        shape = (tuple(r.key for r in rows), tuple(col_id(c) for c in cols), width)
+        names = self.names_width(table, width, len(cols))
+        shape = (tuple(r.key for r in rows), tuple(col_id(c) for c in cols), width, names)
         self.rows, self.cols = rows, cols
-        self.cells = {(r.key, col_id(c)): cell_of(r, c, app.speed_why, snap.room_note) for r in rows for c in cols}
+        self.cells = {(r.key, col_id(c)): cell_of(r, c, app.speed_why, snap.room_note, snap.read_at)
+                      for r in rows for c in cols}
         fresh = shape != self.shape
         if fresh:
             table.clear(columns=True)
-            table.add_column(Text("\nSetting", style=DIM), key="setting", width=LABEL_WIDTH)
+            table.add_column(Text("\nSetting", style=DIM), key="setting", width=names)
             for c in cols:
                 head = Text(c.name, style="bold")
                 head.append("\n" + (getattr(c, "role", "") or ("called by name" if not is_agent(c) else "")), style=DIM)
@@ -1250,7 +1530,11 @@ class TableScreen(Screen):
             if had:
                 table.scroll_to(x=keep_scroll[0], y=keep_scroll[1], animate=False)
         self.show_strip()
-        self.call_after_refresh(self.more_hint)
+        self.call_after_refresh(self.snap_then_hint)
+
+    def names_width(self, table: DataTable, width: int, columns: int) -> int:
+        seen = table.scrollable_content_region.width or self.size.width or self.app.size.width
+        return label_width(seen, width, columns)
 
     def go(self, row_key: str, column: Any = None) -> bool:
         """Put the cursor on a row (by its key) and a column: a number (0 = the row names), an agent's name, or
@@ -1284,19 +1568,30 @@ class TableScreen(Screen):
         col = self.cols[c - 1]
         return row, col, self.cells.get((row.key, col_id(col)))
 
-    def show_strip(self, extra: str = "") -> None:
+    def show_strip(self, extra: str = "", nudge: bool = False) -> None:
         row, col, cell = self.at()
         strip = self.query_one("#strip", Static)
         if row is None:
             strip.update("")
             return
-        t = strip_text(row, col, cell or Cell(), self.app.text_width(), self.app.is_armed)
+        t = strip_text(row, col, cell or Cell(), self.app.text_width(), self.app.is_armed, nudge=nudge)
         if extra:
             t.append("\n" + extra, style=COLOUR[D.YELLOW])
         strip.update(t)
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         self.show_strip()
+        self.call_after_refresh(self.snap_then_hint)
+
+    def snap_then_hint(self) -> None:
+        try:
+            table = self.query_one("#table", DeskTable)
+        except Exception:                               # noqa: BLE001  the screen is closing
+            return
+        if self.shape and self.names_width(table, self.shape[2], len(self.cols)) != self.shape[3]:
+            self.show(self.app.snapshot)                 # the table's real width is known now (a scroll bar came or went)
+            return
+        table.snap_columns()
         self.call_after_refresh(self.more_hint)
 
     def on_desk_table_edge(self, event: DeskTable.Edge) -> None:
@@ -1342,10 +1637,8 @@ class TableScreen(Screen):
             return
         if col is None:
             self.app.open_row(row, self.cell_anchor())
-        elif cell is None or cell.blank:
-            self.show_strip("Nothing to change here: this row does not apply to " + col.name + ".")
-        elif not cell.setting:
-            self.show_strip("Nothing to change here: " + (cell.fixed or FACT) + ".")
+        elif cell is None or cell.blank or not cell.setting:
+            self.show_strip(nudge=True)                  # the strip's own last sentence lights up: said once
         else:
             self.app.open_cell(row, col, cell, self.cell_anchor())
 
@@ -1932,37 +2225,27 @@ class Desk(App):
 
     @work(thread=True, exclusive=True, group="acd-ladder-plan")
     def plan_ladder_in_background(self) -> None:
-        try:
-            plans = E.plan_standard_ladder(self.edit, loader=self.loader)
+        try:                                             # both plans only READ: nothing is written by showing them
+            plans = {mode: E.plan_standard_ladder(self.edit, extras=mode, loader=self.loader)
+                     for mode in ("keep", "drop")}
         except Exception as e:                           # noqa: BLE001
             self.call_from_thread(self.push_screen, NoticePopup(
                 "The standard ladder", Text(f"The plan could not be made ({type(e).__name__}: {e}).")))
             return
         self.call_from_thread(self.ask_standard_ladder, plans)
 
-    def ask_standard_ladder(self, plans: list) -> None:
+    def ask_standard_ladder(self, plans: dict, mode: str = "keep") -> None:
         edit, loader = self.edit, self.loader
-        body = [Text("The standard ladder, the same order for every agent:", style="bold"),
-                Text("  1 the main model   2 Antigravity (Claude, then Gemini)   3 ChatGPT   4 NVIDIA Nemotron"),
-                Text("")]
-        for plan in plans:
-            body.append(Text(plan.name, style="bold"))
-            for ln in E.plan_lines(plan):
-                for i, part in enumerate(textwrap.wrap(ln, 86) or [""]):
-                    body.append(Text(("  " if i == 0 else "            ") + part,
-                                     style=COLOUR[D.RED] if ln.startswith("- ") else
-                                     COLOUR[D.GREEN] if ln.startswith("+ ") else DIM))
-        todo = [p for p in plans if p.changes]
-        body.append(Text(""))
-        if not todo:
-            body.append(Text("Every agent is already on the standard ladder: nothing to change."))
-            self.push_screen(NoticePopup("The standard ladder", join(body)))
+        left_out = [v.name for v in (self.snapshot.agents if self.snapshot else ()) if v.backups_locked]
+        if not any(p.changes for some in plans.values() for p in some):
+            body = ladder_body(plans[mode], mode, left_out, Text(""))
+            body.append("\nEvery agent is already on the standard ladder: nothing to change.")
+            self.push_screen(NoticePopup("The standard ladder", body))
             return
-        body += [Text("u undoes the newest of these changes, one agent at a time.", style=DIM), self.dry_line()]
         self.push_screen(
-            NoticePopup("Put every agent on the standard ladder?", join(body),
-                        ask=f"yes, set the standard ladder for {len(todo)} agent{'s' if len(todo) != 1 else ''}"),
-            lambda yes: self.run_jobs([lambda: E.apply_standard_ladder(edit, loader=loader)]) if yes else None)
+            LadderPopup(plans, left_out, self.dry_line(), mode),
+            lambda picked: self.run_jobs([lambda: E.apply_standard_ladder(edit, extras=picked, loader=loader)])
+            if picked else None)
 
     # -- what only the old dashboard could do: the voice test, add / remove an agent, the listener ------------------
     def table_screen(self) -> Optional["TableScreen"]:
