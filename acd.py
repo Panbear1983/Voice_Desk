@@ -2414,7 +2414,7 @@ class Desk(App):
             options.append(Opt(f"mount|{m.code}", f"{M.short(m.code)}  mounted, its window is not open", now=True))
         for s in m.sessions:
             if not s.code:
-                if m.bound and m.window == s:          # the mounted session, found in the one window with no code
+                if m.bound and m.window is not None and m.window.pane == s.pane:   # the mounted session's window
                     options.append(Opt(f"mount|{m.code}", M.no_code_words(s, name, m), now=True))
                 else:
                     options.append(Opt(f"nocode|{s.pane}", M.no_code_words(s, name, m), disabled=True))

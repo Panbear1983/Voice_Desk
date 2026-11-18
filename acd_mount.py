@@ -29,6 +29,7 @@ herdr which windows are open (`herdr pane list`, read-only).
 from __future__ import annotations
 
 import base64
+import dataclasses
 import datetime as _dt
 import json
 import os
@@ -164,7 +165,8 @@ def would_bind(target: str, code: str, sessions: tuple) -> tuple[Optional[Sessio
         return None, ""
     import live_session
     yes, why = live_session.bind_codeless(target, code, [(s.pane, s.status, s.code, s.folder) for s in sessions])
-    return (sessions[0] if yes else None), why
+    # the window's last activity is the mounted session's own record (herdr gives this window no code to look up)
+    return (dataclasses.replace(sessions[0], last=_last(target, code)) if yes else None), why
 
 
 def _view(pins: Path, target: str, panes: Optional[list], error: str) -> MountView:
@@ -236,9 +238,9 @@ def no_code_words(s: Session, name: str, m: Optional["MountView"] = None) -> str
     head = f"{which}: herdr shows this {name} window no session code"
     if m is None:
         return head + ", so voice cannot mount it by itself"
-    if m.bound and m.window == s:
+    if m.bound and m.window is not None and m.window.pane == s.pane:
         return (f"{which}: no session code from herdr; voice uses it for the mounted session {short(m.code)}, "
-                f"the only {name} window open")
+                f"the only {name} window open  {folder_words(m.window.folder)}  {ago(m.window.last)}")
     if m.code and m.why:
         return f"{head}; not used for the mounted session {short(m.code)}: {m.why}"
     if len(m.sessions) > 1:

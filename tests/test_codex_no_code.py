@@ -246,7 +246,7 @@ class TheDesk(SessionsFolder):
         line = next(o for o in spec.options if o.token == f"mount|{CODE}")
         self.assertTrue(line.now and not line.disabled, "the window is the mounted session's: marked, choosable")
         self.assertIn('"Codex (Dolly)" (wV:p4): no session code from herdr; voice uses it for the mounted session '
-                      '01a1d2df, the only Codex window open', line.label)
+                      '01a1d2df, the only Codex window open  ~  5 min ago', line.label)
         self.assertFalse(any("its window is not open" in o.label for o in spec.options))
         self.assertIn("window wV:p4", " ".join(spec.describe(f"mount|{CODE}")))
         cell = acd.cell_at("mount", codex)
