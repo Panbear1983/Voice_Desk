@@ -558,7 +558,7 @@ class OnTheScreen(unittest.IsolatedAsyncioTestCase):
             await settle(app, pilot)
             self.assertTrue(app.last_results[0].ok and not app.last_results[0].dry, app.last_results[0].message)
             self.assertNotIn("[agents.kylie]", toml.read_text(encoding="utf-8"))
-            await pilot.press("enter")                                # close "Saved"
+            await pilot.press("escape")                               # close "Saved"
             await pilot.pause()
             await pilot.press("u")
             await pilot.pause()

@@ -193,7 +193,7 @@ class OnTheScreen(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await settle(app, pilot)
             self.assertIn("Saved: Kylie is marked not here at iPhone (Siri)", notice(app))
-            await pilot.press("enter")
+            await pilot.press("escape")
             await settle(app, pilot)
             self.assertEqual(shown(app, "presence:iphone_voice", "Kylie"), f"{acd.MARK} not here")
             await open_cell(app, pilot, "presence:iphone_voice", "Kylie")
