@@ -98,7 +98,8 @@ NEEDS = {
                  "and switches the Telegram side in the same step. The chat on screen starts fresh; the old lines "
                  "stay in the saved history.",
 }
-UNDOABLE = ("model", "effort", "backup", "ladder", "voice", "rule", "team_room", "voice_place", "agent", "mount")
+UNDOABLE = ("model", "effort", "backup", "ladder", "voice", "rule", "team_room", "voice_place", "agent", "mount",
+            "language")
 _DESK_NOTE = re.compile(r"^[ \t]*# \d{4}-\d\d-\d\d " + re.escape(WHO) + r": ")
 
 
@@ -1624,6 +1625,9 @@ def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Option
     if kind == "agent":                                   # an agent added to, or taken out of, the Voice Desk list
         import acd_parity
         return acd_parity.undo_agent(last, paths, now=now)
+    if kind == "language":                                # extra languages / the language choice (old L and O keys)
+        import acd_parity
+        return acd_parity.undo_language(last, paths, now=now)
     if kind == "mount":                                   # the session voice goes to (Claude, Gemini, Codex)
         import acd_mount
         return acd_mount.undo_mount(last, paths, now=now)

@@ -35,4 +35,4 @@ if [ "${1:-}" = "--no-load" ]; then
   echo "listener installed but not started ($plist). Start it with: launchctl bootstrap gui/$(id -u) $plist"
   exit 0
 fi
-launchctl bootstrap "gui/$(id -u)" "$plist" && echo "listener installed and running ($label); ./dashboard.sh shows it"
+launchctl bootstrap "gui/$(id -u)" "$plist" && echo "listener installed and running ($label); ./acd.sh shows it (l opens the listener)"

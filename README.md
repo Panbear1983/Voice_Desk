@@ -205,18 +205,18 @@ Offline adapter checks (no model usage): `.venv/bin/python tests/test_codex.py`.
 They cover new/resumed sessions, name routing, private state, stdin handling, cancellation,
 timeouts and quota failures. A real phone/Siri test also needs your device and its permissions.
 
-### Codex in the Mac window and dashboard
+### Codex in the Mac window and the Agent Control Desk
 
-Codex uses the same Voice Desk window and listener dashboard as the other brains.
+Codex uses the same Voice Desk window and always-on listener as the other brains.
 The active name, conversation and voice list identify Codex; `./start.sh` opens the
-voice window, while `./dashboard.sh` shows the always-on Mac listener without opening
-another microphone. The listener dashboard reports Mac listener activity; it does not
-mirror the phone receiver's independent requests.
+voice window, while `./acd.sh` (the Agent Control Desk; `l` opens the listener) shows the
+always-on Mac listener without opening another microphone. The listener view reports Mac
+listener activity; it does not mirror the phone receiver's independent requests.
 
 <table>
 <tr>
 <td width="50%"><img src="docs/img/08_codex_window.png" alt="Voice Desk window with Codex selected and two recorded test replies proving conversation resume" width="100%"><br><sub><b>Codex voice window.</b> The active service and transcript identify Codex.</sub></td>
-<td width="50%"><img src="docs/img/09_codex_dashboard.png" alt="Voice Desk listener dashboard displaying Codex as the active service, its recorded reply, and its shared voice" width="100%"><br><sub><b>Codex dashboard view.</b> The same control panel displays the active Codex conversation.</sub></td>
+<td width="50%"><img src="docs/img/09_codex_dashboard.png" alt="Voice Desk listener dashboard displaying Codex as the active service, its recorded reply, and its shared voice" width="100%"><br><sub><b>Codex in the old dashboard's listener view</b> (retired 2026-11-18; the Agent Control Desk's listener pop-up shows the same).</sub></td>
 </tr>
 </table>
 
@@ -228,7 +228,7 @@ Reproduce these views without a microphone or model calls:
 
 ```bash
 .venv/bin/python docs/codex_screenshots.py
-python3 docs/render_images.py --only 08_codex_window 09_codex_dashboard --no-gif
+python3 docs/render_images.py --only 08_codex_window --no-gif
 ```
 
 ## Talk to it
@@ -240,7 +240,7 @@ python3 docs/render_images.py --only 08_codex_window 09_codex_dashboard --no-gif
 | "go to sleep", 「休息」 | stops listening until you say a name ("hey Claude", "Jarvis", …) |
 | "hey Claude, …" | wakes it up; the rest of the sentence is your question |
 | "Jarvis, …" / "hey Kylie" / "Esther, …" / "Wanna Buffet, …" | wakes it **and** puts that brain on the line: Jarvis = the orchestrator, Kylie = the assistant, Esther = tax_angel_esther, Wanna Buffet = wanna-buffet ([Hermes](https://github.com/NousResearch/hermes-agent) profiles). The rest of the sentence is the question; the confirmation uses the name ("Jarvis here.") |
-| "mute" / "unmute" | the always-on listener ignores everything until "unmute" (or <kbd>M</kbd> in the dashboard) |
+| "mute" / "unmute" | the always-on listener ignores everything until "unmute" (or <kbd>m</kbd> in the Agent Control Desk's listener pop-up, <kbd>l</kbd>) |
 | "use Opus" / "switch to Sonnet" / "use Haiku" / "use Fable" | changes the model from the next question on |
 | "which model" | tells you which model it's using |
 | "think deep" / "quick mode" / "max effort" / "normal mode" | how hard Claude thinks |
@@ -259,7 +259,7 @@ runs in the background from login, with no window and no keyboard:
 
 ```bash
 ./install_listener.sh      # login job com.peter.voice-desk-listener; starts it now
-./dashboard.sh             # small control panel for it
+./acd.sh                   # the Agent Control Desk: l opens the listener's controls
 ```
 
 It sleeps with the microphone open and reacts only to a sentence that **starts with a
@@ -282,28 +282,20 @@ middle of one. Spoken answers already play wherever the Mac's sound goes. If the
 will not open yet (AirPods still connecting), it stays on the Mac's own microphone and tries again
 a few times; every move is written to the listener's log ("now listening on ...").
 
-The dashboard never touches the mic. It reads `~/.voice_desk/listener.json` and shows the
-light (asleep · listening · hearing · thinking · speaking · muted), who is on the line, the
-last thing heard and the last reply, plus every agent's voice (from `agents.toml`) and a
-warning if a profile drifted from it. Keys: <kbd>M</kbd> mute/unmute · <kbd>H</kbd> hush ·
-<kbd>N</kbd> new conversation · <kbd>V</kbd> per-agent voices / one shared voice ·
-<kbd>R</kbd> restart the listener · <kbd>K</kbd> stop it ·
-<kbd>Q</kbd> close the panel (the listener keeps running).
+The Agent Control Desk (`./acd.sh`) never touches the mic. Its listener pop-up (<kbd>l</kbd>) reads
+`~/.voice_desk/listener.json` and shows the state (asleep · listening · hearing · thinking · speaking · muted), who
+is on the line, the last thing heard and the last reply. Keys there: <kbd>m</kbd> mute/unmute · <kbd>h</kbd> hush ·
+<kbd>n</kbd> new conversation · <kbd>x</kbd> hand the mic back · <kbd>r</kbd> restart · <kbd>k</kbd> stop (restart
+and stop are asked twice and refused while someone is speaking or an agent is mid-reply).
 
-Since 2026-11-09 the dashboard opens on the **voice grid**: one row per agent in `agents.toml`, one column per
-place it can speak (terminal window, Telegram direct chat, Telegram team group, the mic window / phone, the
-iPhone). Each cell shows the setting read from the file where it really lives and, under it, what the logs say
-really happened (green spoke OK · grey idle · yellow mixed · red mismatch or failure). <kbd>T</kbd> renders a
-silent test sentence per language for the selected agent and checks it with ffprobe; <kbd>E</kbd> / <kbd>Z</kbd>
-change the English / Mandarin voice through `voicecfg` (backup, read-back), <kbd>U</kbd> undoes the last change.
-Since step 2 (2026-11-09) <kbd>←</kbd> <kbd>→</kbd> + <kbd>Enter</kbd> on a cell switches it live: the Telegram team group
-(Off / Always), Claude's terminal (Off / Always) and the mic window / phone (own voices vs shared voice, speech queue
-on / off), with the same backup, read-back and undo; since step 3 also the Telegram direct chats (Off / Voice-back /
-Always) and Gemini's terminal (Off / Always, see [`docs/gemini-switch-file.md`](docs/gemini-switch-file.md)); the
-other cells say why they are read-only. The Hermes local patches are kept and checked by `hermes_patches.py`
-(`python3 hermes_patches.py check` / `apply`, see below).
-The listener controls above are on the second screen (<kbd>S</kbd>; <kbd>M</kbd> and <kbd>H</kbd> work on both).
-Since step 4 a **watcher** keeps all of this as the panel set it (see "The watcher" below); <kbd>W</kbd> pauses it.
+The desk's table is what the old dashboard's **voice grid** was (2026-11-09 to 2026-11-18, retired into the desk):
+every agent's English and Chinese voice, where it speaks (terminal window, Telegram direct chat, Telegram team
+group, the mic window / phone, the iPhone) with what the logs say really happened, here / not here and the
+activation phrase per place, other languages, and quiet hours per place (stored and shown only). <kbd>Enter</kbd> on
+a cell opens its choices; every change is backed up, written, read back, kept in the desk's history and undone with
+<kbd>u</kbd>. <kbd>t</kbd> renders a silent test sentence per voice and checks it. The Hermes local patches are kept
+and checked by `hermes_patches.py` (`python3 hermes_patches.py check` / `apply`, see below). A **watcher** keeps all
+of this as it was set (see "The watcher" below); <kbd>p</kbd> on the desk pauses it.
 Every place's file is listed in [`docs/where-every-voice-setting-lives.md`](docs/where-every-voice-setting-lives.md).
 
 **Keys** (you never *need* them): <kbd>Space</kbd> talk in tap mode or interrupt ·
@@ -322,7 +314,7 @@ panel's own code (backup, read-back, history):
 * **Hermes local fixes**: `hermes_patches.apply_missing` (never forced).
 
 It does not fight: a drift must be seen on two runs (at least 90 s apart) before it is repaired, and a setting that has
-been put back 3 times within an hour is left alone and reported. **Pause**: <kbd>W</kbd> in the dashboard, or
+been put back 3 times within an hour is left alone and reported. **Pause**: <kbd>p</kbd> on the Agent Control Desk, or
 `python3 watcher.py pause` (a file `~/.voice_desk/watcher_paused`; the top strip shows WATCHER PAUSED in grey). Telegram
 goes to Peter's own chat **only** for what it cannot repair (a fix that no longer fits Hermes, a file it cannot read, a
 setting that keeps changing back, a restored Hermes fix that needs a gateway restart): one plain sentence, each problem
@@ -437,8 +429,8 @@ lines only (comments and every other setting stay as they were), backs every fil
 read the result. Hermes reads voice settings when a session starts: reopen the agent's window,
 and restart the Telegram gateway from a separate terminal, to hear a change. The listener reads
 names, greetings, hint words and mic settings at start (restart it after changing those); voices
-are read fresh before every spoken line. The dashboard lists every agent's voice and warns when a
-profile was hand-edited away from `agents.toml`.
+are read fresh before every spoken line. The Agent Control Desk lists every agent's voice;
+`.venv/bin/python -m voicecfg check` shows a profile that was hand-edited away from `agents.toml`.
 
 Esther keeps her own Kokoro voice everywhere: Voice Desk speaks her lines through her script
 (`command` in her block), with an Edge voice (`fallback`) only if Kokoro fails.
@@ -487,7 +479,7 @@ change it. Other environment overrides: `VOICE_DESK_STATE`, `VOICE_DESK_TTS_ORDE
   open mic from mistaking another session's spoken answer for you.
 - **The always-on listener is a microphone that is always open.** Nothing leaves the Mac
   unless a sentence starts with a name, but whisper still hears the room. Say "mute", press
-  <kbd>M</kbd> in the dashboard, or <kbd>K</kbd> to stop it.
+  <kbd>m</kbd> in the Agent Control Desk's listener pop-up (<kbd>l</kbd>), or <kbd>k</kbd> there to stop it.
 
 <details>
 <summary><b>Where things are kept</b></summary>
@@ -502,7 +494,7 @@ Nothing personal lives in the repo. The app's memory is `~/.voice_desk/`:
 | `transcript.log` | every question and answer, time-stamped |
 | `detail.md` | long answers Claude chose not to read aloud |
 | `window.lock`, `turn.lock` | "window or listener has the mic" and "turn running" markers |
-| `listener.json` | the always-on listener's state, for the dashboard |
+| `listener.json` | the always-on listener's state, for the Agent Control Desk |
 | `muted` | present while the listener is muted |
 | `listener.log` | the listener's log: one line per turn |
 | `receiver.log`, `remote-control.log` | background job logs |
@@ -518,8 +510,8 @@ Nothing personal lives in the repo. The app's memory is `~/.voice_desk/`:
 | "already open in another window" | only one window at a time; close the other |
 | Light stuck on *hearing you* | room too loud for open mic; press <kbd>M</kbd> for tap mode |
 | It answers things you didn't say | something else on the Mac is talking; mute it or use tap mode |
-| Dashboard light says *off* | the listener is not running: <kbd>R</kbd> in the dashboard, or `./install_listener.sh`; `~/.voice_desk/listener.log` says why |
-| "The always-on listener has the microphone" | the listener is running; <kbd>K</kbd> in the dashboard stops it if you want the window |
+| The desk's listener pop-up says *off* | the listener is not running: <kbd>r</kbd> in that pop-up, or `./install_listener.sh`; `~/.voice_desk/listener.log` says why |
+| "The always-on listener has the microphone" | the listener is running; <kbd>k</kbd> in the desk's listener pop-up stops it if you want the window |
 | Siri says "something went wrong" | Tailscale off on the phone, or the receiver isn't running (`curl http://<mac-tailscale-ip>:8765/health`); `~/.voice_desk/receiver.log` has one line per request. An old Shortcut built before the check-back design times out on long answers: rebuild and re-add it |
 | A new conversation started by itself | you opened the voice thread in another `claude --resume` window and left it open; read it, then quit |
 | Slow to start speaking | your `TTS_ORDER` tries a voice that keeps failing first; reorder it |
@@ -570,7 +562,7 @@ python3 docs/render_images.py          # PNGs + loop.gif (needs playwright + Pil
 | `speechq.py`, `install_speechq.sh` | the shared speech line (one voice at a time) and its `afplay` stand-in |
 | `watcher.py`, `install_watcher.sh` | the watcher: puts drifted settings back as the panel set them (launchd job, one check every 5 minutes) |
 | `service.py` | the listener's status file, mute flag and launchd controls |
-| `dashboard.py`, `dashboard.sh` | the control panel for the listener |
+| `acd.py`, `acd.sh` (and the other `acd_*.py`) | the Agent Control Desk: every agent's settings, voices and places, and the listener's controls (the old `dashboard.py` / `dashboard.sh` were retired into it on 2026-11-18) |
 | `make_shortcut.py` | builds the signed iPhone Shortcut |
 | `install_remote_control.sh` | Remote Control login job for the Claude app |
 | `tests/selftest.py`, `tests/test_listener.py`, `tests/test_speechq.py`, `tests/test_voicecfg.py` | headless end-to-end checks |

@@ -1,7 +1,7 @@
 """Render actual Textual views with recorded Codex test replies; no mic or model calls.
 
   .venv/bin/python docs/codex_screenshots.py
-  python3 docs/render_images.py --only 08_codex_window 09_codex_dashboard --no-gif
+  python3 docs/render_images.py --only 08_codex_window --no-gif
 
 These are headless UI replays, not photographs of a live microphone or iPhone session.
 """
@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-import time
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,10 +25,8 @@ os.environ["TERM"] = "xterm-256color"
 os.environ["COLORTERM"] = "truecolor"
 
 import engine
-import service
 import settings as S
 from app import VoiceDesk
-from dashboard import Dashboard
 from textual.widgets import Static
 
 OUT = ROOT / "docs/img"
@@ -54,25 +51,10 @@ async def shoot():
             await pilot.pause(0.3)
             assert "Codex" in str(window.query_one("#mode", Static).render())
             save_svg("08_codex_window.svg", window.export_screenshot())
-
-        last = DEMO["turns"][-1]
-        snapshot = {"target": "codex", "name": "Codex", "state": "speaking", "level": 0,
-                    "heard": last["you"], "reply": last["codex"], "turns": len(DEMO["turns"]),
-                    "updated": time.time(), "since": time.time(),
-                    "note": "Recorded conversation replay: the second question resumed the same Codex thread."}
-        with patch.object(service, "read_status", return_value=snapshot), \
-             patch.object(service, "is_muted", return_value=False):
-            dashboard = Dashboard(autostart=False)          # the listener view is the dashboard's second screen (S)
-            async with dashboard.run_test(size=(110, 28)) as pilot:
-                await pilot.pause(0.3)
-                await pilot.press("s")
-                await pilot.pause(0.3)
-                assert "Codex" in str(dashboard.screen.query_one("#who", Static).render())
-                assert last["codex"] in str(dashboard.screen.query_one("#body", Static).render())
-                assert "Codex:" in str(dashboard.screen.query_one("#voices", Static).render())
-                save_svg("09_codex_dashboard.svg", dashboard.export_screenshot())
+        # 09_codex_dashboard.svg came from the old dashboard's listener screen, retired 2026-11-18 (the Agent Control
+        # Desk's listener pop-up shows the same); that picture is kept as it was and is no longer re-rendered.
 
 
 if __name__ == "__main__":
     asyncio.run(shoot())
-    print("Rendered Codex window and dashboard from recorded test replies; no microphone or model used.")
+    print("Rendered the Codex window from recorded test replies; no microphone or model used.")

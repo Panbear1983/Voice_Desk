@@ -4,7 +4,9 @@
                          checked for real sound. Nothing is ever played. (the old T / Shift-T, voicetest.py)
     2. add / remove      an agent's block in the Voice Desk list (agents.toml), through the old dashboard's own
                          safe path (gridedit.py: a copy first, an atomic write, a read back, put back at once
-                         when the read back is wrong). u undoes it.
+                         when the read back is wrong). u undoes it. The same safe path also keeps the old
+                         dashboard's marks (here / not here, the activation phrase: X and P) and an agent's other
+                         languages (extra language voices and the language choice: L and O; stored and shown only).
     3. the listener      what it is doing, and mute / hush / new conversation / hand the microphone back /
                          restart / stop (service.py, the same orders the old second screen sent).
 
@@ -384,6 +386,146 @@ def set_phrase(paths: E.EditPaths, key: str, place: str, text: Optional[str], *,
     if not res.ok or res.entry is None:
         return E.Result(False, "Not changed. " + _plain(res.message))
     return _record(paths, res, now, "phrase", what, needs=NEEDS_PHRASE)
+
+
+# ---- 2c. other languages: extra language voices and the language choice (the old dashboard's L and O keys) -----
+NEEDS_LANG = ("Stored and shown only: nothing speaks an extra language or follows the language choice yet. Only one "
+              "line of the Voice Desk list changes, and nothing is restarted.")
+EXTRA_HINT = ("Type code=voice, separated by commas, for example ja=ja-JP-NanamiNeural, fr=fr-FR-DeniseNeural "
+              "(a Microsoft voice of that language). English and Chinese have their own rows. Leave it empty to "
+              "remove them all.")
+LANG_NAME = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "fr": "French", "de": "German",
+             "es": "Spanish", "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "th": "Thai", "vi": "Vietnamese",
+             "id": "Indonesian", "ms": "Malay", "ru": "Russian", "ar": "Arabic", "hi": "Hindi"}
+AUTO = "auto"
+
+
+def lang_name(code: str) -> str:
+    return LANG_NAME.get(code, code)
+
+
+@dataclass(frozen=True)
+class Languages:
+    """An agent's languages beyond English and Chinese, and which language it speaks in, as the list says now."""
+    key: str
+    name: str
+    extra: dict                     # {"ja": "ja-JP-NanamiNeural"}
+    override: str                   # "auto" (follow the reply's language), "en", "zh" or an extra code
+    english_only: bool
+
+
+def languages_now(paths: E.EditPaths, key: str) -> Languages:
+    """Only reads."""
+    agent = voiceedit._find_agent(A.load(paths.voice.toml), key)
+    return Languages(key, agent.display, dict(agent.voices_extra), str(agent.voice_override or AUTO).lower(),
+                     agent.english_only)
+
+
+def extra_words(extra: dict) -> str:
+    """"Japanese (Nanami), French (Denise)", or "none"."""
+    return ", ".join(f"{lang_name(c)} ({D.voice_label(v)})" for c, v in extra.items()) or "none"
+
+
+def choice_words(code: str) -> str:
+    return "follow the reply's language" if code == AUTO else f"always {lang_name(code)}"
+
+
+def choice_codes(lang: Languages) -> list[str]:
+    """The language choices this agent can take: an English-only agent only follows the reply or speaks English."""
+    return [AUTO, "en"] if lang.english_only else [AUTO, "en", "zh", *lang.extra]
+
+
+def _lang_write(paths: E.EditPaths, key: str, field_name: str, value: Any, what: str, now: _dt.datetime,
+                undoes: Optional[str] = None, restore: Optional[tuple] = None) -> E.Result:
+    """One line of the Voice Desk list through the old dashboard's own writer (voiceedit.change: a copy first, an
+    atomic write, a read back, put back at once when it does not read back), behind the desk's armed gate."""
+    kind = "undo" if undoes else "change"
+
+    def run(vp: voiceedit.EditPaths) -> voiceedit.Result:
+        return voiceedit.change(key, field_name, value, vp, now=now, kind=kind, undoes=undoes, restore=restore)
+
+    try:
+        if not E.armed(paths):
+            res, lines = _in_sandbox(paths, run)
+            if not res.ok:
+                return E.Result(False, ("Not undone. " if undoes else "Not changed. ") + _plain(res.message))
+            if res.entry is None:
+                return E.Result(True, _plain(res.message))
+            return _dry(paths, ("undo of: " if undoes else "") + what + ".", lines, NEEDS_LANG)
+        res = run(paths.voice)
+    except (E.EditError, voiceedit.EditError, OSError, ValueError, KeyError) as exc:
+        return E.Result(False, f"{'Not undone' if undoes else 'Not changed'}. {exc}")
+    if not res.ok:
+        return E.Result(False, ("Not undone. " if undoes else "Not changed. ") + _plain(res.message))
+    if res.entry is None:
+        return E.Result(True, _plain(res.message))
+    entry = {"id": f"{_stamp(now)}-{key}-{field_name}", "ts": now.timestamp(), "who": WHO, "kind": "language",
+             "agent": key, "field": field_name, "what": what, "before": res.entry.get("old"),
+             "after": res.entry.get("new"), "ok": True}
+    if res.entry.get("removed"):
+        entry["removed"] = list(res.entry["removed"])     # the line's own text and place, so u puts it back verbatim
+    if undoes:
+        entry["undoes"] = undoes
+    E._append_history(paths, entry)
+    return E.Result(True, ("Undone: " if undoes else "Saved: ") + what, needs=NEEDS_LANG, entry=entry)
+
+
+def check_extra(paths: E.EditPaths, key: str, text: Optional[str]) -> tuple[dict, str]:
+    """(the typed extra languages, cleaned, "") or ({}, why not), with the old dashboard's own check. Only reads."""
+    try:
+        agent = voiceedit._find_agent(A.load(paths.voice.toml), key)
+        typed = voiceedit.parse_extra(text or "")
+        return (voiceedit.check_voice("voices_extra", typed, agent) if typed else {}), ""
+    except (voiceedit.EditError, OSError, ValueError, KeyError) as exc:
+        return {}, str(exc)
+
+
+def set_extra(paths: E.EditPaths, key: str, text: Optional[str], *, now: Optional[_dt.datetime] = None) -> E.Result:
+    """The extra languages (the old L key): "ja=ja-JP-NanamiNeural, fr=..." ; empty removes them all. Each voice
+    must be a Microsoft voice of that language. Stored and shown only. u undoes it."""
+    now = now or _dt.datetime.now()
+    try:
+        lang = languages_now(paths, key)
+    except (E.EditError, voiceedit.EditError, OSError, ValueError, KeyError) as exc:
+        return E.Result(False, f"Not changed. {exc}")
+    clean, why = check_extra(paths, key, text)
+    if why:
+        return E.Result(False, f"Not changed. {why}")
+    if clean == lang.extra:
+        return E.Result(True, f"{lang.name}'s extra languages are already {extra_words(clean)}; nothing to change")
+    if lang.override in lang.extra and lang.override not in clean:
+        return E.Result(False, f"Not changed. {lang.name}'s language choice is {choice_words(lang.override)}: set it "
+                               "back to follow the reply's language first, then take that language away.")
+    what = f"{lang.name}'s extra languages change from {extra_words(lang.extra)} to {extra_words(clean)}"
+    return _lang_write(paths, key, "voices_extra", clean or None, what, now)
+
+
+def set_override(paths: E.EditPaths, key: str, code: str, *, now: Optional[_dt.datetime] = None) -> E.Result:
+    """The language choice (the old O key): follow the reply's language ("auto", the default: the line goes), or
+    always English, Chinese or one of the extra languages. Stored and shown only. u undoes it."""
+    now = now or _dt.datetime.now()
+    code = str(code or "").strip().lower() or AUTO
+    try:
+        lang = languages_now(paths, key)
+    except (E.EditError, voiceedit.EditError, OSError, ValueError, KeyError) as exc:
+        return E.Result(False, f"Not changed. {exc}")
+    allowed = choice_codes(lang)
+    if code not in allowed:
+        return E.Result(False, f"Not changed. {lang.name} can take only: "
+                               + ", ".join(choice_words(c) for c in allowed) + ".")
+    if code == lang.override:
+        return E.Result(True, f"{lang.name}'s language choice is already: {choice_words(code)}; nothing to change")
+    what = f"{lang.name}'s language choice changes from {choice_words(lang.override)} to {choice_words(code)}"
+    return _lang_write(paths, key, "voice_override", None if code == AUTO else code, what, now)
+
+
+def undo_language(last: dict, paths: E.EditPaths, *, now: Optional[_dt.datetime] = None) -> E.Result:
+    """Run a language change backwards with the old dashboard's own undo (the removed line goes back verbatim)."""
+    now = now or _dt.datetime.now()
+    removed = last.get("removed")
+    restore = tuple(removed) if isinstance(removed, list) and len(removed) == 2 else None
+    return _lang_write(paths, str(last.get("agent")), str(last.get("field")), last.get("before"),
+                       str(last.get("what")), now, undoes=str(last.get("id")), restore=restore)
 
 
 # ---- 3. the listener (the voice line) --------------------------------------------------------------------------

@@ -4,7 +4,6 @@ temp folders against fakes: no real settings, gateway, windows, speakers or Tele
 
     .venv/bin/python -m unittest tests.test_watcher -v
 """
-import asyncio
 import json
 import os
 import stat
@@ -22,8 +21,6 @@ from tests import gridfix as F  # noqa: E402
 from tests.test_hermes_patches import World as PatchWorld, git  # noqa: E402
 
 import agents  # noqa: E402
-import dashboard as D  # noqa: E402
-import gridevidence as E  # noqa: E402
 import gridstate as G  # noqa: E402
 import hermes_patches as HP  # noqa: E402
 import onoff  # noqa: E402
@@ -31,7 +28,6 @@ import syshealth  # noqa: E402
 import voicecfg  # noqa: E402
 import voiceedit as VE  # noqa: E402
 import watcher as W  # noqa: E402
-from textual.widgets import Static  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 T0 = 1_800_000_000.0                      # a fixed "now"; every run is told its own time
@@ -404,34 +400,21 @@ class CommandLine(Base):
         self.assertFalse((Path(self.w.root) / "Library/LaunchAgents").exists())      # --print writes and loads nothing
 
 
-class OnThePanel(unittest.IsolatedAsyncioTestCase):
+class TheLight(unittest.TestCase):
+    """The watcher's light, as the Agent Control Desk's top strip shows it (syshealth.watcher). The old dashboard's
+    W key was retired with it on 2026-11-18; the desk's own pause is tested in tests/test_acd_v4.py."""
+
     def setUp(self):
         self.w = F.make_world()
 
-    def app(self):
-        return D.Dashboard(paths=self.w.paths, edit_paths=self.w.edit, reader=E.LogReader(self.w.paths.profiles),
-                           autostart=False, cfg_loader=lambda: agents.load(self.w.toml))
-
-    async def test_w_pauses_and_resumes_and_the_strip_says_so(self):
-        app = self.app()
-        async with app.run_test(size=(200, 50)) as pilot:
-            await pilot.pause()
-            with mock.patch.object(syshealth, "mac_output", return_value=syshealth.Light(True, "Mac output: test")):
-                rows, lights = await asyncio.to_thread(app.collect)
-            app.apply_snapshot(rows, lights)
-            await pilot.pause()
-            strip = str(app.screen.query_one("#health", Static).render())
-            self.assertIn("watcher not running", strip)
-            await pilot.press("w")
-            await pilot.pause()
-            self.assertTrue(W.is_paused(self.w.paths))
-            strip = str(app.screen.query_one("#health", Static).render())
-            self.assertIn("WATCHER PAUSED", strip)
-            self.assertIn("PAUSED", str(app.screen.query_one("#msg", Static).render()))
-            await pilot.press("w")
-            await pilot.pause()
-            self.assertFalse(W.is_paused(self.w.paths))
-            self.assertNotIn("PAUSED", str(app.screen.query_one("#health", Static).render()))
+    def test_pause_and_resume_and_the_light_says_so(self):
+        self.assertIn("watcher not running", syshealth.watcher(self.w.paths).label)
+        self.assertTrue(W.toggle_pause(self.w.paths))
+        self.assertTrue(W.is_paused(self.w.paths))
+        self.assertIn("WATCHER PAUSED", syshealth.watcher(self.w.paths).label)
+        self.assertFalse(W.toggle_pause(self.w.paths))
+        self.assertFalse(W.is_paused(self.w.paths))
+        self.assertNotIn("PAUSED", syshealth.watcher(self.w.paths).label)
 
 
 if __name__ == "__main__":

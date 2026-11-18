@@ -475,8 +475,10 @@ def test_status_file() -> None:
     report("status: dashboard orders delivered once, unknown ones dropped",
            service.take_orders() == ["hush", "new_thread"] and service.take_orders() == [])
 
-    # the dashboard reads it and never opens the microphone
+    # the Agent Control Desk reads it and never opens the microphone (the old dashboard's second screen, retired
+    # 2026-11-18: its state, who is on the line, heard / reply, mute and hush are the desk's listener pop-up now)
     import sounddevice
+    import acd_parity
     opened = []
     real = sounddevice.InputStream
     sounddevice.InputStream = lambda *a, **k: opened.append(1) or real(*a, **k)   # type: ignore[assignment]
@@ -484,41 +486,25 @@ def test_status_file() -> None:
     live = service.Status()
     live.update(target="hermes:orchestrator", name="Jarvis", heard="what time is it", reply="Ten past nine.")
     live.set_state("thinking")
-    from dashboard import Dashboard
-    from textual.widgets import Static
-
-    async def run() -> tuple[str, str, str, str]:
-        app = Dashboard(autostart=False)            # the grid is the main screen; Heard/Reply live on the second one (S)
-        async with app.run_test(size=(100, 24)) as pilot:
-            await pilot.pause()
-            await pilot.press("s")
-            await pilot.pause()
-            app.refresh_status()
-            light = str(app.screen.query_one("#light", Static).render())
-            body = str(app.screen.query_one("#body", Static).render())
-            await pilot.press("m")
-            await pilot.pause()
-            muted = service.is_muted()
-            live.set_state("asleep")
-            app.refresh_status()
-            light2 = str(app.screen.query_one("#light", Static).render())
-            await pilot.press("m")
-            await pilot.press("h")
-            await pilot.pause()
-            live.data["updated"] = 0
-            service.write_status(live.data)
-            app.refresh_status()
-            light3 = str(app.screen.query_one("#light", Static).render())
-            return light, body + f" muted={muted}", light2, light3
-
-    light, body, light2, light3 = asyncio.run(run())
-    sounddevice.InputStream = real   # type: ignore[assignment]
-    report("dashboard: shows the state light", "thinking" in light, light)
-    report("dashboard: shows who is on the line, last heard, last reply",
-           "Jarvis" in body and "what time is it" in body and "Ten past nine." in body, body[:200])
-    report("dashboard: M mutes (the listener reads the same flag)", "muted=True" in body and "muted" in light2, light2)
-    report("dashboard: M again unmutes, H leaves a hush order", not service.is_muted() and service.take_orders() == ["hush"])
-    report("dashboard: a dead listener shows as off", "off" in light3, light3)
+    try:
+        view = acd_parity.listener_view(ask_loaded=False)
+        service.set_muted(True)                    # what the desk's mute sends (the listener reads the same flag)
+        live.set_state("asleep")
+        view2 = acd_parity.listener_view(ask_loaded=False)
+        service.set_muted(False)
+        service.send("hush")
+        live.data["updated"] = 0
+        service.write_status(live.data)
+        view3 = acd_parity.listener_view(ask_loaded=False)
+    finally:
+        sounddevice.InputStream = real   # type: ignore[assignment]
+    report("desk: shows the state", view.state == "thinking", view.words)
+    report("desk: shows who is on the line, last heard, last reply",
+           (view.on_line, view.heard, view.reply) == ("Jarvis", "what time is it", "Ten past nine."), str(view)[:200])
+    report("desk: mute shows (the listener reads the same flag)", view2.state == "muted" and view2.muted, view2.words)
+    report("desk: unmuted again, hush leaves a hush order", not service.is_muted() and service.take_orders() == ["hush"])
+    report("desk: a dead listener shows as off", view3.state == "off", view3.words)
+    report("desk: never opens the microphone", not opened)
 
     # -- voices: each agent speaks with its own voice from agents.toml, one per language, no fallback -----------
     import voices

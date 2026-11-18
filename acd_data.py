@@ -368,6 +368,8 @@ class Voice:
     english_only: bool
     silent_if_fails: bool = True    # 2026-11-13: no agent has a stand-in voice; a failed voice stays silent
     not_playable: str = ""          # 2026-11-18: the English voice is one its own script cannot make yet: why
+    extra: tuple = ()               # (code, voice) pairs: languages beyond English and Chinese (stored and shown only)
+    override: str = "auto"          # the language it speaks in: "auto" follows the reply (stored and shown only)
 
 
 def not_playable(a: A.Agent) -> str:
@@ -506,6 +508,7 @@ class VoicePlace:
     why_not: str = ""
     problem: str = ""
     set_by: str = ""                # a Hermes terminal: "desk" (its terminal_voice.json says so) or "default" (no file)
+    quiet: str = ""                 # quiet hours stored for this place ("22:00-07:00"); shown only, nothing enforces it
 
 
 _SETTING_NAME = re.compile(r"\s*\((?:[a-z_]+\.)+[a-z_]+\)")        # "(voice.auto_enable)": a setting's name
@@ -589,7 +592,7 @@ def grid_view(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader", n
                 except Exception:                   # noqa: BLE001
                     set_by = ""
             lines.append(VoicePlace(place, cell.label, cell.note, status, ev.headline if ev else "", can, why,
-                                    cell.problem, set_by))
+                                    cell.problem, set_by, str(row.quiet.get(place) or "")))
         out[row.agent.key] = tuple(lines)
     return out, wiring
 
@@ -823,6 +826,9 @@ class OtherAssistant:
     wiring: tuple = ()              # Wire marks: here / not here and the phrase, place by place
     not_playable: str = ""          # its English voice is one its own script cannot make yet: why (voicescripts.py)
     mount: Any = None               # acd_mount.MountView: the one terminal session voice goes to (None = not read)
+    extra: tuple = ()               # (code, voice) pairs: languages beyond English and Chinese (stored and shown only)
+    override: str = "auto"          # the language it speaks in: "auto" follows the reply (stored and shown only)
+    english_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -1000,7 +1006,8 @@ def voice_for(profile: str, agents_cfg: Optional[dict]) -> Optional[Voice]:
             if not a.voice:
                 return None
             return Voice(a.voice, None if a.english_only else a.voice_zh, a.speed, a.english_only,
-                         not_playable=not_playable(a))
+                         not_playable=not_playable(a), extra=tuple(a.voices_extra.items()),
+                         override=str(a.voice_override or "auto").lower())
     return None
 
 
@@ -1359,7 +1366,9 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
             mounts = {}
     others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names, a.key,
                                   TAKES_EFFECT.get(a.target, NOT_VERIFIED), places.get(a.key, ()),
-                                  wiring.get(a.key, ()), not_playable(a), mounts.get(a.target))
+                                  wiring.get(a.key, ()), not_playable(a), mounts.get(a.target),
+                                  tuple(a.voices_extra.items()), str(a.voice_override or "auto").lower(),
+                                  a.english_only)
                    for a in listed_agents if not a.profile)
     lights: tuple = ()
     if paths.lights is not None and paths.grid is not None:

@@ -6,7 +6,7 @@
 #   ./install_watcher.sh --print    show the job file; writes and loads nothing
 #   ./install_watcher.sh            write ~/Library/LaunchAgents/com.peter.voice-desk-watcher.plist and load it
 #   ./install_watcher.sh --remove   unload it and delete that file
-# Pause without removing: W in ./dashboard.sh, or `python3 watcher.py pause`.
+# Pause without removing: p on the Agent Control Desk (./acd.sh), or `python3 watcher.py pause`.
 set -u
 cd "$(dirname "$0")" || exit 1
 label=com.peter.voice-desk-watcher

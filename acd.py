@@ -205,9 +205,42 @@ def columns_of(snap: Optional[D.Snapshot]) -> list:
     return list(snap.agents) + list(snap.others) if snap else []
 
 
+# ---- other languages: the old dashboard's L (extra languages) and O (language choice) ----------------------------
+LANG_ROW = "Other languages"
+LANG_MENU = "::languages"               # the Chinese voice menu's last line: on to the other languages
+
+
+def lang_facts(col: Any) -> tuple[dict, str, bool]:
+    """(extra languages, the language choice, English only) of a column, as the Voice Desk list says."""
+    if is_agent(col):
+        v = col.voice
+        return (dict(v.extra), v.override, v.english_only) if v else ({}, P.AUTO, False)
+    return dict(getattr(col, "extra", ())), getattr(col, "override", P.AUTO), getattr(col, "english_only", False)
+
+
+def has_languages(col: Any) -> bool:
+    extra, choice, _ = lang_facts(col)
+    return bool(extra) or choice != P.AUTO
+
+
+def languages_cell(name: str, col: Any) -> Cell:
+    """Other languages: stored and shown only, so the light stays grey (nothing speaks them yet)."""
+    extra, choice, english_only = lang_facts(col)
+    codes = ", ".join(P.lang_name(c) for c in extra)
+    detail = [f"Extra languages: {P.extra_words(extra)}.", f"Language choice: {P.choice_words(choice)}.",
+              P.NEEDS_LANG]
+    if english_only:
+        return Cell(D.GREY, "English only" + ("" if choice == P.AUTO else f"; {P.choice_words(choice)}"),
+                    [f"{name} speaks English only: no other language, and a Chinese line stays silent."]
+                    + detail[1:], setting="languages")
+    words = (P.choice_words(choice) + (f"; {codes}" if codes else "")) if choice != P.AUTO else (codes or "none")
+    return Cell(D.GREY, words, detail, setting="languages")
+
+
 def rows_of(snap: Optional[D.Snapshot]) -> list[Row]:
-    """Every row of the table, top to bottom. Two rows appear only when some agent has something to show there:
-    the extra backups that are not on the ladder, and a voice effect."""
+    """Every row of the table, top to bottom. Three rows appear only when some agent has something to show there:
+    the extra backups that are not on the ladder, a voice effect, and other languages (the old dashboard's L and O:
+    stored and shown only; the Chinese voice menu reaches them for everyone)."""
     agents = snap.agents if snap else ()
     ladders = [D.ladder(v) for v in agents if not v.error]
     rows = [Row("section:model", SECTIONS[0], True),
@@ -221,6 +254,8 @@ def rows_of(snap: Optional[D.Snapshot]) -> list[Row]:
              Row("speed", "Speed")]
     if any(v.effect for v in agents):
         rows.append(Row("effect", "Voice effect"))
+    if any(has_languages(c) for c in columns_of(snap)):
+        rows.append(Row("languages", LANG_ROW))
     rows += [Row(f"vplace:{key}", label) for key, label in VPLACE_ROW]
     rows.append(Row("names", "Answers to (call names)"))
     if any(getattr(o, "mount", None) is not None for o in (snap.others if snap else ())):
@@ -455,6 +490,9 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         return Cell(D.RED if trouble else D.YELLOW, words, detail + [E.NEEDS["backup"]], setting="extras",
                     marker=lad.answered == D.EXTRA_RUNG)
 
+    if key == "languages":
+        return languages_cell(name, v) if v.voice else Cell()
+
     if key in ("voice", "voice_zh", "speed", "effect"):
         if not v.voice:
             if key == "effect":
@@ -584,6 +622,8 @@ SET_BY = {"desk": "set by the desk", "default": "default"}
 SET_BY_SHORT = {"desk": "by desk", "default": "default"}           # for a narrow column
 SET_BY_SAID = {"desk": "set by the desk's terminal voice switch",
                "default": "the default, since the desk's terminal voice switch is not set"}
+QUIET_WORDS = "Quiet hours:"
+QUIET_NOTE = "stored and shown only: nothing keeps it quiet then yet; set by hand in the Voice Desk list"
 
 
 def place_cell(name: str, key: str, places: tuple, has_voice: bool = True) -> Cell:
@@ -608,6 +648,10 @@ def place_cell(name: str, key: str, places: tuple, has_voice: bool = True) -> Ce
               + (f" ({p.evidence})" if p.evidence else "") + "."]
     if p.problem:
         detail.append(p.problem)
+    if p.quiet:                                 # the old dashboard's quiet-hours line, per place
+        detail.append(f"{QUIET_WORDS} {p.quiet} ({QUIET_NOTE}).")
+        short = short or words                  # a narrow column keeps the setting; the strip has the hours
+        words = f"{words}, quiet {p.quiet}"
     status = D.RED if p.problem else p.status
     if p.can_switch:
         return Cell(status, words, detail + [E.NEEDS["voice_place"]], setting=key, short=short)
@@ -633,6 +677,8 @@ def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
         return Cell(D.GREEN if o.chinese else D.GREY, D.voice_label(o.chinese) if o.chinese else "silent",
                     [f"{o.name} speaks Chinese as {D.voice_label(o.chinese)}." + lands, E.NEEDS["voice"]],
                     setting="voice_zh")
+    if key == "languages":
+        return languages_cell(o.name, o) if o.key else Cell()
     if key.startswith("vplace:"):
         return place_cell(o.name, key, o.voice_places)
     if key == "names":
@@ -1148,6 +1194,9 @@ class CellMenu(ModalScreen[Optional[str]]):
             return
         if not o.token:
             self.query_one("#menu-status", Static).update("Silent has nothing to test.")
+            return
+        if o.goes_on:                                   # "other, type it..." / "other languages...": not a voice
+            self.query_one("#menu-status", Static).update("That line opens a next step: there is no voice to test.")
             return
         self.query_one("#menu-status", Static).update(f"Making {o.label} to a file (nothing is played) ...")
         self.run_voice_test(self.spec.testable, o.token, o.label)
@@ -2090,6 +2139,8 @@ class Desk(App):
             return self.spec_wire(col, setting.split(":", 1)[1])
         if setting == "mount":
             return self.spec_mount(col)
+        if setting == "languages":
+            return self.spec_languages(col)
         build = {"model": self.spec_model, "effort": self.spec_effort, "extras": self.spec_extras,
                  "team_room": self.spec_team_room}.get(setting)
         if build:
@@ -2114,6 +2165,12 @@ class Desk(App):
                 return
             if cell.setting in ("voice", "voice_zh") and token == E.OTHER_VOICE:
                 self.ask_voice_name(col, cell.setting)
+                return
+            if token == LANG_MENU:                      # the Chinese voice menu's last line: the other languages
+                self.open_cell(row, col, Cell(setting="languages"), anchor)
+                return
+            if cell.setting == "languages" and token == "extra":
+                self.ask_extra(col)
                 return
             if cell.setting == "mount" and token == M.TYPE:
                 self.ask_mount_code(col)
@@ -2247,6 +2304,73 @@ class Desk(App):
                              if yes else None)
 
         self.push_screen(AskPopup(title, note, ""), answered)
+
+    def spec_languages(self, col: Any) -> Spec:
+        """Other languages (the old dashboard's L and O keys): which language it speaks in, and the extra language
+        voices. Stored and shown only: nothing speaks them yet, and the menu says so."""
+        edit = self.edit
+        key = getattr(col, "voice_key", "") or getattr(col, "key", "")
+        title = f"{col.name}: other languages"
+        try:
+            lang = P.languages_now(edit, key) if key else None
+        except Exception:                               # noqa: BLE001
+            lang = None
+        if lang is None:
+            return Spec(title, locked=f"{col.name} is not in the Voice Desk list, so there is nothing to change.")
+        options = [Opt(f"override|{c}", P.choice_words(c) + (" (the default)" if c == P.AUTO else ""),
+                       c == lang.override) for c in P.choice_codes(lang)]
+        if not lang.english_only:
+            options.append(Opt("extra", f"extra languages: change... (now: {P.extra_words(lang.extra)})",
+                               goes_on=True))
+
+        def describe(tok: str) -> list[str]:
+            if tok == "extra":
+                return ["Next you type the extra languages. Nothing is saved until you say yes to it."]
+            code = tok.split("|", 1)[1]
+            return [f"{col.name}'s language choice changes from {P.choice_words(lang.override)} to "
+                    f"{P.choice_words(code)}.",
+                    "Nothing speaks by this choice yet: it is kept in the Voice Desk list for when something does."]
+
+        def jobs(tok: str) -> list:
+            if not tok.startswith("override|"):
+                return []
+            code = tok.split("|", 1)[1]
+            return [lambda: P.set_override(edit, key, code)]
+
+        note = ("Which language it speaks in, and voices for languages beyond English and Chinese (the old "
+                "dashboard's L and O keys). " + ("English only: it follows the reply or speaks English. "
+                                                 if lang.english_only else "") + "Stored and shown only.")
+        return Spec(title, options, describe, jobs, note=note, needs=P.NEEDS_LANG)
+
+    def ask_extra(self, col: Any) -> None:
+        """A line to type the extra languages (code=voice, ...), then one yes / no line with the old and the new."""
+        edit = self.edit
+        key = getattr(col, "voice_key", "") or getattr(col, "key", "")
+        title = f"{col.name}: extra languages"
+        try:
+            lang = P.languages_now(edit, key)
+        except Exception as exc:                         # noqa: BLE001
+            self.push_screen(NoticePopup(title, Text(f"The Voice Desk list could not be read ({type(exc).__name__}). "
+                                                     "Nothing was changed.")))
+            return
+
+        def answered(text: Optional[str]) -> None:
+            if text is None:
+                return
+            clean, why = P.check_extra(edit, key, text)
+            if why:
+                self.push_screen(NoticePopup(title, Text(f"{why} Nothing was changed.")))
+                return
+            if clean == lang.extra:
+                self.push_screen(NoticePopup(title, Text("That is what it is now, so there is nothing to change.")))
+                return
+            body = [Text(f"  now    {P.extra_words(lang.extra)}"), Text(f"  new    {P.extra_words(clean)}"),
+                    Text(""), Text(P.NEEDS_LANG, style=DIM), Text(""), self.dry_line()]
+            self.push_screen(NoticePopup(f"Change {col.name}'s extra languages?", join(body), ask="yes, change it"),
+                             lambda yes: self.run_jobs([lambda: P.set_extra(edit, key, text)]) if yes else None)
+
+        self.push_screen(AskPopup(title, P.EXTRA_HINT, ", ".join(f"{c}={v}" for c, v in lang.extra.items())),
+                         answered)
 
     # -- the one terminal session voice goes to (Claude, Gemini, Codex) -------------------------------------------
     def mount_view(self, col: Any) -> Optional["M.MountView"]:
@@ -2587,6 +2711,10 @@ class Desk(App):
             options = [Opt(tok, label, cur, off, goes_on=tok == E.OTHER_VOICE)
                        for tok, label, cur, off in E.voice_options(agent, setting, cfg)]
             testable = "en" if setting == "voice" else "zh"
+            if setting == "voice_zh" and not agent.english_only:     # the old dashboard's L and O, one line away
+                extra, choice = dict(agent.voices_extra), str(agent.voice_override or P.AUTO).lower()
+                now_words = P.extra_words(extra) if choice == P.AUTO else P.choice_words(choice)
+                options.append(Opt(LANG_MENU, f"other languages... (stored only; now: {now_words})", goes_on=True))
 
         def describe(tok: str) -> list[str]:
             if setting == "speed":

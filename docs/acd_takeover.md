@@ -6,6 +6,13 @@ points at the old dashboard today, and what has to change to make the desk the d
 
 Nothing in this note has been done. Version four only adds files beside the old dashboard.
 
+**Update 18 November 2026:** the takeover is done. The desk gained the listener controls (`l`), the here / not
+here marks and activation phrases (X / P), and, last, the other languages (L / O: the Chinese voice menu's
+"other languages..." line) and quiet hours per place (shown on the "Speaks in ..." cells). `dashboard.py` and
+`dashboard.sh` were removed from the project, the Monitors pane opens `./acd.sh --armed`, and the words listed
+below (read-me, the two install scripts, `app.py`) now point at the desk. The rest of this note is kept as written
+on 17 November.
+
 ## The short answer
 
 - The desk now covers the old dashboard's **main screen**: every voice switch, the voice edits, the silent

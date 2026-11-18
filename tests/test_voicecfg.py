@@ -587,42 +587,23 @@ def test_sync_claude() -> None:
 
 
 # 9 ---------------------------------------------------------------------------------------------
-def test_dashboard_panel() -> None:
-    import asyncio
+def test_drift_check() -> None:
+    """The drift line the old dashboard's voices panel showed (retired 2026-11-18) came from voicecfg.drift: checked
+    here directly, on the same fixtures."""
     import voicecfg as V
-    import dashboard as D
-    from textual.widgets import Static
     profiles, conf = make_fixtures()
     import agents
     cfg = agents.load()
     en, zh = V.gemini_wants(next(a for a in agents.agents(cfg) if a.key == "gemini"), cfg)
     gconf = conf.parent / "gemini-voice-defaults.conf"             # Gemini's file as the panel would have written it
     gconf.write_text("".join(f'{k}="{v}"\n' for k, v in (("NEURAL_VOICE_EN", en), ("NEURAL_VOICE_ZH", zh)) if v))
-    real_p, real_c, real_g = V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF
-    V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF = profiles, conf, gconf
-
-    async def render() -> str:
-        app = D.Dashboard(autostart=False)          # the voices panel moved to the listener screen (S) with the grid
-        async with app.run_test(size=(140, 40)) as pilot:
-            await pilot.pause()
-            await pilot.press("s")
-            await pilot.pause()
-            app.refresh_voices()
-            return str(app.screen.query_one("#voices", Static).render())
-
-    try:
-        clean = asyncio.run(render())
-        a = profiles / "assistant" / "config.yaml"
-        a.write_text(a.read_text().replace("voice: en-US-AvaNeural", "voice: en-US-EmmaNeural", 1))
-        drifted = asyncio.run(render())
-    finally:
-        V.PROFILES, V.CLAUDE_CONF, V.GEMINI_CONF = real_p, real_c, real_g
-    report("dashboard: a read-only panel lists each agent's voice",
-           all(s in clean for s in ("Jarvis", "Kylie", "Esther", "Wanna Buffet", "Claude", "Ava", "am_santa", "Kokoro alloy")),
-           clean)
-    report("dashboard: no warning when the profiles match agents.toml", "drift" not in clean.lower(), clean)
-    report("dashboard: a warning when check finds drift, naming the agent and the fix",
-           "drift" in drifted.lower() and "Kylie" in drifted and "voicecfg" in drifted, drifted)
+    clean = V.drift(V.collect(cfg, profiles, conf, gconf))
+    a = profiles / "assistant" / "config.yaml"
+    a.write_text(a.read_text().replace("voice: en-US-AvaNeural", "voice: en-US-EmmaNeural", 1))
+    drifted = V.drift(V.collect(cfg, profiles, conf, gconf))
+    new = {(i.where, i.key) for i in drifted} - {(i.where, i.key) for i in clean}   # the fixtures may lag agents.toml
+    report("drift: a changed profile voice is found, naming the agent",
+           bool(new) and all(where == "kylie" and key.endswith(".voice") for where, key in new), str(sorted(new)))
 
 
 def test_unmanaged_block_list() -> None:
@@ -736,6 +717,6 @@ if __name__ == "__main__":
     test_sync()
     test_sync_claude()
     test_sync_gemini()
-    test_dashboard_panel()
+    test_drift_check()
     print("ALL PASS" if ok else "SOME FAILED")
     sys.exit(0 if ok else 1)

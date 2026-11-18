@@ -1,8 +1,11 @@
 # Where every voice setting lives
 
-One page, checked 2026-11-09 against the live Mac. The dashboard grid (`./dashboard.sh`) reads every
-place below; it changes only the ones marked **edit** or **switch**. Everything stays where the agents already read
-it: if the dashboard is closed, voices keep working exactly as last set.
+One page, checked 2026-11-09 against the live Mac. The Agent Control Desk (`./acd.sh`; it took over the old
+dashboard grid, `./dashboard.sh`, retired 2026-11-18) reads every place below; it changes only the ones marked
+**edit** or **switch**. Everything stays where the agents already read it: if the desk is closed, voices keep
+working exactly as last set. The old dashboard's keys named in the table are cells on the desk now: E / Z = the
+English / Chinese voice cells, F = the voice effect cell, L / O = "other languages..." (the last line of the Chinese
+voice menu, or the "Other languages" row once something is stored), U = u.
 
 | What | Where it lives | Who reads it, and when | Panel |
 |---|---|---|---|
@@ -10,7 +13,7 @@ it: if the dashboard is closed, voices keep working exactly as last set.
 | The voice bank (what E / Z offer, 2026-11-13) | `voicebank.py` reads every installed Kokoro voice file (`~/.local/share/claude-voice/voices-v1.0.bin`, `~/Desktop/Peter_Tax/tax_engine/data/voice/voices-v1.0.bin`) and Microsoft's own voice list saved in `Agent_Control_Desk/edge_voices.json` (`python -m voicebank refresh` fetches it again; the dashboard never goes online) | When a list opens. Everyone sees the whole bank for the language, local voices first; a voice the agent's own script cannot make yet is shown "not playable yet" and cannot be picked or typed (since 2026-11-18 this is read from the scripts themselves: `voicescripts.py`, see the row below). A newly installed English Kokoro voice is listed and accepted when picked (`agents.is_kokoro` reads the same files). Jenny stays in the bank but is never offered (Peter 2026-11-11: "no Jenny"); an agent that still has her keeps her line, marked. `python -m voicebank` lists it | read-only |
 | The agents' own speaking scripts and the shared speaker (2026-11-18) | `speak_any.py` (the shared speaker: exactly one bank voice to a file, or nothing) · Gemini's hook, Jarvis's `tts_jarvis_local.sh`, Esther's `esther_tts.py` (switched onto the shared speaker for any voice they do not make themselves) · Claude's `speak-natural.py` + `kokoro_speak.py` (backup voices removed) · `simba_tts.py` (any English bank voice; her effect on Kokoro voices only) | `python -m voicescripts status` says which are switched; `install` backs up, edits, smoke-tests with fakes and puts back on failure; `restore <backup folder>` undoes (backups and RESTORE.md in `~/.hermes/profile-backups/<time>-voice-scripts/`) | read-only (the desk reads the switch mark) |
 | Extra languages, language override | `agents.toml`: `voices_extra = { ja = "ja-JP-NanamiNeural" }`, `voice_override = "auto"` (`en`, `zh` or an extra code) | Stored now, nothing enforces them yet (Hermes has no language detection: one voice per agent) | **edit** L / O |
-| Quiet hours | `agents.toml`: `quiet_hours = { tg_dm = "22:00-07:00" }` (places: `terminal`, `tg_dm`, `tg_group`, `mic`, `iphone`) | Stored and shown only; enforcement is a later step | by hand |
+| Quiet hours | `agents.toml`: `quiet_hours = { tg_dm = "22:00-07:00" }` (places: `terminal`, `tg_dm`, `tg_group`, `mic`, `iphone`) | Stored and shown only; enforcement is a later step | by hand; the desk shows it on that place's "Speaks in ..." cell |
 | Hermes terminal window: voice on | The desk's switch `~/.hermes/profiles/<profile>/terminal_voice.json` → `{"voice": "on"}` / `{"voice": "off"}` (Phase C, 2026-11-18; local Hermes patch `terminal-voice-switch`). No file → `config.yaml` `voice.auto_enable` (local Hermes patch) and `voice.auto_tts` as before | Every open window re-reads the switch at start and before each reply and acts only when it changed (off = replies not read aloud, mic left alone; on = voice mode on and replies read aloud; file removed = back to what the window started with; a typed `/voice` wins until the switch changes again). It runs in the windows, not the gateway: no gateway restart; a window opened before the patch follows it once reopened | **switch** Enter: Off / Always (backup, read-back, undo U; the first switch makes the file, its undo removes it) |
 | Telegram direct chat: off / voice_only / all | `~/.hermes/gateway_voice_mode.json`, keys `<profile>:telegram:<chat id>` (Peter's chat number, kept outside the project). File does not exist until the panel (or `/voice` in Telegram) writes it; old orphaned copies sit in `profiles/orchestrator/` and `profiles/wanna-buffet/` and are NOT read (and never written). No saved mode → `voice.auto_tts` decides | Read at gateway start AND, with Peter's live-reload patch loaded (`hermes_patches.py`), re-read on the next message after the file changes | **switch** Enter: Off / Voice-back / Always (live once the gateway has restarted with the patch) |
 | Telegram team group: voice notes | `~/.hermes/profiles/orchestrator/scripts/team_room/state/mirror_config.json` → `voice_notes.on` and `voice_notes.agents` (group chat id -5370236728) | Re-read on every line: live | **switch** Enter: Off / Always per agent (same rule and file layout as the team room's own `mirror voice on\|off <agent>`; turning on when the whole group was off also says who else comes on) |
@@ -57,7 +60,8 @@ Colours: **green** spoke recently and it worked · **grey** idle, nothing to say
 
 ## Switching a cell on or off (step 2)
 
-`./dashboard.sh`, ← → to a place, **Enter**. Live today: Telegram team group (Off / Always), Claude terminal
+On the Agent Control Desk (`./acd.sh`), the "Speaks in ..." row of a place, **Enter** (the old dashboard did it
+with ← → to a place and Enter). Live today: Telegram team group (Off / Always), Claude terminal
 (Off / Always) and the Voice Desk mic window / phone column, which holds two global switches (each agent's own
 voice vs the shared voice, speech queue on / off) because Voice Desk always answers aloud when Peter speaks.
 Terminals and the team group have no Voice-back (nothing there knows whether Peter spoke). The iPhone (Siri

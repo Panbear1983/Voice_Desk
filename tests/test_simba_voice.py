@@ -796,72 +796,8 @@ class TheGridShowsHer(unittest.TestCase):
         self.assertIn("effect: fenrir16 = speed 0.95 · pitch 1.08 · tempo 1", detail)
 
 
-class TheGridKeys(unittest.IsolatedAsyncioTestCase):
-    """E and F on Simba's row (pick-lists since 2026-11-13), then U U, in the headless dashboard against the fake world."""
-
-    async def test_e_and_f_on_simbas_row_then_u_u(self):
-        import dashboard as D
-        import voicepick
-        from textual.widgets import Input, OptionList
-        from tests.test_dashboard_grid import load, make_app, pick, text_of, wait_for
-        w = simba_world()
-        start = w.toml.read_text()
-        app = make_app(w)
-        async with app.run_test(size=(180, 50)) as pilot:
-            await load(app, pilot)
-            await pilot.press(*["down"] * 7, "f")                               # Simba is the 8th row
-            await pilot.pause()
-            self.assertIsInstance(app.screen, D.ChoiceScreen)
-            ids = [o.id for o in app.screen.query_one(OptionList)._options]
-            self.assertEqual(ids[-1], voicepick.OTHER, "the last line is 'other, type it'")
-            self.assertIn("23", ids)
-            await pick(app, pilot, voicepick.OTHER)                              # the old typing box
-            self.assertIsInstance(app.screen, D.AskScreen)
-            field = app.screen.query_one(Input)
-            self.assertEqual(field.value, "fenrir16", "the box starts with today's effect")
-            field.value = "23 but slower and breathier"
-            await pilot.press("enter")
-            self.assertTrue(await wait_for(lambda: VE.read_history(w.edit)))
-            await pilot.pause()
-            self.assertIn("Simba voice effect: fenrir16 → 23 but slower and breathier", text_of(app, "#history"))
-            await pilot.press("e")
-            await pilot.pause()
-            self.assertIsInstance(app.screen, D.ChoiceScreen)
-            lst = app.screen.query_one(OptionList)
-            ids = [o.id for o in lst._options]
-            pickable = [o.id for o in lst._options if not o.disabled and not o.id.startswith("::")]
-            greyed = [o.id for o in lst._options if o.disabled]
-            self.assertTrue(pickable and all(v[:3] in ("af_", "am_") for v in pickable),
-                            "her script makes American Kokoro voices only: those are pickable")
-            self.assertIn("af_alloy", pickable, "decision 14: Esther's voice may be hers too")
-            self.assertIn(voicepick.NOT_YET + "bf_emma", greyed, "the rest of the bank is shown, greyed out")
-            self.assertIn(voicepick.NOT_YET + "en-US-AvaNeural", greyed)
-            self.assertEqual(ids[lst.highlighted], "am_fenrir", "the list starts on her current voice")
-            await pick(app, pilot, "af_kore")
-            self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 2))
-            await pilot.pause()
-            self.assertEqual(agent_of(w.toml, "simba").voice, "af_kore")
-            await pilot.press("u")
-            self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 3))
-            await pilot.press("u")
-            self.assertTrue(await wait_for(lambda: len(VE.read_history(w.edit)) == 4))
-            await pilot.pause()
-            self.assertEqual(w.toml.read_text(), start)
-
-    async def test_f_on_another_row_is_not_offered_and_does_nothing(self):
-        # Part 5 (2026-11-13): F is in the footer only on Simba's row
-        from tests.test_dashboard_grid import load, make_app
-        from tests.test_gridedit import footer_keys
-        import dashboard as D
-        w = simba_world()
-        app = make_app(w)
-        async with app.run_test(size=(180, 50)) as pilot:
-            await load(app, pilot)
-            await pilot.press("down", "f")                                       # Kylie
-            await pilot.pause()
-            self.assertNotIn("f", footer_keys(app))
-            self.assertIsInstance(app.screen, D.GridScreen)
-            self.assertEqual(VE.read_history(w.edit), [])
+# The old dashboard's E / F keys on Simba's row were retired with it on 2026-11-18. The writer they used
+# (voiceedit.change) is tested above in this file; the Agent Control Desk's voice and effect cells call the same one.
 
 
 if __name__ == "__main__":

@@ -137,7 +137,7 @@ def main() -> None:
         import service
         if service.is_fresh(service.read_status()):
             print("The always-on listener has the microphone (just say a name). "
-                  "./dashboard.sh shows it; K in the dashboard stops it if you want this window instead.")
+                  "./acd.sh shows it (l opens the listener); k there stops it if you want this window instead.")
         else:
             print("Voice Desk is already open in another window.")
         sys.exit(1)
