@@ -90,8 +90,10 @@ NEEDS = {
     "rule": "No restart needed. The desk shows it at once. The Team Room follows a rule only where its line says so; "
             "a rule marked 'recorded, not yet enforced' changes nothing in the room yet.",
     "voice_place": "No restart needed for most places: the Telegram team group, Claude's and Gemini's own windows "
-                   "and the mic window read their switch before every line. A Telegram private chat follows from "
-                   "Peter's next message when the agents' system has the live-reload fix; the result says so.",
+                   "and the mic window read their switch before every line, and an agent's own terminal windows "
+                   "before their next reply (a window opened before the fix went in follows it once reopened). "
+                   "A Telegram private chat follows from Peter's next message when the agents' system has the "
+                   "live-reload fix; the result says so.",
     "team_room": "No restart needed in the normal case: the Team Room makes its next room through the agents' system "
                  "and switches the Telegram side in the same step. The chat on screen starts fresh; the old lines "
                  "stay in the saved history.",
@@ -1289,7 +1291,7 @@ def set_voice_place(agent_key: str, place: str, token: str, paths: EditPaths, *,
             changes, note = onoff._plan_tg_group(agent, token, paths.grid)
         elif place == "terminal":
             changes, note = (onoff._plan_claude(agent, token, paths.grid, paths.voice)
-                             if G.kind_of(agent) == G.CLAUDE else onoff_hermes.plan_gemini(agent, token, paths.grid))
+                             if G.kind_of(agent) == G.CLAUDE else onoff_hermes.plan_terminal(agent, token, paths.grid))
         elif place == "tg_dm":
             changes, note = onoff_hermes.plan_tg_dm(agent, token, paths.grid)
         else:

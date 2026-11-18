@@ -13,7 +13,8 @@ What it does, all silent and read-only towards everything live:
      is read by the OLD code (a checkout of the commit before) and both are compared: they must be identical;
   3. "desk": the desk is drawn headless (no window). Every agent's voice cells are read; every voice menu is opened
      and counted (lines, lines that cannot be picked, "not playable yet" lines); the typed-name line is driven to its
-     yes / no question and left unanswered; pictures (SVG) of the menus are saved;
+     yes / no question and left unanswered; pictures (SVG) of the menus are saved. Phase C: every agent's
+     "speaks in terminal window" cell is read and its Off / Always menu opened (never picked);
   4. agents.toml's copy is fingerprinted before and after: it must be byte for byte the same.
 
 Nothing is played, nothing is armed, no live window or file is touched. The report is <out>/proof.json.
@@ -143,6 +144,28 @@ async def desk(out: Path) -> dict:
                     report["pictures"].append(str(p))
                 await pilot.press("escape")
                 await pilot.pause()
+        # Phase C: every agent's "speaks in terminal window" cell, and its menu opened (never picked)
+        report["terminal"] = {}
+        for name in names:
+            if not screen.go("vplace:terminal", name):
+                continue
+            await pilot.pause()
+            cell = screen.cells.get(("vplace:terminal", acd.col_id(next(c for c in screen.cols if c.name == name))))
+            if cell is None or cell.blank:
+                continue
+            seen = report["terminal"][name] = {"words": cell.words, "status": cell.status, "switch": bool(cell.setting)}
+            if not cell.setting:
+                continue
+            await pilot.press("enter")
+            await pilot.pause()
+            if isinstance(app.screen, acd.CellMenu):
+                seen["menu"] = [o.label for o in app.screen.spec.options]
+                if name == "Kylie":
+                    p = out / "menu_kylie_terminal.svg"
+                    p.write_text(app.export_screenshot(title="Kylie: speaks in terminal window"), encoding="utf-8")
+                    report["pictures"].append(str(p))
+            await pilot.press("escape")                             # never a pick
+            await pilot.pause()
         # the typed-name line, driven to its yes / no question and left unanswered
         if screen.go("voice", "Kylie"):
             await pilot.pause()
@@ -216,6 +239,8 @@ def main() -> int:
                       "differences": report.get("differences", []),
                       "current_voice_not_playable": report["current_voice_not_playable"],
                       "pictures": len(report["desk"]["pictures"]),
+                      "terminal": {n: (t["words"], t["switch"], len(t.get("menu", [])))
+                                   for n, t in report["desk"].get("terminal", {}).items()},
                       "menus": {n: {r: (m["lines"], m["cannot_be_picked"], m["not_playable_yet"])
                                     for r, m in rows.items()} for n, rows in report["desk"]["menus"].items()},
                       "report": str(a.out / "proof.json")}, indent=1))

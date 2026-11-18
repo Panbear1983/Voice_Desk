@@ -165,7 +165,7 @@ def _plan(cfg: dict, agent_key: str, place: str, token: str, p: G.Paths, e: voic
         changes, _ = onoff._plan_tg_group(agent, token, p)
     elif place == "terminal":
         changes, _ = (onoff._plan_claude(agent, token, p, e) if G.kind_of(agent) == G.CLAUDE
-                      else onoff_hermes.plan_gemini(agent, token, p))
+                      else onoff_hermes.plan_terminal(agent, token, p))
     else:
         changes, _ = onoff_hermes.plan_tg_dm(agent, token, p)
     return agent, changes

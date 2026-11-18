@@ -69,7 +69,7 @@ class TheMenus(Base):
 
     def test_the_read_only_cells_say_why(self):
         p = self.w.paths
-        for key, place, word in (("kylie", "iphone", "Siri"), ("kylie", "terminal", "voice.auto_enable"),
+        for key, place, word in (("kylie", "iphone", "Siri"),
                                  ("codex", "terminal", "nothing in"), ("codex", "tg_group", "nothing in")):
             m = onoff.menu(agent_of(self.w, key), place, self.cell(key, place), p)
             self.assertEqual(m.options, [], (key, place))

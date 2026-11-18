@@ -98,7 +98,11 @@ def menu(agent: agents.Agent, place: str, cell: G.Cell, p: G.Paths) -> Menu:
         return Menu(title, why_not=G.TELEGRAM_HANDS_OFF[agent.key][:1].upper() + G.TELEGRAM_HANDS_OFF[agent.key][1:])
     import onoff_hermes
     if onoff_hermes.can_switch(agent, place):
-        return (onoff_hermes.menu_tg_dm if place == "tg_dm" else onoff_hermes.menu_gemini)(agent, cell, p)
+        if place == "tg_dm":
+            return onoff_hermes.menu_tg_dm(agent, cell, p)
+        if kind == G.HERMES:
+            return onoff_hermes.menu_hermes_terminal(agent, cell, p)
+        return onoff_hermes.menu_gemini(agent, cell, p)
     if place == "tg_group":
         if kind == G.HERMES and agent.profile not in TEAM_VOICED:
             return Menu(title, why_not=f"the team room does not voice {agent.display} (text only)")
@@ -472,7 +476,7 @@ def set_cell(agent_key: str, place: str, token: str, p: G.Paths, e: Optional[voi
             changes, note = _plan_tg_group(agent, token, p)
         elif place == "terminal":
             changes, note = _plan_claude(agent, token, p, e) if G.kind_of(agent) == G.CLAUDE else \
-                onoff_hermes.plan_gemini(agent, token, p)
+                onoff_hermes.plan_terminal(agent, token, p)
         elif place == "tg_dm":
             changes, note = onoff_hermes.plan_tg_dm(agent, token, p)
         else:

@@ -211,7 +211,7 @@ class WhatEachPlaceCanDo(unittest.TestCase):
         c = self.can("kylie", "terminal")
         self.assertIn("en-US-AvaNeural (provider natural)", c.speaks)
         self.assertIn("a Microsoft pick with E is written here too", c.voice)
-        self.assertIn("view only", c.change)
+        self.assertIn("Enter: Off / Always", c.change)                  # Phase C: the desk's terminal switch
         self.assertIn("Enter: Off / Voice-back / Always", self.can("kylie", "tg_dm").change)
         self.assertIn("Enter: Off / Always", self.can("kylie", "tg_group").change)
 
