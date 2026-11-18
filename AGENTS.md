@@ -7,7 +7,7 @@ What this is: a hands-free voice loop with Claude Code on Peter's Mac. Mic open 
 1.5 s sends -> whisper-server (small model, kept loaded) -> `claude -p --resume` headless thread
 -> spoken reply via Hermes' voice chain (Jenny -> Piper -> Mac voice; Meijia for Mandarin) ->
 mic reopens. Window = `app.py` (Textual 7.5). Phone door = `receiver.py` + an iOS Shortcut.
-Renamed from Claude_Voice to Voice_Desk on 2026-10-15 (Peter's pick), then to Agent_Control_Desk (the old ~/GitHub/Voice_Desk symlink is gone); state dir `~/.voice_desk`
+Earlier names Claude_Voice and Voice Desk are retired (Peter's pick, 2026-10-15; renamed Agent_Control_Desk, old path gone); state dir `~/.voice_desk`
 (auto-moved from `~/.claude_voice`), env prefix `VOICE_DESK_`, hook guard `VOICE_DESK_LOOP=1`.
 Since 2026-10-15 evening `brain.Brain` is a router: "claude" (ClaudeBrain, `claude -p --resume`),
 "gemini" (GeminiBrain, `agy -p … --conversation <id>` JSON; Google's Antigravity CLI, the old gemini CLI is dead for individuals) or
