@@ -13,6 +13,11 @@ the answer from that session's own transcript.
     nothing mounted             grey    as before: the only open window of that service, else a separate
                                         background session
 
+A window herdr shows NO session code for (the Codex window "Codex (Dolly)", 2026-11-18) counts as the mounted
+session's window only by live_session.bind_codeless's rule: it is the ONE open window of that service, the mounted
+session's own transcript exists and was written in the last day, and (when both say) in the window's folder. The
+menu and the cell say which way it went and why. Never a guess between two windows.
+
 Sessions in the desktop apps are out of scope: there is no window to type into, and two writers on one
 conversation would clash.
 
@@ -73,6 +78,8 @@ class MountView:
     window: Optional[Session] = None        # the mounted session's open window
     sessions: tuple = ()            # every open window of this service, newest activity first
     error: str = ""                 # herdr could not be asked: why
+    bound: bool = False             # the window was found by live_session.bind_codeless (herdr shows it no code)
+    why: str = ""                   # bind_codeless's words: why the one window with no code is used, or why not
 
     @property
     def state(self) -> str:
@@ -150,11 +157,25 @@ def sessions_in(panes: list, target: str) -> tuple:
     return tuple(out)
 
 
+def would_bind(target: str, code: str, sessions: tuple) -> tuple[Optional[Session], str]:
+    """For a code with no window of its own: the one window herdr shows no code that voice would use for it
+    (live_session.bind_codeless), and the words why, or (None, why not / "")."""
+    if not code or not sessions or any(s.code == code for s in sessions):
+        return None, ""
+    import live_session
+    yes, why = live_session.bind_codeless(target, code, [(s.pane, s.status, s.code, s.folder) for s in sessions])
+    return (sessions[0] if yes else None), why
+
+
 def _view(pins: Path, target: str, panes: Optional[list], error: str) -> MountView:
     code = read_pin(pins, target)
     found = sessions_in(panes, target) if panes is not None else ()
     window = next((s for s in found if code and s.code == code), None)
-    return MountView(target, SERVICES[target], code, window, found, error)
+    bound, why = False, ""
+    if window is None:
+        window, why = would_bind(target, code, found)
+        bound = window is not None
+    return MountView(target, SERVICES[target], code, window, found, error, bound, why)
 
 
 def view(pins: Path, herdr: str, target: str) -> MountView:
@@ -207,11 +228,22 @@ def session_label(s: Session, now: Optional[float] = None) -> str:
     return f"{short(s.code)}  {name}  {folder}  {ago(s.last, now)}"
 
 
-def no_code_words(s: Session, name: str) -> str:
-    """A window of the service that herdr reports WITHOUT a session code: voice cannot find or follow it, so it
-    cannot be mounted (Kylie 2026-11-18: the Codex window "Codex (Dolly)")."""
+def no_code_words(s: Session, name: str, m: Optional["MountView"] = None) -> str:
+    """A window of the service that herdr reports WITHOUT a session code (Kylie 2026-11-18: the Codex window "Codex
+    (Dolly)"). Voice uses it only for a mounted code, and only by live_session.bind_codeless's rule: the ONE window
+    of the service, the mounted session's own record written lately (and in the window's folder)."""
     which = f"\"{s.label[:28]}\" ({s.pane})" if s.label else s.pane
-    return f"{which}: this {name} window shows herdr no session code, so voice cannot mount it yet"
+    head = f"{which}: herdr shows this {name} window no session code"
+    if m is None:
+        return head + ", so voice cannot mount it by itself"
+    if m.bound and m.window == s:
+        return f"{which}: voice uses this window for the mounted session {short(m.code)} ({m.why})"
+    if m.code and m.why:
+        return f"{head}; not used for the mounted session {short(m.code)}: {m.why}"
+    if len(m.sessions) > 1:
+        return f"{head}, and it cannot be told apart from the other {name} windows, so voice never uses it"
+    return (f"{head}. Mount its session code (type or paste it below): while it is the only {name} window open "
+            "and that session wrote its record lately, voice uses this window")
 
 
 def where_words(s: Session) -> str:

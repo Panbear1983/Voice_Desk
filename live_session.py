@@ -12,6 +12,11 @@ One turn, for any of the three:
      (Peter 2026-11-18: one open session per service, never a silent switch to another one).
      With no pin, the only open pane of that agent is used; none open, or several: not
      available, and the background thread answers instead (brain.Brain.backend).
+     A window herdr shows NO session code for (2026-11-18: the Codex window "Codex (Dolly)") is
+     used for the mounted code only when it is the ONE open window of that service, the mounted
+     session's own transcript exists and was written in the last RECENT_SEC, and, when both are
+     known, that transcript was started in the window's folder (bind_codeless). Never a guess
+     between two windows; with nothing mounted such a window is not used, as before.
   2. Type the words, prefixed "[voice] ", into that pane and press Enter, exactly as if Peter
      had typed them.
   3. Follow that session's own transcript file until the turn is over (Codex writes an explicit
@@ -44,6 +49,7 @@ QUIET_SEC = 3.0                  # transcript unchanged this long while the pane
 POLL_SEC = 0.5
 ENTER_DELAY_SEC = 0.6           # Codex takes an Enter that arrives with the pasted text as part of it
 RETRY_ENTER_SEC = 5.0           # words typed but not sent by then: press Enter once more
+RECENT_SEC = 24 * 3600          # a mounted session written this recently may use the one window with no code
 
 _TOOL_STATUS = {
     "Read": "still reading files", "Grep": "still searching the code", "Glob": "still looking for files",
@@ -151,6 +157,80 @@ AGENTS = {
 }
 
 
+def _age_words(secs: float) -> str:
+    secs = max(0, int(secs))
+    if secs < 90:
+        return "just now"
+    if secs < 5400:
+        return f"{secs // 60} min ago"
+    if secs < 2 * 86400:
+        return f"{secs // 3600} h ago"
+    return f"{secs // 86400} days ago"
+
+
+def _transcript_folder(path: Path) -> str:
+    """The folder a session was started in, as its own transcript says (Codex: session_meta; Claude: each line's
+    cwd). "" when the transcript does not say."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(30):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(ev, dict):
+                    payload = ev.get("payload")
+                    cwd = ev.get("cwd") or (payload.get("cwd") if isinstance(payload, dict) else "")
+                    if isinstance(cwd, str) and cwd:
+                        return cwd
+    except OSError:
+        pass
+    return ""
+
+
+def _same_folder(a: str, b: str) -> bool:
+    import os
+    return os.path.realpath(a) == os.path.realpath(b)
+
+
+def bind_codeless(target: str, pin: str, windows: list, now: Optional[float] = None) -> tuple[bool, str]:
+    """May the mounted session `pin` use the one open window of this service that herdr shows NO session code?
+
+    windows: every open window of the service, as (pane id, status, session code, folder). Yes only when
+      * there is exactly ONE window of the service (never a guess between two),
+      * herdr shows it no session code,
+      * the mounted session's own transcript exists on this Mac and was written in the last RECENT_SEC,
+      * and, when the transcript and herdr both name a folder, they name the same one.
+    Returns (yes, plain words: why, or why not). With nothing mounted: (False, "")."""
+    name = AGENTS[target].name
+    if not pin or not any(not w[2] for w in windows):
+        return False, ""
+    if len(windows) != 1:
+        return False, (f"{len(windows)} {name} windows are open and herdr shows no session code for at least one, "
+                       "so voice does not guess which one is the mounted session")
+    _pane, _status, _code, folder = windows[0]
+    path = AGENTS[target].locate(pin)
+    try:
+        written = path.stat().st_mtime if path and path.exists() else 0.0
+    except OSError:
+        written = 0.0
+    if not path or not written:
+        return False, "the mounted session's own record was not found on this Mac, so voice does not use this window"
+    age = (time.time() if now is None else now) - written
+    if age > RECENT_SEC:
+        return False, (f"the mounted session's own record was last written {_age_words(age)}, longer ago than "
+                       f"{RECENT_SEC // 3600} h, so voice does not assume this window is that session")
+    started = _transcript_folder(path)
+    if started and folder and not _same_folder(started, folder):
+        return False, (f"the mounted session was started in {started}, but this window is in {folder}, so it is "
+                       "not that session")
+    return True, (f"herdr shows this window no session code; it is the only {name} window open and the mounted "
+                  f"session's own record was written {_age_words(age)}, so voice uses this window")
+
+
 class LiveBrain:
     """One agent's live window, behind the same ask/cancel/new_thread interface as the
     background brains."""
@@ -181,16 +261,22 @@ class LiveBrain:
 
     def pane(self) -> Optional[tuple[str, str, str]]:
         """(pane id, agent status, session id) of the window to talk to, or None. A mounted session is the
-        only window that counts: another open window of the same service is never used in its place."""
+        only window that counts: another open window of the same service is never used in its place. A window
+        herdr shows no session code is used for the mounted session only by bind_codeless's rule."""
         try:
             panes = json.loads(_herdr("pane", "list"))["result"]["panes"]
         except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired):
             return None
-        mine = [(p["pane_id"], p.get("agent_status", ""), (p.get("agent_session") or {}).get("value", ""))
-                for p in panes if p.get("agent") == self.agent.herdr_agent and (p.get("agent_session") or {}).get("value")]
+        windows = [(p["pane_id"], p.get("agent_status", ""), (p.get("agent_session") or {}).get("value", "") or "",
+                    p.get("foreground_cwd") or p.get("cwd") or "")
+                   for p in panes if p.get("agent") == self.agent.herdr_agent]
+        mine = [(pid, status, code) for pid, status, code, _ in windows if code]
         pin = self._load_session()
         if pin:
-            return next((found for found in mine if found[2] == pin), None)
+            found = next((w for w in mine if w[2] == pin), None)
+            if found is None and bind_codeless(self.target, pin, windows)[0]:
+                found = (windows[0][0], windows[0][1], pin)
+            return found
         return mine[0] if len(mine) == 1 else None
 
     def available(self) -> bool:

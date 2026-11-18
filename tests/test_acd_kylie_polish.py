@@ -337,13 +337,15 @@ class AWindowWithNoCode(unittest.TestCase):
         codex = next(o for o in snap.others if o.name == "Codex")
         spec = app.spec_mount(codex)
         lines = [o.label for o in spec.options]
-        self.assertIn('"Codex (Dolly)" (wV:p4): this Codex window shows herdr no session code, so voice cannot '
-                      'mount it yet', lines)
+        self.assertIn('"Codex (Dolly)" (wV:p4): herdr shows this Codex window no session code. Mount its session '
+                      'code (type or paste it below): while it is the only Codex window open and that session wrote '
+                      'its record lately, voice uses this window', lines)
         self.assertTrue(next(o for o in spec.options if o.token == "nocode|wV:p4").disabled)
         self.assertFalse(any("no Codex window" in x for x in lines))
         cell = acd.cell_at("mount", codex)
         story = " ".join(cell.detail)
-        self.assertIn('herdr shows no session code for "Codex (Dolly)" (wV:p4), so voice cannot use that window: '
+        self.assertIn('herdr shows no session code for "Codex (Dolly)" (wV:p4), so voice cannot use that window '
+                      'until its session code is mounted (and only while it is the one Codex window open): '
                       'voice Codex goes to its separate background session', story)
 
     def test_no_window_at_all_says_none_is_open(self):
@@ -357,7 +359,7 @@ class AWindowWithNoCode(unittest.TestCase):
         self.assertIn("no Codex window is open in herdr", lines)
         self.assertNotIn("herdr shows no session code", " ".join(acd.cell_at("mount", codex).detail))
         self.assertEqual(M.no_code_words(M.Session("", "wV:p9", "idle", "", ""), "Codex"),
-                         "wV:p9: this Codex window shows herdr no session code, so voice cannot mount it yet")
+                         "wV:p9: herdr shows this Codex window no session code, so voice cannot mount it by itself")
 
 
 if __name__ == "__main__":

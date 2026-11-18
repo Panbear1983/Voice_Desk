@@ -711,17 +711,20 @@ def mount_cell(o: D.OtherAssistant) -> Cell:
         return Cell()
     if m.state == "open":
         w = m.window
+        detail = [f"Voice {o.name} goes to the mounted session {m.code} ({M.where_words(w)})."]
+        if m.bound:
+            detail.append(f"herdr shows that window no session code: {m.why}.")
         return Cell(D.GREEN, f"{M.short(m.code)} open",
-                    [f"Voice {o.name} goes to the mounted session {m.code} ({M.where_words(w)}).",
-                     "Its answer is read aloud as the window shows it; the typed words start with [voice].",
-                     "No other window and no background session is used."], setting="mount")
+                    detail + ["Its answer is read aloud as the window shows it; the typed words start with [voice].",
+                              "No other window and no background session is used."], setting="mount")
     if m.state == "closed":
         return Cell(D.YELLOW, f"{M.short(m.code)} not open",
                     [f"The mounted {o.name} session is not open: "
                      + (f"{m.error}, so the window of {m.code} cannot be found" if m.error
-                        else f"{m.code} has no window in herdr") + ".",
-                     f"A voice turn to {o.name} says so and starts no other session.",
-                     "Enter: mount an open session, or unmount."], setting="mount")
+                        else f"{m.code} has no window in herdr") + "."]
+                    + ([f"The {o.name} window with no session code is not used for it: {m.why}."] if m.why else [])
+                    + [f"A voice turn to {o.name} says so and starts no other session.",
+                       "Enter: mount an open session, or unmount."], setting="mount")
     n = sum(1 for s in m.sessions if s.code)
     blind = [s for s in m.sessions if not s.code]
     detail = [f"Nothing is mounted for {o.name}: voice uses its only open window when exactly one is open "
@@ -730,6 +733,8 @@ def mount_cell(o: D.OtherAssistant) -> Cell:
         names = ", ".join(f"\"{s.label}\" ({s.pane})" if s.label else s.pane for s in blind)
         detail.append(f"herdr shows no session code for {names}, so voice cannot use "
                       + ("that window" if len(blind) == 1 else "those windows")
+                      + (" until its session code is mounted (and only while it is the one "
+                         f"{o.name} window open)" if len(m.sessions) == 1 else "")
                       + ("" if n == 1 else f": voice {o.name} goes to its separate background session") + ".")
     detail.append("Enter: mount one open session, so voice always goes to that one.")
     return Cell(D.GREY, "none mounted", detail, setting="mount")
@@ -2409,10 +2414,15 @@ class Desk(App):
             options.append(Opt(f"mount|{m.code}", f"{M.short(m.code)}  mounted, its window is not open", now=True))
         for s in m.sessions:
             if not s.code:
-                options.append(Opt(f"nocode|{s.pane}", M.no_code_words(s, name), disabled=True))
+                if m.bound and m.window == s:          # the mounted session, found in the one window with no code
+                    options.append(Opt(f"mount|{m.code}", M.no_code_words(s, name, m), now=True))
+                else:
+                    options.append(Opt(f"nocode|{s.pane}", M.no_code_words(s, name, m), disabled=True))
                 continue
             by[s.code] = s
             options.append(Opt(f"mount|{s.code}", M.session_label(s), now=s.code == m.code))
+        if m.bound and m.window is not None:
+            by[m.code] = m.window
         if not m.sessions:
             options.append(Opt("none", f"no {name} window is open in herdr"
                                        + (f" ({m.error})" if m.error else ""), disabled=True))
@@ -2475,12 +2485,19 @@ class Desk(App):
             s = next((x for x in m.sessions if x.code == code), None)
             body = [Text(f"  now    {('session ' + m.code) if m.code else 'nothing mounted'}"),
                     Text(f"  new    session {code}"), Text("")]
+            blind, why = M.would_bind(target, code, m.sessions)
             if s:
                 body.append(Text(f"Its window is open: {M.where_words(s)}.", style=COLOUR[D.GREEN]))
+            elif blind:
+                body.append(Text(f"No window shows this code, but voice will use {M.where_words(blind)}: {why}.",
+                                 style=COLOUR[D.GREEN]))
             else:
                 body.append(Text(f"No open {name} window has this code right now. It is mounted anyway: the light "
                                  f"stays yellow and voice says the mounted {name} session is not open until its "
                                  "window opens.", style=COLOUR[D.YELLOW]))
+                if why:
+                    body.append(Text(f"The {name} window that shows no session code is not used for it: {why}.",
+                                     style=COLOUR[D.YELLOW]))
                 if not M.known(target, code):
                     body.append(Text(f"No {name} conversation with this code was found on this Mac either: check "
                                      "the code.", style=COLOUR[D.YELLOW]))

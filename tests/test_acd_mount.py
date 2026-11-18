@@ -302,8 +302,8 @@ class TheTable(unittest.IsolatedAsyncioTestCase):
             await show(app, pilot)
             self.assertIn("none mounted", shown(app, "mount", "Codex"))
             await open_cell(app, pilot, "mount", "Codex")
-            self.assertIn('"Codex (Dolly)" (wV:p4): this Codex window shows herdr no session code, so voice cannot '
-                          'mount it yet', menu_list(app))
+            self.assertIn('"Codex (Dolly)" (wV:p4): herdr shows this Codex window no session code. Mount its '
+                          'session code', menu_list(app))
             self.assertNotIn("no Codex window", menu_list(app))           # it is open: it just cannot be mounted
             pick(app, M.TYPE)
             await pilot.press("enter")
