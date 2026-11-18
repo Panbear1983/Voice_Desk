@@ -21,7 +21,7 @@
 [shared]
 # Peter 2026-11-02: ONLY "hello" wakes an agent ("hello Jarvis", "hello Kylie", ...). Short one-syllable
 # greetings (hey, hi, ok, yo) were dropped on purpose. The extra spellings are how whisper writes "hello".
-greetings = ["hello", "hallo", "hullo", "helo"]
+greetings = ["hello", "hallo", "hullo", "helo", "hey", "hi"]     # Peter 2026-11-17: hey and hi added again ("sure sure"); ok and yo stay out
 # The words whisper is told to expect. Without it the small model hears "Javas", "Piley" and
 # "Juanaba Faye" (measured 2026-10-21); with it all four names land. Mandarin stays Mandarin.
 whisper_prompt = "Jarvis, Kylie, Esther, Wanna Buffet, Claude, Gemini, Codex. Mute, unmute."
@@ -126,6 +126,9 @@ effect = "16 pitch=1.4"
 english_only = true                  # no Mandarin voice: a Chinese line stays silent (Voice Desk and simba_tts.py)
 # Voice Desk speaks her English lines through: <command> <text file> <out.wav> <voice> <effect>
 command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python", "~/GitHub/Agent_Control_Desk/simba_tts.py"]
+silence_duration = 3.0               # Peter 2026-11-17: same as every other agent
+silence_threshold = 450               # room noise measures 350-480
+barge_in = false
 
 [agents.jarvis]
 profile = "orchestrator"
@@ -151,8 +154,8 @@ voice = "en-US-AvaNeural"
 voice_zh = "zh-TW-HsiaoChenNeural"
 speed = 1.0
 auto_tts = true
-silence_duration = 1.5
-silence_threshold = 200
+silence_duration = 3.0               # Peter 2026-11-17: 1.5 cut him off and never ended in a noisy room
+silence_threshold = 450               # room noise measures 350-480, so 200 never heard him stop
 barge_in = false
 
 [agents.esther]
@@ -166,7 +169,8 @@ voice_zh = "zh-TW-HsiaoYuNeural"     # Kokoro speaks English only; her Mandarin 
 command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python",
            "~/.hermes/profiles/tax_angel_esther/scripts/esther_tts.py"]
 auto_tts = true
-silence_duration = 1.5
+silence_duration = 3.0               # Peter 2026-11-17: same as Jarvis and Kylie
+silence_threshold = 450               # room noise measures 350-480
 barge_in = false
 barge_in_grace_seconds = 0.5
 
@@ -179,5 +183,6 @@ no_fallback = true                  # Peter 2026-11-11: own voice only, silent i
 voice_zh = "zh-TW-YunJheNeural"
 speed = 0.92
 auto_tts = true
-silence_threshold = 500
+silence_duration = 3.0               # Peter 2026-11-17: same as the others
+silence_threshold = 500               # kept: room noise measures 350-480
 barge_in = false

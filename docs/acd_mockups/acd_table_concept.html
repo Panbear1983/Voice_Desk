@@ -1,0 +1,77 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Desk table concept</title>
+<style>
+  :root{--bg:#0d1117;--bar:#161b22;--line:#30363d;--ink:#e6edf3;--dim:#8b949e;--g:#3fb950;--y:#d29922;--b:#58a6ff;--r:#f85149;--off:#6e7681;--sel:#1f6feb}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "SF Mono",Menlo,Consolas,monospace;padding:18px;width:1560px}
+  .top{background:var(--bar);padding:6px 10px;display:flex;gap:28px}
+  .top b{letter-spacing:.5px}.armed{color:var(--y);font-weight:700}.dim{color:var(--dim)}
+  .warn{padding:3px 10px;color:var(--r)}
+  .legend{padding:3px 10px;color:var(--dim);background:var(--bar)}
+  .legend span{margin-right:22px}
+  i.d{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:1px}
+  .g{background:var(--g)}.y{background:var(--y)}.b{background:var(--b)}.r{background:var(--r)}.o{background:var(--off)}
+  table{border-collapse:collapse;width:100%;margin-top:10px;table-layout:fixed}
+  th,td{border:1px solid var(--line);padding:4px 9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  th{background:var(--bar);font-weight:700}
+  th small{display:block;color:var(--dim);font-weight:400}
+  td.k{color:var(--dim);width:205px}
+  tr.sec td{background:#11161d;color:var(--b);font-weight:700;border-left:3px solid var(--b)}
+  td.sel{outline:2px solid var(--sel);outline-offset:-2px;background:#12233d;position:relative;overflow:visible}
+  .red{color:var(--r)}.note{color:var(--dim)}
+  .menu{position:absolute;left:-2px;top:27px;z-index:5;background:#1c2330;border:1px solid var(--sel);width:330px;box-shadow:0 8px 24px #000a;padding:4px 0}
+  .menu div{padding:3px 12px}.menu .cur{background:var(--sel)}.menu .h{color:var(--dim);border-top:1px solid var(--line);margin-top:4px;padding-top:5px}
+  .detail{margin-top:12px;border:1px solid var(--line);background:var(--bar);padding:8px 12px}
+  .detail b{color:var(--b)}
+  .keys{margin-top:10px;color:var(--dim)}
+  .cap{font:13px -apple-system,Helvetica,sans-serif;color:#9aa4af;margin:0 0 12px}
+</style></head><body>
+<p class="cap">CONCEPT ONLY, drawn from your real settings at 08:07 on 17 Nov. Rows are settings, columns are agents. One cell is shown selected with its menu open.</p>
+<div class="top"><b>AGENT CONTROL DESK</b><span class="armed">ARMED: changes are written (backup, read-back, undo)</span><span class="dim">read Tue 17 Nov 08:07</span></div>
+<div class="warn"><i class="d r"></i>Antigravity: the Claude allowance is used up for 4 agents until Fri 20 Nov</div>
+<div class="legend"><span><i class="d g"></i>live everywhere</span><span><i class="d y"></i>saved, waiting on a restart or a fresh chat</span><span><i class="d b"></i>temporary override</span><span><i class="d r"></i>failed, or changed behind the desk's back</span><span><i class="d o"></i>off</span></div>
+
+<table>
+<tr><th class="k"></th><th>Jarvis<small>the manager</small></th><th>Kylie<small>the assistant</small></th><th>Builder<small>the builder</small></th><th>Esther<small>tax</small></th><th>Wanna Buffet<small>investing</small></th><th>Simba<small>the comedian</small></th></tr>
+
+<tr class="sec"><td colspan="7">LANGUAGE MODEL</td></tr>
+<tr><td class="k">Model</td><td><i class="d g"></i>Claude Sonnet 5.5</td>
+  <td class="sel"><i class="d g"></i>Claude Opus 5.5 &#9662;
+    <div class="menu"><div class="cur">(o) Claude Opus 5.5 &nbsp; now</div><div>( ) Claude Sonnet 5.5</div><div>( ) Claude Haiku 5.5</div><div class="h">Enter choose &nbsp; Esc cancel</div></div></td>
+  <td><i class="d g"></i>Claude Opus 5.5</td><td><i class="d g"></i>Claude Opus 5.5</td><td><i class="d g"></i>Claude Opus 5.5</td><td><i class="d g"></i>Grok 4.20 <span class="note">locked</span></td></tr>
+<tr><td class="k">Thinking effort</td><td><i class="d g"></i>medium</td><td><i class="d g"></i>medium</td><td><i class="d g"></i>high</td><td><i class="d g"></i>medium</td><td><i class="d g"></i>medium</td><td><i class="d o"></i>extra thinking off</td></tr>
+<tr><td class="k">Service and sign-in</td><td><i class="d g"></i>Claude sub., signed in</td><td><i class="d g"></i>Claude sub., signed in</td><td><i class="d g"></i>Claude sub., signed in</td><td><i class="d g"></i>Claude sub., signed in</td><td><i class="d g"></i>Claude sub., signed in</td><td><i class="d g"></i>OpenRouter, signed in</td></tr>
+<tr><td class="k">Who answered last</td><td><i class="d g"></i>Sonnet 5.5, 07:56</td><td><i class="d g"></i>Opus 5.5, 03:58</td><td><i class="d g"></i>Opus 5.5, 03:18</td><td><i class="d g"></i>Opus 5.5, 03:16</td><td><i class="d g"></i>Opus 5.5, 04:45</td><td><i class="d g"></i>Grok 4.20, 16 Nov</td></tr>
+<tr><td class="k">Drops to a backup today</td><td><i class="d g"></i>0</td><td><i class="d y"></i>3</td><td><i class="d y"></i>1</td><td><i class="d g"></i>0</td><td><i class="d r"></i>15</td><td><i class="d g"></i>0</td></tr>
+
+<tr class="sec"><td colspan="7">BACKUPS, IN ORDER</td></tr>
+<tr><td class="k">Backup 1</td><td class="red"><i class="d r"></i>Sonnet via Antigravity, used up</td><td class="red"><i class="d r"></i>Opus via Antigravity, used up</td><td class="red"><i class="d r"></i>Opus via Antigravity, used up</td><td><i class="d g"></i>Gemini Flash via Antigravity</td><td class="red"><i class="d r"></i>Opus via Antigravity, used up</td><td><i class="d o"></i>none</td></tr>
+<tr><td class="k">Backup 2</td><td><i class="d g"></i>Gemini Flash via Antigravity</td><td><i class="d g"></i>Gemini Flash via Antigravity</td><td><i class="d g"></i>Gemini 4 Argon via Antigravity</td><td><i class="d g"></i>Sonnet via Claude sub.</td><td><i class="d g"></i>Gemini Flash via Antigravity</td><td><i class="d o"></i>none</td></tr>
+<tr><td class="k">Backup 3</td><td><i class="d g"></i>Sonnet via Claude sub.</td><td><i class="d g"></i>Sonnet via Claude sub.</td><td><i class="d g"></i>Sonnet via Claude sub.</td><td><i class="d o"></i>NVIDIA Nemotron, off</td><td><i class="d g"></i>NVIDIA Nemotron 3 Ultra</td><td><i class="d o"></i>none</td></tr>
+<tr><td class="k">Backup 4</td><td><i class="d o"></i>NVIDIA Nemotron, off</td><td><i class="d g"></i>NVIDIA Nemotron 3.5</td><td><i class="d g"></i>NVIDIA Nemotron 3.5</td><td><i class="d o"></i>none</td><td><i class="d g"></i>GPT 5.4 mini via ChatGPT</td><td><i class="d o"></i>none</td></tr>
+
+<tr class="sec"><td colspan="7">VOICE</td></tr>
+<tr><td class="k">English voice</td><td><i class="d g"></i>Puck, local</td><td><i class="d g"></i>Ava</td><td><i class="d o"></i>no voice</td><td><i class="d g"></i>Alloy, local</td><td><i class="d g"></i>Santa, local</td><td><i class="d g"></i>Fenrir, local</td></tr>
+<tr><td class="k">Chinese voice</td><td><i class="d o"></i>English only</td><td><i class="d g"></i>HsiaoChen</td><td><i class="d o"></i>no voice</td><td><i class="d g"></i>HsiaoYu</td><td><i class="d g"></i>YunJhe</td><td><i class="d o"></i>English only</td></tr>
+<tr><td class="k">Speed</td><td><i class="d g"></i>fast (1.2)</td><td><i class="d g"></i>normal (1.0)</td><td><i class="d o"></i>-</td><td><i class="d o"></i>fixed by her voice</td><td><i class="d g"></i>slower (0.92)</td><td><i class="d o"></i>fixed by her voice</td></tr>
+<tr><td class="k">Speaks in terminal window</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td><td><i class="d o"></i>off</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td></tr>
+<tr><td class="k">Speaks in Telegram private</td><td><i class="d r"></i>Always, last 5 were text</td><td><i class="d g"></i>Always</td><td><i class="d o"></i>off</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td></tr>
+<tr><td class="k">Speaks in Telegram group</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td><td><i class="d o"></i>off</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td><td><i class="d g"></i>Always</td></tr>
+<tr><td class="k">Speaks on the mic line</td><td><i class="d g"></i>Voice-back</td><td><i class="d g"></i>Voice-back, on the line</td><td><i class="d o"></i>off</td><td><i class="d g"></i>Voice-back</td><td><i class="d g"></i>Voice-back</td><td><i class="d g"></i>Voice-back</td></tr>
+
+<tr class="sec"><td colspan="7">WHERE IT SHOWS UP</td></tr>
+<tr><td class="k">Terminal chat</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td></tr>
+<tr><td class="k">Telegram private chat</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d o"></i>off</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td></tr>
+<tr><td class="k">Telegram team group</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td></tr>
+<tr><td class="k">Team Room</td><td><i class="d g"></i>in, leads it</td><td><i class="d g"></i>in</td><td><i class="d g"></i>in</td><td><i class="d g"></i>in</td><td><i class="d g"></i>in</td><td><i class="d g"></i>in</td></tr>
+<tr><td class="k">Mac voice line</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d o"></i>off</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td></tr>
+<tr><td class="k">iPhone voice (Siri)</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d g"></i>on</td><td><i class="d o"></i>no shortcut</td></tr>
+
+<tr class="sec"><td colspan="7">WHO IT MAY TALK TO</td></tr>
+<tr><td class="k">Speaks in the Team Room</td><td><i class="d g"></i>yes</td><td><i class="d g"></i>yes</td><td><i class="d g"></i>yes</td><td><i class="d g"></i>yes</td><td><i class="d g"></i>yes</td><td><i class="d g"></i>when named</td></tr>
+<tr><td class="k">Hands out work</td><td><i class="d g"></i>yes</td><td><i class="d o"></i>no</td><td><i class="d o"></i>no</td><td><i class="d o"></i>no</td><td><i class="d o"></i>no</td><td><i class="d o"></i>no</td></tr>
+<tr><td class="k">Takes work from</td><td><i class="d g"></i>Peter</td><td><i class="d g"></i>Jarvis</td><td><i class="d g"></i>job cards only</td><td><i class="d g"></i>Jarvis</td><td><i class="d g"></i>Jarvis</td><td><i class="d o"></i>nobody</td></tr>
+</table>
+
+<div class="detail"><b>Kylie, Model:</b> set to Claude Opus 5.5 on the Claude subscription. Signed in and working; it answered at 03:58. Allowance: this session 94% left, this week 59% left (resets Fri 20 Nov 17:00). A change here needs no restart: new chats use it at once, open terminal chats keep the old model until a fresh chat.</div>
+<div class="keys">arrows move between cells &nbsp;&nbsp; Enter open the menu &nbsp;&nbsp; u undo &nbsp;&nbsp; r restart review &nbsp;&nbsp; t voice test &nbsp;&nbsp; l listener &nbsp;&nbsp; n add agent &nbsp;&nbsp; d remove agent &nbsp;&nbsp; q close</div>
+</body></html>

@@ -105,8 +105,13 @@ def test_routing() -> None:
         report(f"hail: {said!r} wakes {target}", hit is not None and hit[0] == target, str(hit))
     for said in ("Jarvis, what time is it?", "Jarvis.", "Kylie said no", "um Jarvis", "so Esther, what do I file",
                  "Wanna Buffet, how is the market today?", "Javis, what time is it?",
-                 "Hey Jarvis, what time is it?", "Hi Jarvis.", "High, Kylie.", "OK Kylie, remind me at five.", "Hay Wanna Buffet", "Yo Claude", "Okay Esther"):
-        report(f"hail: bare name or any greeting but hello does not wake: {said!r}", addressed(said, hailed=True) is None, str(addressed(said, hailed=True)))
+                 "High, Kylie.", "OK Kylie, remind me at five.", "Yo Claude", "Okay Esther"):
+        report(f"hail: bare name or any greeting but hello/hey/hi does not wake: {said!r}", addressed(said, hailed=True) is None, str(addressed(said, hailed=True)))
+    # Peter 2026-11-17: "hey" and "hi" wake an agent too (ok and yo stay out)
+    for said, who in (("Hey Jarvis, what time is it?", "hermes:orchestrator"), ("Hi Jarvis.", "hermes:orchestrator"),
+                      ("Hey Wanna Buffet", "hermes:wanna-buffet"), ("Hi Esther", "hermes:tax_angel_esther"), ("Hey Kylie", "hermes:assistant")):
+        got = addressed(said, hailed=True)
+        report(f"hail: hey/hi wakes the named agent: {said!r}", bool(got) and got[0] == who, str(got))
     report("hail: 'Hello Jarvis, what time is it?' strips to the question",
            (addressed("Hello Jarvis, what time is it?", hailed=True) or ("", ""))[1] == "what time is it?")
     # the old commands still work
