@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_HOOKS = Path.home() / ".claude/hooks"
 GEMINI_HOOK = Path(os.environ.get("VOICE_DESK_TEST_GEMINI_HOOK") or Path.home() / ".gemini/config/hooks/speak-response.py")   # env: mutation checks against an older copy
 GEMINI_PY = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+# 2026-11-18: voicescripts.py switches the hook onto the shared speaker (no Mac-voice fallback, any bank voice). The
+# tests of the old fallback run only on a hook that is not switched, the tests of the new rules only on one that is.
+GEMINI_SWITCHED = GEMINI_HOOK.exists() and "voice-desk: any bank voice (shared speaker)" in GEMINI_HOOK.read_text()
 
 
 def script(path: Path, body: str) -> Path:
@@ -188,6 +191,7 @@ class GeminiJoinsTheQueue(Fakes):
     def test_the_hook_source_mentions_the_switch_so_the_grid_knows_it_listens(self):
         self.assertIn("gemini_voice_off", GEMINI_HOOK.read_text())
 
+    @unittest.skipIf(GEMINI_SWITCHED, "since 2026-11-18 the hook has no Mac-voice fallback (voicescripts.py)")
     def test_when_the_neural_voice_fails_the_mac_voice_is_also_played_in_turn(self):
         self.set_edge(works=False)
         self.fire()
@@ -223,6 +227,7 @@ class GeminiJoinsTheQueue(Fakes):
         self.fire()
         self.assertEqual(self.edge_voices(), ["zh-TW-HsiaoYuNeural"])
 
+    @unittest.skipIf(GEMINI_SWITCHED, "since 2026-11-18 a voice line that names no usable voice means silent")
     def test_a_value_that_is_not_an_edge_voice_of_that_language_keeps_the_default(self):
         self.conf('NEURAL_VOICE_EN="zh-TW-HsiaoYuNeural"\nNEURAL_VOICE_ZH="rm -rf"\n')
         self.fire()
@@ -231,6 +236,55 @@ class GeminiJoinsTheQueue(Fakes):
         self.log.write_text("")
         self.fire()
         self.assertEqual(self.edge_voices(), ["zh-TW-HsiaoChenNeural"])
+
+    # -- 2026-11-18 (full voice list, Phase B): the switched hook. No fallback; any bank voice -----------------------
+    def quiet(self, words: str) -> list[str]:
+        """Wait for the hook's own log line, then a moment more: what was called by then."""
+        self.assertTrue(wait_for(lambda: words in self.hook_log()), self.hook_log())
+        time.sleep(0.5)
+        return self.calls()
+
+    @unittest.skipUnless(GEMINI_SWITCHED, "the hook is not switched onto the shared speaker on this Mac")
+    def test_when_the_neural_voice_fails_nothing_else_is_played(self):
+        self.set_edge(works=False)
+        self.fire()
+        calls = self.quiet("could not be made")
+        self.assertNotIn("say", calls, "never the Mac voice")
+        self.assertFalse([c for c in calls if c.startswith(("queue:", "straight", "path-afplay"))], calls)
+
+    @unittest.skipUnless(GEMINI_SWITCHED, "the hook is not switched onto the shared speaker on this Mac")
+    def test_a_value_that_names_no_usable_voice_is_silent_not_the_default(self):
+        self.conf('NEURAL_VOICE_EN="zh-TW-HsiaoYuNeural"\nNEURAL_VOICE_ZH="rm -rf"\n')
+        self.fire()
+        calls = self.quiet("no usable voice")
+        self.assertFalse([c for c in calls if c.startswith(("edge:", "queue:", "say"))], calls)
+        self.say_in_mandarin()
+        self.log.write_text("")
+        (self.home / ".gemini/config/hooks/voice.log").write_text("")
+        self.fire()
+        calls = self.quiet("no usable voice")
+        self.assertFalse([c for c in calls if c.startswith(("edge:", "queue:", "say"))], calls)
+
+    @unittest.skipUnless(GEMINI_SWITCHED, "the hook is not switched onto the shared speaker on this Mac")
+    def test_a_kokoro_voice_is_made_by_the_shared_speaker_and_played_in_turn(self):
+        fake = self.home / "fake_speak_any.py"
+        fake.write_text("import sys\n"
+                        f"open({str(self.log)!r}, 'a').write('shared:' + sys.argv[3] + '\\n')\n"
+                        "open(sys.argv[2], 'wb').write(b'mp3')\n")
+        self.conf('NEURAL_VOICE_EN="bm_george"\nNEURAL_VOICE_ZH="zh-TW-HsiaoYuNeural"\n')
+        self.fire(VOICE_DESK_SPEAK_ANY=str(fake), VOICE_DESK_SPEAK_PY=sys.executable)
+        self.assertTrue(wait_for(lambda: any(c.startswith("queue:gemini:") for c in self.calls())), self.calls())
+        self.assertIn("shared:bm_george", self.calls())
+        self.assertFalse([c for c in self.calls() if c.startswith("edge:")], "Microsoft is not asked for a Kokoro voice")
+
+    @unittest.skipUnless(GEMINI_SWITCHED, "the hook is not switched onto the shared speaker on this Mac")
+    def test_a_failed_shared_speaker_is_silent(self):
+        fake = self.home / "fake_speak_any.py"
+        fake.write_text("import sys\nsys.exit(1)\n")
+        self.conf('NEURAL_VOICE_EN="bm_george"\n')
+        self.fire(VOICE_DESK_SPEAK_ANY=str(fake), VOICE_DESK_SPEAK_PY=sys.executable)
+        calls = self.quiet("could not be made")
+        self.assertFalse([c for c in calls if c.startswith(("edge:", "queue:", "say"))], calls)
 
 
 class TheQueueKnowsClaudeAndGemini(unittest.TestCase):

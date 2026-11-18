@@ -460,7 +460,7 @@ class Sandbox:
         env.update(HOME=str(self.home), PATH=f"{self.bin}:{env.get('PATH', '/usr/bin:/bin')}",
                    VOICE_DESK_SPEAK_ANY=str(self.fake_speak_any), VOICE_DESK_SPEAK_PY=sys.executable,
                    FAKE_SPEAK_LOG=str(self.speak_log), VOICE_DESK_STATE=str(self.root / "state"),
-                   VOICE_DESK_AFPLAY_STANDIN=str(self.player))
+                   VOICE_DESK_AFPLAY_STANDIN=str(self.player), PYTHONDONTWRITEBYTECODE="1")
         env.update(extra)
         return env
 
@@ -667,7 +667,7 @@ def smoke_gemini(s: Script, path: Path, tmp: Path, before: Optional[Path]) -> li
         probs.append("a call to the Mac voice is still in the hook")
     if before is not None and before.exists():
         # nothing changes by default: Peter's own voice-defaults.conf gives the same voices before and after
-        env = dict(os.environ)
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")      # no __pycache__ next to the backup
         old = _run([py, "-c", VOICES_PROBE, before], env)
         new = _run([py, "-c", VOICES_PROBE, path], env)
         if old.returncode or new.returncode or old.stdout.strip() != new.stdout.strip():

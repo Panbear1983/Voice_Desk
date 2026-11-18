@@ -28,17 +28,34 @@ import voicescripts as V  # noqa: E402
 REAL_HOME = Path(os.path.expanduser("~"))
 
 
+def original(s: V.Script):
+    """The real outside script as it was BEFORE the switch: the live file if it is not switched yet, else the backup
+    the install made of it (the newest install whose result is exactly today's file). None = neither."""
+    live = REAL_HOME / s.rel
+    if not live.is_file():
+        return None
+    if V.state(s, REAL_HOME) != V.SWITCHED:
+        return live
+    now = V._sha(live.read_bytes())
+    for manifest in sorted(REAL_HOME.glob(".hermes/profile-backups/*-voice-scripts/manifest.json"), reverse=True):
+        for e in json.loads(manifest.read_text()).get("files", ()):
+            if e.get("key") == s.key and e.get("after") == now and Path(e["backup"]).is_file():
+                return Path(e["backup"])
+    return None
+
+
 def have_real(s: V.Script) -> bool:
-    return (REAL_HOME / s.rel).is_file()
+    return original(s) is not None
 
 
 def copy_home(keys) -> Path:
-    """A throw-away home holding copies of the real outside scripts at their usual places."""
+    """A throw-away home holding copies of the real outside scripts (as they were before the switch) at their usual
+    places."""
     base = Path(tempfile.mkdtemp(prefix="vd-scripts-home-"))
     for s in V.by_key(keys):
         dst = base / s.rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(REAL_HOME / s.rel, dst)
+        shutil.copy2(original(s), dst)
     if "claude-natural" in keys and not (base / ".claude/hooks/kokoro_speak.py").exists():
         shutil.copy2(REAL_HOME / ".claude/hooks/kokoro_speak.py", base / ".claude/hooks/kokoro_speak.py")
     return base
@@ -55,6 +72,7 @@ class TheRealScriptsOnCopies(unittest.TestCase):
         self.base = copy_home(self.keys)
         self.backups = Path(tempfile.mkdtemp(prefix="vd-scripts-bak-"))
         self.before = {s.key: (self.base / s.rel).read_bytes() for s in V.SCRIPTS}
+        self.modes = {s.key: os.stat(original(s)).st_mode for s in V.SCRIPTS}
 
     def test_every_edit_fits_today(self):
         for s in V.SCRIPTS:
@@ -73,7 +91,7 @@ class TheRealScriptsOnCopies(unittest.TestCase):
         self.assertTrue(all(r.ok for r in results), "\n".join(lines))
         for s in V.SCRIPTS:
             self.assertEqual(V.state(s, self.base), V.SWITCHED, s.key)
-            self.assertEqual(os.stat(self.base / s.rel).st_mode, os.stat(REAL_HOME / s.rel).st_mode, "mode kept")
+            self.assertEqual(os.stat(self.base / s.rel).st_mode, self.modes[s.key], "mode kept")
         [folder] = list(self.backups.iterdir())
         note = (folder / "RESTORE.md").read_text()
         for s in V.SCRIPTS:
@@ -91,6 +109,21 @@ class TheRealScriptsOnCopies(unittest.TestCase):
         for s in V.SCRIPTS:
             self.assertEqual((self.base / s.rel).read_bytes(), self.before[s.key])
         self.assertTrue(any("+native=1" in x for x in lines), "the diff is shown")
+
+
+class TheLiveScripts(unittest.TestCase):
+    """The switched scripts on this Mac, run read-only with fakes (the same smoke test the install ran): each still
+    makes its voice through the shared speaker, stays silent when that fails, and never calls a second voice."""
+
+    def test_every_switched_live_script_passes_its_smoke_test(self):
+        live = [s for s in V.SCRIPTS if V.state(s, REAL_HOME) == V.SWITCHED]
+        if not live:
+            self.skipTest("no outside script is switched on this Mac")
+        for s in live:
+            before = (REAL_HOME / s.rel).read_bytes()
+            with tempfile.TemporaryDirectory() as tmp:
+                self.assertEqual(s.smoke(s, REAL_HOME / s.rel, Path(tmp), None), [], s.key)
+            self.assertEqual((REAL_HOME / s.rel).read_bytes(), before, f"{s.key}: the smoke test never writes it")
 
 
 def stand_in(base: Path, text: str) -> Path:
