@@ -856,9 +856,15 @@ class Dashboard(App):
         for live in lives:                             # where "talk to X" goes (2026-10-25)
             target = live.target
             pane = live.pane()
-            text += (f"\n[b #2ecc71]Talk to {live.name} →[/] your open window (herdr pane {pane[0]})" if pane else
-                     f"\n[#e67e22]Talk to {live.name} →[/] the background thread (no single open window"
-                     + ("" if live.session_id or target.startswith("hermes:") else f"; pin one in ~/.voice_desk/{target}_live_session") + ")")
+            mounted = live._load_session() if not target.startswith("hermes:") else None
+            if pane:
+                text += f"\n[b #2ecc71]Talk to {live.name} →[/] your open window (herdr pane {pane[0]})"
+            elif mounted:                              # 2026-11-18: a mounted session never falls back
+                text += (f"\n[#e67e22]Talk to {live.name} →[/] the mounted {live.name} session is not open "
+                         f"(nothing else is started; mount another on the Agent Control Desk)")
+            else:
+                text += (f"\n[#e67e22]Talk to {live.name} →[/] the background thread (no single open window"
+                         + ("" if target.startswith("hermes:") else "; mount one on the Agent Control Desk") + ")")
         try:
             off = voicecfg.drift(voicecfg.collect(cfg, voicecfg.PROFILES, voicecfg.CLAUDE_CONF, voicecfg.GEMINI_CONF))
         except Exception as exc:                     # never let a bad file take the panel down

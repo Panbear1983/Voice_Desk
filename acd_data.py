@@ -158,6 +158,7 @@ class Paths:
     team_room_code: Optional[Path] = None  # the Team Room's own program, read only to see if it follows the desk's rules
     grid: Any = None                       # the Voice Desk grid's own files (gridstate.Paths): where a voice speaks
     lights: Optional[Callable] = None      # the Voice Desk's health strip (syshealth.collect), read-only
+    mounts: Optional[Callable] = None      # () -> target -> acd_mount.MountView: the session voice goes to (read-only)
 
     @classmethod
     def default(cls) -> "Paths":
@@ -170,7 +171,22 @@ class Paths:
             shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Voice_Desk")),
             gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")),
             team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")),
-            grid=_grid_default(), lights=_lights_default())
+            grid=_grid_default(), lights=_lights_default(), mounts=_mounts_default())
+
+
+def _mounts_default() -> Optional[Callable]:
+    """Which session each of Claude, Gemini and Codex is mounted on, and whether its window is open: the voice
+    line's own pins (~/.voice_desk) and ONE read-only `herdr pane list`."""
+    try:
+        import settings as S
+        pins, herdr = Path(os.environ.get("ACD_PINS", S.STATE_DIR)), S.HERDR_BIN
+    except Exception:                               # noqa: BLE001  the desk still opens without the voice line
+        return None
+
+    def read() -> dict:
+        import acd_mount
+        return acd_mount.views(pins, herdr)
+    return read
 
 
 def _grid_default() -> Any:
@@ -798,6 +814,7 @@ class OtherAssistant:
     voice_places: tuple = ()        # VoicePlace lines (Claude's and Gemini's own terminal voice, the mic window)
     wiring: tuple = ()              # Wire marks: here / not here and the phrase, place by place
     not_playable: str = ""          # its English voice is one its own script cannot make yet: why (voicescripts.py)
+    mount: Any = None               # acd_mount.MountView: the one terminal session voice goes to (None = not read)
 
 
 @dataclass(frozen=True)
@@ -1326,9 +1343,15 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
             voice_places=places.get(keys.get(profile, ""), ()), effect=effects.get(profile),
             wiring=wiring.get(keys.get(profile, ""), ())))
 
+    mounts: dict = {}
+    if paths.mounts is not None:
+        try:
+            mounts = paths.mounts() or {}
+        except Exception:                           # noqa: BLE001  a failed look must never take the desk down
+            mounts = {}
     others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names, a.key,
                                   TAKES_EFFECT.get(a.target, NOT_VERIFIED), places.get(a.key, ()),
-                                  wiring.get(a.key, ()), not_playable(a))
+                                  wiring.get(a.key, ()), not_playable(a), mounts.get(a.target))
                    for a in listed_agents if not a.profile)
     lights: tuple = ()
     if paths.lights is not None and paths.grid is not None:
@@ -1343,7 +1366,8 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         saved = str(members.get("saved") or "")[:10]
         room = f"{lead} leads the Team Room. {len(members['members'])} members saved{' ' + saved if saved else ''}."
     views_t = tuple(views)
-    return Snapshot(views_t, others, warnings(views_t, problems, desk, watch, lights), room, now, tuple(problems),
+    return Snapshot(views_t, others, warnings(views_t, problems, desk, watch, lights, others=others), room, now,
+                    tuple(problems),
                     waiting=tuple(desk.waiting), armed=desk.armed, last_change=desk.last_change,
                     room_follows_rules=adapter,
                     watch_mode=watch.mode if watch is not None else "",
@@ -1357,7 +1381,8 @@ def _count(n: int, one: str, many: str) -> str:
 
 
 def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
-             desk: Optional[DeskRecord] = None, watch: Any = None, lights: tuple = ()) -> tuple[Warning, ...]:
+             desk: Optional[DeskRecord] = None, watch: Any = None, lights: tuple = (),
+             others: tuple = ()) -> tuple[Warning, ...]:
     """The strip at the top. Real conditions only; when nothing is wrong it says so."""
     out = [Warning(RED, p) for p in problems]
     drifted = [d for v in views for d in v.drifts]
@@ -1427,6 +1452,11 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
     for ok, label, detail in lights:
         if ok is False:
             out.append(Warning(RED, f"voice system: {label}" + (f" ({detail[:120]})" if detail else "")))
+    for o in others:                                    # a mounted session never falls back: say it once, up here
+        m = getattr(o, "mount", None)
+        if m is not None and m.state == "closed":
+            out.append(Warning(YELLOW, f"the mounted {o.name} session is not open: voice to {o.name} starts nothing "
+                                       "else until its window opens or another session is mounted"))
     if not out:
         out.append(Warning(GREEN, "nothing needs attention"))
     return tuple(out)

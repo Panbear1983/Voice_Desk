@@ -531,12 +531,14 @@ class Brain:
 
     def backend(self, target: Optional[str] = None):
         t = self.resolve(target) if target else self.target()
-        if not t or t == "claude":
-            return self.live["claude"] if self.live["claude"].available() else self.claude
-        if t == "gemini":
-            return self.live["gemini"] if self.live["gemini"].available() else self.gemini
-        if t == "codex":
-            return self.live["codex"] if self.live["codex"].available() else self.codex
+        if not t or t in ("claude", "gemini", "codex"):
+            t = t or "claude"
+            live = self.live[t]
+            # A mounted session (the Agent Control Desk's pin) is the only door: when its window is closed the
+            # live brain itself says so, and no background thread is started in its place (Peter 2026-11-18).
+            if live.mounted() or live.available():
+                return live
+            return {"claude": self.claude, "gemini": self.gemini, "codex": self.codex}[t]
         profile = t.split(":", 1)[1]
         live = HermesLiveBrain(profile, hermes_display_name(profile))   # his open Hermes window, if any
         if live.available():

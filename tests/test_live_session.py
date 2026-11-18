@@ -20,8 +20,9 @@ import settings as S
 S.HERDR_BIN = str(TMP / "herdr")
 S.CLAUDE_PROJECTS_DIR = TMP / "projects"
 import live_session
-from brain import Brain, ClaudeBrain
+from brain import Brain, ClaudeBrain, GeminiBrain
 from codex_brain import CodexBrain
+from unittest.mock import patch
 
 SID = "11111111-2222-3333-4444-555555555555"
 TRANSCRIPT = TMP / "projects" / "-Users-peter" / f"{SID}.jsonl"
@@ -67,6 +68,12 @@ class LiveClaudeTest(unittest.TestCase):
         live_session.ENTER_DELAY_SEC = 0
         live_session.RETRY_ENTER_SEC = 1
 
+    def tearDown(self):
+        # A pin left behind would count as a mounted session for every later test module (2026-11-18: a mounted
+        # session never falls back), so none survives this test.
+        for target in ("claude", "gemini", "codex"):
+            (S.STATE_DIR / f"{target}_live_session").unlink(missing_ok=True)
+
     def test_turn_types_into_the_pane_and_returns_the_answer_before_the_hook_note(self):
         brain = live_session.LiveBrain("claude")
         progress = []
@@ -79,10 +86,11 @@ class LiveClaudeTest(unittest.TestCase):
 
     def test_router_uses_the_live_session_only_when_its_pane_is_open(self):
         self.assertIsInstance(Brain().backend("claude"), live_session.LiveBrain)
+        (S.STATE_DIR / "claude_live_session").unlink()                              # nothing mounted
         (TMP / "no_pane").write_text("")
         self.assertIsInstance(Brain().backend("claude"), ClaudeBrain)
         (TMP / "no_pane").unlink()
-        self.assertIsInstance(Brain().backend("claude"), live_session.LiveBrain)   # the only open window, pin or not
+        self.assertIsInstance(Brain().backend("claude"), live_session.LiveBrain)   # the only open window, nothing mounted
         self.assertIsInstance(Brain().backend("codex"), CodexBrain)                 # no Codex window open
 
     def test_words_that_never_arrive_are_reported(self):
@@ -90,6 +98,48 @@ class LiveClaudeTest(unittest.TestCase):
         reply = live_session.LiveBrain("claude").ask("hello")
         self.assertIn("never arrived", reply)
         self.assertFalse(S.LIVE_TURN_FLAG.exists())
+
+
+class MountedSessionTest(unittest.TestCase):
+    """Peter 2026-11-18: one mounted session per service. A mounted session whose window is closed is never
+    replaced: not by a background thread, not by another open window of the same service."""
+    setUp = LiveClaudeTest.setUp                    # the same fake herdr, transcript and pin (claude = SID)
+    tearDown = LiveClaudeTest.tearDown
+
+    def never(self, *a, **k):
+        raise AssertionError("a background thread was started for a mounted session")
+
+    def test_mounted_but_closed_never_reaches_a_background_thread(self):
+        (TMP / "no_pane").write_text("")
+        with patch.object(ClaudeBrain, "ask", self.never), patch.object(GeminiBrain, "ask", self.never), \
+                patch.object(CodexBrain, "ask", self.never):
+            brain = Brain()
+            self.assertIsInstance(brain.backend("claude"), live_session.LiveBrain)
+            reply = brain.ask("how is the study going", to="claude")
+            self.assertIn("The mounted Claude session is not open", reply)
+            self.assertIn("did not send your words anywhere", reply)
+            for target, name in (("gemini", "Gemini"), ("codex", "Codex")):
+                (S.STATE_DIR / f"{target}_live_session").write_text("99999999-0000-4000-8000-000000000000\n")
+                try:
+                    self.assertIsInstance(brain.backend(target), live_session.LiveBrain)
+                    self.assertIn(f"The mounted {name} session is not open", brain.ask("hello", to=target))
+                finally:
+                    (S.STATE_DIR / f"{target}_live_session").unlink()
+        self.assertFalse((TMP / "typed").exists(), "nothing may be typed anywhere")
+
+    def test_another_open_window_is_never_used_in_place_of_the_mounted_one(self):
+        (S.STATE_DIR / "claude_live_session").write_text("99999999-0000-4000-8000-000000000000\n")
+        with patch.object(ClaudeBrain, "ask", self.never):
+            brain = Brain()
+            self.assertIsNone(brain.live["claude"].pane())          # the only open Claude window is not the mounted one
+            reply = brain.ask("hello", to="claude")
+        self.assertIn("The mounted Claude session is not open", reply)
+        self.assertFalse((TMP / "typed").exists(), "the other open window must not get the words")
+
+    def test_the_mounted_window_that_is_open_gets_the_turn(self):
+        reply = Brain().ask("how is the study going", to="claude")
+        self.assertEqual(reply, "The study is running fine.")
+        self.assertEqual((TMP / "typed").read_text(), "[voice] how is the study going")
 
 
 class TranscriptReadersTest(unittest.TestCase):

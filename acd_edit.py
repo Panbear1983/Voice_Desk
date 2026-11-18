@@ -34,6 +34,9 @@ Version three adds two more, with the same guarantees:
 Every change is one line in history.jsonl (who, when, what, before, after), and U undoes the newest one by
 running it backwards through the same safe path.
 
+The session voice goes to for Claude, Gemini and Codex (the voice line's pin in ~/.voice_desk) is mounted and
+unmounted by acd_mount.py with the same armed gate, backup, read back, history and undo.
+
 The desk never restarts anything. "Request a restart" only writes the request file the existing helper watches
 (gateway_guard/restart_helper.py), which restarts when no agent is mid-reply and no job is running.
 """
@@ -93,7 +96,7 @@ NEEDS = {
                  "and switches the Telegram side in the same step. The chat on screen starts fresh; the old lines "
                  "stay in the saved history.",
 }
-UNDOABLE = ("model", "effort", "backup", "ladder", "voice", "rule", "team_room", "voice_place", "agent")
+UNDOABLE = ("model", "effort", "backup", "ladder", "voice", "rule", "team_room", "voice_place", "agent", "mount")
 _DESK_NOTE = re.compile(r"^[ \t]*# \d{4}-\d\d-\d\d " + re.escape(WHO) + r": ")
 
 
@@ -115,6 +118,8 @@ class EditPaths:
     team_room_cmd: Optional[Path] = None    # the Team Room's own command (its add / kick does both doors)
     gateway_state: Optional[Path] = None    # the agents' own status file: which agent has a Telegram bot
     grid: Any = None                        # the Voice Desk grid's own files (gridstate.Paths): the voice switches
+    pins: Optional[Path] = None             # where the voice line keeps its mounted sessions (~/.voice_desk)
+    herdr: Optional[str] = None             # herdr, asked (read-only) which terminal windows are open
 
     @classmethod
     def default(cls, launcher_armed: bool = False) -> "EditPaths":
@@ -128,7 +133,8 @@ class EditPaths:
                    config_backups=Path(env("ACD_CONFIG_BACKUPS", HOME / ".hermes/profile-backups")),
                    voice=vp, launcher_armed=launcher_armed, members=base.members,
                    team_room_cmd=Path(env("ACD_TEAM_ROOM_CMD", HOME / ".local/bin/team-room")),
-                   gateway_state=base.gateway_state, grid=base.grid)
+                   gateway_state=base.gateway_state, grid=base.grid,
+                   pins=Path(env("ACD_PINS", S.STATE_DIR)), herdr=S.HERDR_BIN)
 
     @property
     def armed_file(self) -> Path:
@@ -1616,6 +1622,9 @@ def undo(paths: EditPaths, *, now: Optional[_dt.datetime] = None, loader: Option
     if kind == "agent":                                   # an agent added to, or taken out of, the Voice Desk list
         import acd_parity
         return acd_parity.undo_agent(last, paths, now=now)
+    if kind == "mount":                                   # the session voice goes to (Claude, Gemini, Codex)
+        import acd_mount
+        return acd_mount.undo_mount(last, paths, now=now)
     if kind == "team_room":
         return set_team_room(last["profile"], bool(last["before"]), paths, now=now, loader=loader, runner=runner,
                              undoes=last["id"], handle=str(last.get("handle") or ""), name=str(last.get("name") or ""))

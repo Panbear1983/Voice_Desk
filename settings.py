@@ -105,8 +105,9 @@ CLAUDE_CWD = HOME               # the thread runs in Peter's home, so every repo
 CLAUDE_TURN_TIMEOUT_SEC = 600
 SESSION_FILE = STATE_DIR / "session_id"          # one thread shared by the Mac window and the phone
 # Peter 2026-10-25: "talk to Claude / Gemini / Codex" continues his LIVE window in herdr when one is
-# open (live_session.py; a session id pinned in ~/.voice_desk/<target>_live_session picks between
-# several); otherwise the background threads answer.
+# open (live_session.py). 2026-11-18: a session mounted on the Agent Control Desk (its code in
+# ~/.voice_desk/<target>_live_session) is the only window used, and never falls back; with nothing
+# mounted, the only open window, otherwise the background threads answer.
 LIVE_TURN_FLAG = STATE_DIR / "live_turn"         # exists while a live turn runs: the windows' own speak hooks stay silent
 CLAUDE_PROJECTS_DIR = Path(os.environ.get("VOICE_DESK_CLAUDE_PROJECTS", HOME / ".claude/projects"))
 GEMINI_BRAIN_DIR = Path(os.environ.get("VOICE_DESK_GEMINI_BRAIN", HOME / ".gemini/antigravity-cli/brain"))

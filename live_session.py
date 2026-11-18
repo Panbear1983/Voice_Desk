@@ -6,10 +6,12 @@ now", then "yes, do the same for Gemini and Codex". The background threads in br
 
 One turn, for any of the three:
   1. Pick the window. herdr reports, for every pane, which agent runs in it ("claude", "agy",
-     "codex") and that agent's own session id. A session id pinned in
-     ~/.voice_desk/<target>_live_session wins; with no pin (or a pin that is not open), the only
-     open pane of that agent is used. None open, or several and no pin: not available, and the
-     background thread answers instead.
+     "codex") and that agent's own session id. A session id pinned ("mounted", from the Agent
+     Control Desk) in ~/.voice_desk/<target>_live_session is the ONLY window used: when it is not
+     open, the turn says "the mounted Claude session is not open" and nothing else is started
+     (Peter 2026-11-18: one open session per service, never a silent switch to another one).
+     With no pin, the only open pane of that agent is used; none open, or several: not
+     available, and the background thread answers instead (brain.Brain.backend).
   2. Type the words, prefixed "[voice] ", into that pane and press Enter, exactly as if Peter
      had typed them.
   3. Follow that session's own transcript file until the turn is over (Codex writes an explicit
@@ -172,8 +174,14 @@ class LiveBrain:
     def new_thread(self) -> None:
         """A live window cannot be reset by voice; Peter starts a new one himself."""
 
+    def mounted(self) -> Optional[str]:
+        """The session code mounted for this service (the pin), or None. Read fresh every time: the desk can
+        change it between two turns."""
+        return self._load_session()
+
     def pane(self) -> Optional[tuple[str, str, str]]:
-        """(pane id, agent status, session id) of the window to talk to, or None."""
+        """(pane id, agent status, session id) of the window to talk to, or None. A mounted session is the
+        only window that counts: another open window of the same service is never used in its place."""
         try:
             panes = json.loads(_herdr("pane", "list"))["result"]["panes"]
         except (RuntimeError, OSError, ValueError, KeyError, subprocess.TimeoutExpired):
@@ -181,18 +189,23 @@ class LiveBrain:
         mine = [(p["pane_id"], p.get("agent_status", ""), (p.get("agent_session") or {}).get("value", ""))
                 for p in panes if p.get("agent") == self.agent.herdr_agent and (p.get("agent_session") or {}).get("value")]
         pin = self._load_session()
-        for found in mine:
-            if pin and found[2] == pin:
-                return found
+        if pin:
+            return next((found for found in mine if found[2] == pin), None)
         return mine[0] if len(mine) == 1 else None
 
     def available(self) -> bool:
         return self.pane() is not None
 
+    def not_open_words(self) -> str:
+        return (f"The mounted {self.name} session is not open, so I did not send your words anywhere. Open its "
+                f"window again, or mount another {self.name} session on the Agent Control Desk.")
+
     # -- one turn -----------------------------------------------------------------------------
     def ask(self, text: str, on_status: StatusCb = lambda s: None, on_text: TextCb = lambda s: None) -> str:
         found = self.pane()
         if not found:
+            if self.mounted():
+                return self.not_open_words()
             return f"Your {self.name} window is not open in herdr right now, so I could not reach it."
         pane_id, _, sid = found
         path = self.agent.locate(sid)

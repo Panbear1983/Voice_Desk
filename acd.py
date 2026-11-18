@@ -5,6 +5,8 @@
 
 Rows are settings, columns are agents: Jarvis, Kylie, Builder, Esther, Wanna Buffet, Simba, then Claude, Gemini
 and Codex (those three are there for their voices and the names that wake them; other rows are blank for them).
+Their "Mounted session" row picks the ONE open terminal session each of them talks to by voice (acd_mount.py):
+green its window is open, yellow mounted but not open (voice then says so and starts nothing else), grey none.
 Every cell starts with a light: green live everywhere, yellow saved but waiting on a restart or a fresh chat,
 blue a temporary override, red failed or changed behind the desk's back, grey off or not applicable.
 
@@ -67,6 +69,7 @@ import gridedit
 import acd_data as D
 import acd_edit as E
 import acd_health as H
+import acd_mount as M
 import acd_parity as P
 import acd_watch as W
 
@@ -211,6 +214,8 @@ def rows_of(snap: Optional[D.Snapshot]) -> list[Row]:
         rows.append(Row("effect", "Voice effect"))
     rows += [Row(f"vplace:{key}", label) for key, label in VPLACE_ROW]
     rows.append(Row("names", "Answers to (call names)"))
+    if any(getattr(o, "mount", None) is not None for o in (snap.others if snap else ())):
+        rows.append(Row("mount", "Mounted session"))
     rows.append(Row("section:presence", SECTIONS[3], True))
     rows += [Row(f"presence:{key}", PLACE_ROW.get(key, name)) for key, name in D.PLACES]
     rows.append(Row("section:talk", SECTIONS[4], True))
@@ -622,7 +627,36 @@ def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
             return Cell(D.GREEN, words, detail, setting=f"wire:{WIRE_ALL}")
         return Cell(D.GREEN, words, detail,
                     fixed="the call names are kept in the Voice Desk list; the desk shows them and does not change them")
+    if key == "mount":
+        return mount_cell(o)
     return Cell()
+
+
+def mount_cell(o: D.OtherAssistant) -> Cell:
+    """The one terminal session voice goes to: green its window is open, yellow mounted but its window is not
+    open (voice then starts nothing else), grey nothing mounted (as before: the only open window, else a
+    separate background session)."""
+    m = o.mount
+    if m is None:
+        return Cell()
+    if m.state == "open":
+        w = m.window
+        return Cell(D.GREEN, f"{M.short(m.code)} open",
+                    [f"Voice {o.name} goes to the mounted session {m.code} ({M.where_words(w)}).",
+                     "Its answer is read aloud as the window shows it; the typed words start with [voice].",
+                     "No other window and no background session is used."], setting="mount")
+    if m.state == "closed":
+        return Cell(D.YELLOW, f"{M.short(m.code)} not open",
+                    [f"The mounted {o.name} session is not open: "
+                     + (f"{m.error}, so the window of {m.code} cannot be found" if m.error
+                        else f"{m.code} has no window in herdr") + ".",
+                     f"A voice turn to {o.name} says so and starts no other session.",
+                     "Enter: mount an open session, or unmount."], setting="mount")
+    n = sum(1 for s in m.sessions if s.code)
+    return Cell(D.GREY, "none mounted",
+                [f"Nothing is mounted for {o.name}: voice uses its only open window when exactly one is open "
+                 f"({n} open now{', ' + m.error if m.error else ''}), otherwise a separate background session.",
+                 "Enter: mount one open session, so voice always goes to that one."], setting="mount")
 
 
 ROOM_HEADING = "The Team Room (all agents)"      # the note after it is about the room, not the chosen agent
@@ -631,6 +665,8 @@ ROOM_HEADING = "The Team Room (all agents)"      # the note after it is about th
 def cell_of(row: Row, col: Any, speed_why: Optional[dict] = None, room_note: str = "",
             now: Optional[float] = None) -> Cell:
     if row.section:
+        return Cell()
+    if row.key == "mount" and is_agent(col):        # Hermes agents have their own windows; this row is the three's
         return Cell()
     cell = agent_cell(row, col, speed_why, now) if is_agent(col) else other_cell(row, col)
     if room_note and row.key == "presence:team_room" and not cell.blank:
@@ -1931,6 +1967,8 @@ class Desk(App):
             return self.spec_talk(col, setting.split(":", 1)[1])
         if setting.startswith("wire:"):
             return self.spec_wire(col, setting.split(":", 1)[1])
+        if setting == "mount":
+            return self.spec_mount(col)
         build = {"model": self.spec_model, "effort": self.spec_effort, "extras": self.spec_extras,
                  "team_room": self.spec_team_room}.get(setting)
         if build:
@@ -1955,6 +1993,9 @@ class Desk(App):
                 return
             if cell.setting in ("voice", "voice_zh") and token == E.OTHER_VOICE:
                 self.ask_voice_name(col, cell.setting)
+                return
+            if cell.setting == "mount" and token == M.TYPE:
+                self.ask_mount_code(col)
                 return
             self.run_jobs(spec.jobs(token))
 
@@ -2079,6 +2120,119 @@ class Desk(App):
             self.push_screen(NoticePopup(f"{col.name}: change the {lang} voice?", join(body), ask="yes, change it"),
                              lambda yes: self.run_jobs([lambda: E.change_voice(agent.key, setting, name, edit)])
                              if yes else None)
+
+        self.push_screen(AskPopup(title, note, ""), answered)
+
+    # -- the one terminal session voice goes to (Claude, Gemini, Codex) -------------------------------------------
+    def mount_view(self, col: Any) -> Optional["M.MountView"]:
+        """The column's mount, read fresh (one read-only herdr call) so a window opened a moment ago is listed; the
+        table's last read when the desk was not told where the pins and herdr are."""
+        m = getattr(col, "mount", None)
+        if m is None:
+            return None
+        if self.edit.pins is None or not self.edit.herdr:
+            return m
+        try:
+            return M.view(self.edit.pins, self.edit.herdr, m.target)
+        except Exception:                                # noqa: BLE001  a failed look must never take the desk down
+            return m
+
+    def spec_mount(self, col: Any) -> Spec:
+        """Mount ONE open terminal session of this service onto voice: pick one of the open windows herdr lists,
+        or type / paste a code; or unmount. Only the voice line's pin changes (backup, read back, u undoes it)."""
+        edit = self.edit
+        name = col.name
+        title = f"{name}: the one session voice goes to"
+        m = self.mount_view(col)
+        if m is None or edit.pins is None:
+            return Spec(title, locked=f"The desk does not know where the voice line keeps {name}'s mounted session, "
+                                      "so nothing can be mounted from here.")
+        target = m.target
+        options: list[Opt] = []
+        by: dict = {}
+        if m.code and m.window is None:
+            options.append(Opt(f"mount|{m.code}", f"{M.short(m.code)}  mounted, its window is not open", now=True))
+        for s in m.sessions:
+            if not s.code:
+                options.append(Opt(f"nocode|{s.pane}", f"{s.pane} {s.label[:22]}: herdr gives no session code",
+                                   disabled=True))
+                continue
+            by[s.code] = s
+            options.append(Opt(f"mount|{s.code}", M.session_label(s), now=s.code == m.code))
+        if not by:
+            options.append(Opt("none", f"no {name} window with a session code is open in herdr"
+                                       + (f" ({m.error})" if m.error else ""), disabled=True))
+        options.append(Opt(M.TYPE, "type or paste a session code...", goes_on=True))
+        options.append(Opt(M.UNMOUNT, "unmount: nothing mounted", now=not m.code))
+        was = f"session {m.code}" if m.code else "nothing mounted"
+
+        def describe(tok: str) -> list[str]:
+            if tok == M.UNMOUNT:
+                return [f"Nothing is mounted for {name} any more (now: {was}).",
+                        f"Voice {name} then uses its only open window when exactly one is open, otherwise a "
+                        "separate background session, as before mounting."]
+            code = tok.split("|", 1)[1]
+            s = by.get(code)
+            return [f"Voice {name} is mounted on session {code}" + (f" ({M.where_words(s)})." if s else "."),
+                    f"Only this session gets the words. If its window is closed, a voice turn says the mounted "
+                    f"{name} session is not open and starts nothing else.",
+                    f"Before: {was}. u puts it back exactly."]
+
+        def jobs(tok: str) -> list:
+            if tok == M.UNMOUNT:
+                return [lambda: M.unmount(edit, target)]
+            if tok.startswith("mount|"):
+                code = tok.split("|", 1)[1]
+                return [lambda: M.mount(edit, target, code)]
+            return []
+
+        note = (f"The {name} windows open in herdr, newest activity first: code, window, folder, last activity. "
+                "One mounted session at a time: voice types only into it, and says so when it is not open. "
+                + M.APP_NOTE)
+        return Spec(title, options, describe, jobs, note=note, needs=M.NEEDS_MOUNT)
+
+    def ask_mount_code(self, col: Any) -> None:
+        """"type or paste a session code...": a line to type the code, then one yes / no line with the old and the
+        new, and whether that session's window is open now."""
+        edit = self.edit
+        m = self.mount_view(col)
+        if m is None or edit.pins is None:
+            return
+        name, target = col.name, m.target
+        title = f"{name}: mount a session by its code"
+        note = (f"The {name} session's code: the long id its conversation is saved under (the list before this one "
+                "shows the codes of the open windows). A code whose window is not open is mounted all the same: the "
+                f"light stays yellow and voice says the mounted {name} session is not open until its window opens. "
+                + M.APP_NOTE)
+
+        def answered(text: Optional[str]) -> None:
+            if text is None:
+                return
+            code = text.strip()
+            if not code:
+                return
+            if not M.CODE_OK.match(code):
+                self.push_screen(NoticePopup(title, Text("That does not look like a session code (letters, digits, "
+                                                         "dots and dashes, 4 to 128 of them). Nothing was changed.")))
+                return
+            if code == m.code:
+                self.push_screen(NoticePopup(title, Text("That is what it is now, so there is nothing to change.")))
+                return
+            s = next((x for x in m.sessions if x.code == code), None)
+            body = [Text(f"  now    {('session ' + m.code) if m.code else 'nothing mounted'}"),
+                    Text(f"  new    session {code}"), Text("")]
+            if s:
+                body.append(Text(f"Its window is open: {M.where_words(s)}.", style=COLOUR[D.GREEN]))
+            else:
+                body.append(Text(f"No open {name} window has this code right now. It is mounted anyway: the light "
+                                 f"stays yellow and voice says the mounted {name} session is not open until its "
+                                 "window opens.", style=COLOUR[D.YELLOW]))
+                if not M.known(target, code):
+                    body.append(Text(f"No {name} conversation with this code was found on this Mac either: check "
+                                     "the code.", style=COLOUR[D.YELLOW]))
+            body += [Text(""), Text(M.NEEDS_MOUNT, style=DIM), Text(""), self.dry_line()]
+            self.push_screen(NoticePopup(f"Mount this {name} session?", join(body), ask="yes, mount it"),
+                             lambda yes: self.run_jobs([lambda: M.mount(edit, target, code)]) if yes else None)
 
         self.push_screen(AskPopup(title, note, ""), answered)
 
