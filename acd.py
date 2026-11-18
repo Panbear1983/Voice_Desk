@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -151,11 +151,19 @@ SHORT_UNKNOWN = {"iphone_voice": "no shortcut"}        # a grey square and the r
 SHORT_ANSWER = {"yes, like everyone": "yes", "yes, like every member": "yes", "yes, the only one who does": "yes",
                 "yes, by job card only": "by card", "only as job cards": "job cards only",
                 "when named in the line": "when named"}
-PLACE_ROW = {"terminal": "Terminal chat", "tg_private": "Telegram private chat", "tg_group": "Telegram team group",
-             "team_room": "Team Room", "mac_voice": "Mac voice line", "iphone_voice": "iPhone voice (Siri)"}
+PLACE_ROW = {"terminal": "Has a terminal chat window", "tg_private": "Telegram private chat",
+             "tg_group": "Telegram team group", "team_room": "Team Room", "mac_voice": "Mac voice line",
+             "iphone_voice": "iPhone voice (Siri)"}
 VPLACE_ROW = (("terminal", "Speaks in terminal window"), ("tg_dm", "Speaks in Telegram private"),
               ("tg_group", "Speaks in Telegram group"), ("mic", "Speaks on the mic line"),
               ("iphone", "Speaks on iPhone (Siri)"))
+VOICE_ROW = dict(VPLACE_ROW)
+# Kylie and Peter 2026-11-18: the WHERE IT SHOWS UP row of the terminal sat beside the real voice switch and was
+# taken for it. Its status line says first that it is not the voice switch, and names the row that is.
+NOT_SWITCH_HEAD = "This row is not the voice switch"
+NOT_THE_VOICE_SWITCH = {"terminal": f"{NOT_SWITCH_HEAD}: it only says whether {{name}} has a terminal chat window. "
+                                    f"Whether {{name}} speaks there is the row \"{VOICE_ROW['terminal']}\" "
+                                    f"(in VOICE, above)"}
 TALK_ROW = (("speaks", "Speaks in the Team Room"), ("hands_out", "Hands out work"),
             ("takes_from", "Takes work from"), ("answers", "Answers"))
 SECTIONS = ("LANGUAGE MODEL", "FALLBACK LADDER (one order)", "VOICE", "WHERE IT SHOWS UP",
@@ -177,6 +185,7 @@ class Cell:
     setting: str = ""               # what Enter changes here ("" = nothing)
     fixed: str = ""                 # for a cell with no menu: why
     marker: bool = False            # the ladder rung that answered the last reply
+    short: str = ""                 # fewer words for a column too narrow for `words` (instead of an ellipsis)
 
     @property
     def blank(self) -> bool:
@@ -503,8 +512,10 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         p = next((x for x in v.presence if x.key == place), None)
         if p is None:
             return Cell(D.GREY, "unknown", fixed=FACT)
-        label = D.PLACE_NAME.get(place, place)
+        label = PLACE_ROW["terminal"] if place == "terminal" else D.PLACE_NAME.get(place, place)
         detail = [f"{label}: {state_word(p)}: {p.evidence}."]
+        if place in NOT_THE_VOICE_SWITCH:
+            detail.insert(0, NOT_THE_VOICE_SWITCH[place].format(name=name))
         if p.why_not and not p.can_switch:
             detail.append(p.why_not[0].upper() + p.why_not[1:] + ".")
         if p.state == D.ON:
@@ -558,13 +569,21 @@ def wired_cell(name: str, status: Optional[str], words: str, detail: list, w: D.
     if not w.here and not w.here_stored:        # nothing is wired there and the list holds no mark: the fact stands
         return Cell(status, words, detail, setting=f"wire:{w.place}")
     if not w.here:
+        first = detail[:1] if detail and detail[0].startswith(NOT_SWITCH_HEAD) else []
         return Cell(D.RED if status == D.RED else D.GREY, "not here",
-                    [f"{name} is marked not here at {place} in the Voice Desk list ({MARK_ONLY})."] + detail,
-                    setting=f"wire:{w.place}")
+                    first + [f"{name} is marked not here at {place} in the Voice Desk list ({MARK_ONLY})."]
+                    + detail[len(first):], setting=f"wire:{w.place}")
     more = [f"Activation phrase: {phrase_words(w)}."]
     if not w.wired and w.here_stored:
         more.append(f"Marked here, but nothing makes it speak there yet: {w.hint}.")
     return Cell(status, words, detail + more, setting=f"wire:{w.place}")
+
+
+# a Hermes agent's terminal voice: set by the desk's own switch (terminal_voice.json), or nothing set (the default)
+SET_BY = {"desk": "set by the desk", "default": "default"}
+SET_BY_SHORT = {"desk": "by desk", "default": "default"}           # for a narrow column
+SET_BY_SAID = {"desk": "set by the desk's terminal voice switch",
+               "default": "the default, since the desk's terminal voice switch is not set"}
 
 
 def place_cell(name: str, key: str, places: tuple, has_voice: bool = True) -> Cell:
@@ -580,15 +599,20 @@ def place_cell(name: str, key: str, places: tuple, has_voice: bool = True) -> Ce
     # the setting in a word; what the logs say really happened is in the strip. Where the desk cannot read the
     # setting itself, the first thing known about it stands in ("Voice-back"), never a bare "?".
     words = ((p.evidence or "").split(",")[0].strip() or "not known") if unknown else p.value
-    detail = [f"Spoken replies, {D.place_words(place)}: " + ("not known" if unknown else p.value)
+    short = ""
+    said = "not known" if unknown else p.value
+    if not unknown and p.set_by in SET_BY:      # Kylie 2026-11-18: "Always" read the same set or not set
+        words, short = f"{p.value} ({SET_BY[p.set_by]})", f"{p.value} ({SET_BY_SHORT[p.set_by]})"
+        said = f"{p.value}, {SET_BY_SAID[p.set_by]}"
+    detail = [f"Spoken replies, {D.place_words(place)}: " + said
               + (f" ({p.evidence})" if p.evidence else "") + "."]
     if p.problem:
         detail.append(p.problem)
     status = D.RED if p.problem else p.status
     if p.can_switch:
-        return Cell(status, words, detail + [E.NEEDS["voice_place"]], setting=key)
+        return Cell(status, words, detail + [E.NEEDS["voice_place"]], setting=key, short=short)
     why = D.plain_why(p.why_not) if p.why_not else "there is no switch for this place"
-    return Cell(status, words, detail + [why[0].upper() + why[1:] + "."], fixed=why)
+    return Cell(status, words, detail + [why[0].upper() + why[1:] + "."], fixed=why, short=short)
 
 
 def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
@@ -653,10 +677,16 @@ def mount_cell(o: D.OtherAssistant) -> Cell:
                      f"A voice turn to {o.name} says so and starts no other session.",
                      "Enter: mount an open session, or unmount."], setting="mount")
     n = sum(1 for s in m.sessions if s.code)
-    return Cell(D.GREY, "none mounted",
-                [f"Nothing is mounted for {o.name}: voice uses its only open window when exactly one is open "
-                 f"({n} open now{', ' + m.error if m.error else ''}), otherwise a separate background session.",
-                 "Enter: mount one open session, so voice always goes to that one."], setting="mount")
+    blind = [s for s in m.sessions if not s.code]
+    detail = [f"Nothing is mounted for {o.name}: voice uses its only open window when exactly one is open "
+              f"({n} open now{', ' + m.error if m.error else ''}), otherwise a separate background session."]
+    if blind:
+        names = ", ".join(f"\"{s.label}\" ({s.pane})" if s.label else s.pane for s in blind)
+        detail.append(f"herdr shows no session code for {names}, so voice cannot use "
+                      + ("that window" if len(blind) == 1 else "those windows")
+                      + ("" if n == 1 else f": voice {o.name} goes to its separate background session") + ".")
+    detail.append("Enter: mount one open session, so voice always goes to that one.")
+    return Cell(D.GREY, "none mounted", detail, setting="mount")
 
 
 ROOM_HEADING = "The Team Room (all agents)"      # the note after it is about the room, not the chosen agent
@@ -713,6 +743,8 @@ def cell_text(cell: Cell, width: int = 0, bright: bool = False) -> Text:
     t = Text()
     t.append(MARK + " ", style=COLOUR.get(cell.status, DIM))
     words = (ANSWERED + " " if cell.marker else "") + cell.words
+    if width and len(words) + 2 > width and cell.short:
+        words = (ANSWERED + " " if cell.marker else "") + cell.short
     if width and len(words) + 2 > width:
         words = cut_words(words, width - 2)
     colour = COLOUR[D.RED] if cell.status == D.RED else DIM if cell.status == D.GREY and not bright else ""
@@ -907,6 +939,17 @@ class EndsList(OptionList):
         self.step(-1)
 
 
+class MenuBox(Vertical):
+    """The floating menu's box. It says when its size changes, so the menu can place it again: a box that grew
+    under its cell (the yes / no line came) is pulled back inside the screen instead of running off its bottom."""
+
+    class Resized(Message):
+        pass
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.post_message(self.Resized())
+
+
 class CellMenu(ModalScreen[Optional[str]]):
     """The floating menu under a cell: the choices for that one setting, today's marked "now". Enter on a choice
     shows one line that says exactly what will change and whether a restart is needed; Enter again saves, Esc
@@ -921,17 +964,20 @@ class CellMenu(ModalScreen[Optional[str]]):
     #menu-list > .option-list--option-disabled { color: #8b949e; }
     #menu-list > .option-list--option-highlighted { background: #1f6feb; }
     #menu-status { height: auto; color: #d29922; }
+    #menu-confirm-box { height: auto; max-height: 20; display: none; scrollbar-size-vertical: 1; }
     #menu-confirm { height: auto; }
     #menu-keys { color: #8b949e; height: auto; }
     """
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("enter", "enter", "choose", show=False),
-                Binding("t", "test", "test", show=False)]
+                Binding("t", "test", "test", show=False),
+                Binding("down", "scroll_confirm(1)", show=False), Binding("up", "scroll_confirm(-1)", show=False)]
 
     def __init__(self, spec: Spec, anchor: Optional[tuple[int, int]] = None, dry: bool = True,
                  tester: Optional[Callable[[str, str], tuple[bool, str]]] = None) -> None:
         super().__init__()
         self.spec, self.anchor, self.dry, self.tester = spec, anchor, dry, tester
         self.confirming: Optional[str] = None           # the token waiting for its second Enter
+        self.overflow = False                           # the yes / no answer is longer than the box: it scrolls
 
     def row_text(self, o: Opt) -> Text:
         t = Text()
@@ -944,14 +990,15 @@ class CellMenu(ModalScreen[Optional[str]]):
         return t
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="menu"):
+        with MenuBox(id="menu"):
             yield Static(self.spec.title, id="menu-title")
             yield Static(self.spec.locked or self.spec.note, id="menu-note")
             yield EndsList(*([] if self.spec.locked else
                              [Option(self.row_text(o), disabled=o.disabled) for o in self.spec.options]),
                            id="menu-list")
             yield Static("", id="menu-status")
-            yield Static("", id="menu-confirm")
+            with VerticalScroll(id="menu-confirm-box", can_focus=False):
+                yield Static("", id="menu-confirm")
             yield Static("", id="menu-keys")
 
     def on_mount(self) -> None:
@@ -987,11 +1034,17 @@ class CellMenu(ModalScreen[Optional[str]]):
                 y = max(0, y - height - 1) if y - height - 1 >= 0 else max(0, sh - height)
         box.styles.offset = (x, y)
 
+    def on_menu_box_resized(self, event: "MenuBox.Resized") -> None:
+        """The box grew or shrank (the yes / no line came or went): place it again, inside the screen."""
+        event.stop()
+        self.place()
+
     def show_keys(self) -> None:
         if self.spec.locked:
             words = "Esc close"
         elif self.confirming is not None:
-            words = "Enter = yes, do exactly that\nEsc back to choices; Esc again closes the menu"
+            words = "Enter = yes, do exactly that" + ("   up / down: read the rest" if self.overflow else "") + \
+                "\nEsc back to choices; Esc again closes the menu"
         else:
             words = "up / down move   Enter choose   Esc cancel"
             if self.tester and self.spec.testable:
@@ -1037,8 +1090,8 @@ class CellMenu(ModalScreen[Optional[str]]):
         self.confirming = o.token
         head = ("DRY RUN: the desk will show exactly what would change and write nothing."
                 if self.dry else "This will be WRITTEN now (backup first, read back, u undoes it).")
-        body = [Text(head, style=COLOUR[D.YELLOW] if self.dry else COLOUR[D.RED])]
-        wrap = max(24, (self.query_one("#menu", Vertical).size.width or MENU_WIDTH) - 4)
+        wrap = max(24, (self.query_one("#menu", Vertical).size.width or MENU_WIDTH) - 5)     # one for a scroll bar
+        body = [Text(part, style=COLOUR[D.YELLOW] if self.dry else COLOUR[D.RED]) for part in textwrap.wrap(head, wrap)]
         for s in lines:
             parts = textwrap.wrap(s, wrap) or [""]
             body += [Text(("  " if i == 0 else "    ") + part) for i, part in enumerate(parts)]
@@ -1046,16 +1099,42 @@ class CellMenu(ModalScreen[Optional[str]]):
             body += [Text("  " + part, style=DIM) for part in textwrap.wrap(self.spec.needs, wrap)]
         self.query_one("#menu-status", Static).update("")
         self.query_one("#menu-confirm", Static).update(join(body))
-        self.query_one("#menu-list", OptionList).disabled = True
+        lst = self.query_one("#menu-list", OptionList)
+        lst.disabled = True
+        # the yes / no line must stay on the screen (Kylie 2026-11-18, a 30-row pane): while it asks, the choices
+        # and the note step aside (the lines above say exactly what was chosen), and a long answer scrolls
+        # inside the box instead of pushing the keys off the bottom edge
+        lst.display = False
+        self.query_one("#menu-note", Static).display = False
+        self.query_one("#menu-status", Static).display = False
+        box = self.query_one("#menu-confirm-box", VerticalScroll)
+        title_lines = len(textwrap.wrap(self.spec.title, wrap)) or 1
+        room = max(3, self.app.size.height - 2 - title_lines - 2)       # the border, the title, the two key lines
+        box.styles.max_height = room
+        box.display = True
+        box.scroll_home(animate=False)
+        self.overflow = len(body) > room
         self.set_focus(None)
         self.show_keys()
         self.call_after_refresh(self.place)
 
+    def action_scroll_confirm(self, by: int) -> None:
+        """Up / down while the yes / no line asks: read the rest of a long answer (the choices are put away)."""
+        if self.confirming is None:
+            return
+        box = self.query_one("#menu-confirm-box", VerticalScroll)
+        box.scroll_to(y=max(0, min(box.max_scroll_y, box.scroll_y + by)), animate=False, immediate=True)
+
     def action_cancel(self) -> None:
         if self.confirming is not None:
             self.confirming = None
+            self.overflow = False
             self.query_one("#menu-confirm", Static).update("")
+            self.query_one("#menu-confirm-box", VerticalScroll).display = False
+            self.query_one("#menu-note", Static).display = bool(self.spec.locked or self.spec.note)
+            self.query_one("#menu-status", Static).display = True
             lst = self.query_one("#menu-list", OptionList)
+            lst.display = True
             lst.disabled = False
             lst.focus()
             self.show_keys()
@@ -1109,6 +1188,37 @@ class NoticePopup(ModalScreen[bool]):
 
     def action_no(self) -> None:
         self.dismiss(False)
+
+
+RESULT_KEYS = "Esc closes     any other key closes this and goes on to the table (Enter opens the chosen cell)"
+
+
+class ResultPopup(ModalScreen[Optional[tuple]]):
+    """What a change did ("Saved", "Dry run", "Not changed"). It only tells, it asks nothing, so it never eats a key:
+    Esc closes it, and any other key closes it AND goes on to the table, so one Enter opens the chosen cell's
+    choices (Kylie 2026-11-18: after a Saved box her first Enter only closed the box). Returns (key, character) of
+    that key, or None for Esc."""
+    CSS = _POPUP_CSS.format(name="ResultPopup") + "#box-body { height: auto; max-height: 30; }"
+
+    def __init__(self, title: str, body: Text) -> None:
+        super().__init__()
+        self.title_words, self.body = title, body
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="box"):
+            yield Static(self.title_words, id="box-title")
+            with VerticalScroll(id="box-body", can_focus=False):
+                yield Static(self.body, id="box-text")
+            yield Static(RESULT_KEYS, id="box-keys")
+
+    def on_mount(self) -> None:
+        self.set_focus(None)
+
+    def on_key(self, event: events.Key) -> None:
+        event.stop()
+        event.prevent_default()
+        if self.is_current:
+            self.dismiss(None if event.key == "escape" else (event.key, event.character))
 
 
 RUNG_CODE = {"ag_claude": "2a", "ag_gemini": "2b", "codex": "3", "nvidia": "4"}
@@ -1473,6 +1583,17 @@ class DeskTable(DataTable):
 
     def _set_hover_cursor(self, active: bool) -> None:
         super()._set_hover_cursor(False)
+
+    def on_resize(self, event: events.Resize) -> None:
+        """The strip under the table grew a line and the table got shorter (a 30-row pane): the chosen row is
+        scrolled back into sight instead of being left just under the bottom edge."""
+        if self.row_count:
+            self.call_after_refresh(self.keep_cursor_in_sight)
+
+    def keep_cursor_in_sight(self) -> None:
+        if self.row_count:
+            r, c = self.cursor_coordinate
+            self.move_cursor(row=r, column=c, scroll=True)
 
     def step_rows(self, direction: int) -> None:
         row, col = self.cursor_coordinate
@@ -2031,7 +2152,8 @@ class Desk(App):
             if did == "phrase":
                 return ["Next you type the phrase. Nothing is saved until you say yes to it."]
             out = [f"{col.name} is marked {'here' if did == 'here' else 'not here'} at {name} in the Voice Desk list.",
-                   "It is " + MARK_ONLY + ". Spoken replies there keep their own switch."]
+                   "Spoken replies there keep their own switch"         # the needs line below says it is only a mark
+                   + (f": the row \"{VOICE_ROW['terminal']}\"." if place == "terminal" else ".")]
             if did == "here" and not w.wired:
                 out.append(f"Nothing makes it speak there yet: {w.hint}.")
             if did == "nothere" and w.phrase_stored:
@@ -2044,6 +2166,9 @@ class Desk(App):
 
         note = ("These are marks kept in the Voice Desk list, the same ones the old dashboard had. A phrase is stored "
                 "and shown only: it does not rename a Siri shortcut or change the wake words yet.")
+        if one and which == "terminal":
+            note = (f"Not the voice switch: whether {col.name} speaks in its terminal window is the row "
+                    f"\"{VOICE_ROW['terminal']}\". " + note)
         return Spec(title, options, describe, jobs, note=note, needs=P.NEEDS_HERE)
 
     def ask_phrase(self, col: Any, place: str) -> None:
@@ -2154,13 +2279,12 @@ class Desk(App):
             options.append(Opt(f"mount|{m.code}", f"{M.short(m.code)}  mounted, its window is not open", now=True))
         for s in m.sessions:
             if not s.code:
-                options.append(Opt(f"nocode|{s.pane}", f"{s.pane} {s.label[:22]}: herdr gives no session code",
-                                   disabled=True))
+                options.append(Opt(f"nocode|{s.pane}", M.no_code_words(s, name), disabled=True))
                 continue
             by[s.code] = s
             options.append(Opt(f"mount|{s.code}", M.session_label(s), now=s.code == m.code))
-        if not by:
-            options.append(Opt("none", f"no {name} window with a session code is open in herdr"
+        if not m.sessions:
+            options.append(Opt("none", f"no {name} window is open in herdr"
                                        + (f" ({m.error})" if m.error else ""), disabled=True))
         options.append(Opt(M.TYPE, "type or paste a session code...", goes_on=True))
         options.append(Opt(M.UNMOUNT, "unmount: nothing mounted", now=not m.code))
@@ -2421,12 +2545,16 @@ class Desk(App):
             why = why or "nothing to switch here"
             return Spec(title, locked=why[:1].upper() + why[1:])
         labels = {tok: label for tok, label, _ in options}
+        note = "This is the same switch the Voice Desk dashboard had."
+        here = next((p for p in getattr(v, "voice_places", ()) if p.key == place), None)
+        if here is not None and here.set_by in SET_BY_SAID:
+            note = f"Now: {here.value}, {SET_BY_SAID[here.set_by]}. " + note
         return Spec(title, [Opt(tok, label, cur) for tok, label, cur in options],
                     lambda tok: [f"{v.name}: spoken replies, {name}: {labels[tok]}.",
                                  "The Voice Desk's own switch code makes the change: every file is backed up, "
                                  "written, read back and put back at once if it does not read back."],
                     lambda tok: [lambda: E.set_voice_place(key, place, tok, edit)],
-                    note="This is the same switch the Voice Desk dashboard had.", needs=E.NEEDS["voice_place"])
+                    note=note, needs=E.NEEDS["voice_place"])
 
     def spec_voice(self, v, setting: str) -> Spec:
         edit = self.edit
@@ -2574,8 +2702,14 @@ class Desk(App):
         self.last_results = results
         if results:
             title, body = results_text(results)
-            self.push_screen(NoticePopup(title, body))
+            self.push_screen(ResultPopup(title, body), self.key_goes_on)
         self.action_reread()
+
+    def key_goes_on(self, pressed: Optional[tuple]) -> None:
+        """The key that closed a result box goes on to the table as if the box had not been there."""
+        if pressed:
+            key, character = pressed
+            self.post_message(events.Key(key, character))
 
     # -- the standard ladder, for every agent at once ------------------------------------------------------------
     def action_standard_ladder(self) -> None:

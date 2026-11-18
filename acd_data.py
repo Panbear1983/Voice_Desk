@@ -505,6 +505,7 @@ class VoicePlace:
     can_switch: bool = False
     why_not: str = ""
     problem: str = ""
+    set_by: str = ""                # a Hermes terminal: "desk" (its terminal_voice.json says so) or "default" (no file)
 
 
 _SETTING_NAME = re.compile(r"\s*\((?:[a-z_]+\.)+[a-z_]+\)")        # "(voice.auto_enable)": a setting's name
@@ -580,8 +581,15 @@ def grid_view(paths: "Paths", agents_cfg: Optional[dict], reader: "LogReader", n
             except Exception:                       # noqa: BLE001
                 can, why = False, "the switch could not be read"
             status = RED if cell.problem else _EVIDENCE_COLOUR.get(ev.status if ev else "na", GREY)
+            set_by = ""
+            if place == "terminal" and G.kind_of(row.agent) == G.HERMES and cell.value in (G.OFF, G.ALWAYS):
+                try:        # the same file the windows read: set by the desk, or nothing set (the window's default)
+                    got = G.read_terminal_switch(G.hermes_terminal_switch(paths.grid, str(row.agent.profile)))
+                    set_by = "desk" if got in ("on", "off") else "default" if got is None else ""
+                except Exception:                   # noqa: BLE001
+                    set_by = ""
             lines.append(VoicePlace(place, cell.label, cell.note, status, ev.headline if ev else "", can, why,
-                                    cell.problem))
+                                    cell.problem, set_by))
         out[row.agent.key] = tuple(lines)
     return out, wiring
 

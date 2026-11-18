@@ -284,7 +284,7 @@ class TheTable(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await settle(app, pilot)
             self.assertIn(f"Saved: voice Claude is mounted on session {OPEN_A}", notice(app))
-            await pilot.press("enter")
+            await pilot.press("escape")
             await settle(app, pilot)
             self.assertEqual(pin(w), (OPEN_A + "\n").encode())
             self.assertIn("aaaaaaaa open", shown(app, "mount", "Claude"))
@@ -302,7 +302,9 @@ class TheTable(unittest.IsolatedAsyncioTestCase):
             await show(app, pilot)
             self.assertIn("none mounted", shown(app, "mount", "Codex"))
             await open_cell(app, pilot, "mount", "Codex")
-            self.assertIn("wV:p4 Codex (Dolly): herdr gives no session code", menu_list(app))
+            self.assertIn('"Codex (Dolly)" (wV:p4): this Codex window shows herdr no session code, so voice cannot '
+                          'mount it yet', menu_list(app))
+            self.assertNotIn("no Codex window", menu_list(app))           # it is open: it just cannot be mounted
             pick(app, M.TYPE)
             await pilot.press("enter")
             await pilot.pause()
@@ -327,7 +329,7 @@ class TheTable(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(pin(w, "codex"), "nothing is saved before the yes")
             await pilot.press("y")
             await settle(app, pilot)
-            await pilot.press("enter")
+            await pilot.press("escape")                                    # Esc closes "Saved"
             await settle(app, pilot)
             self.assertIn("dddddddd not open", shown(app, "mount", "Codex"))
         self.assertEqual(pin(w, "codex"), (GONE + "\n").encode())

@@ -207,6 +207,13 @@ def session_label(s: Session, now: Optional[float] = None) -> str:
     return f"{short(s.code)}  {name}  {folder}  {ago(s.last, now)}"
 
 
+def no_code_words(s: Session, name: str) -> str:
+    """A window of the service that herdr reports WITHOUT a session code: voice cannot find or follow it, so it
+    cannot be mounted (Kylie 2026-11-18: the Codex window "Codex (Dolly)")."""
+    which = f"\"{s.label[:28]}\" ({s.pane})" if s.label else s.pane
+    return f"{which}: this {name} window shows herdr no session code, so voice cannot mount it yet"
+
+
 def where_words(s: Session) -> str:
     out = f"window {s.pane}" + (f" \"{s.label}\"" if s.label else "")
     if s.folder:
