@@ -165,10 +165,10 @@ class Paths:
         env = os.environ.get
         return cls(
             profiles=Path(env("HERMES_PROFILES_DIR", HOME / ".hermes/profiles")),
-            agents_toml=Path(env("VOICE_DESK_AGENTS", HOME / "GitHub/Voice_Desk/agents.toml")),
+            agents_toml=Path(env("VOICE_DESK_AGENTS", HOME / "GitHub/Agent_Control_Desk/agents.toml")),
             members=Path(env("ACD_TEAM_ROOM_MEMBERS", HOME / "GitHub/Team_Room/members.json")),
             rules=Path(env("ACD_RULES", REPO / "acd_rules.toml")),
-            shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Voice_Desk")),
+            shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Agent_Control_Desk")),
             gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")),
             team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")),
             grid=_grid_default(), lights=_lights_default(), mounts=_mounts_default())

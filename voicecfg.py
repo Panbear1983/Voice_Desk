@@ -55,7 +55,7 @@ _EDGE = re.compile(r"^[a-z]{2}-[A-Z]{2}-[A-Za-z]+Neural$")
 _CLAUDE_KEYS = (("voice", "NEURAL_VOICE_EN"), ("voice_zh", "NEURAL_VOICE_ZH"),
                 ("always_on", "VOICE_ALWAYS_ON"), ("mode", "VOICE_MODE"))
 NEW_FILE = "(none: the file did not exist)"            # the backup note for a file a sync created ("(" = not a path)
-GEMINI_CONF_HEADER = ("# Gemini's spoken-reply voices. Written by Voice Desk (~/GitHub/Voice_Desk, agents.toml [agents.gemini],\n"
+GEMINI_CONF_HEADER = ("# Gemini's spoken-reply voices. Written by Voice Desk (~/GitHub/Agent_Control_Desk, agents.toml [agents.gemini],\n"
                       "# changed from the panel's voice cell); read by speak-response.py beside this file before every reply.\n")
 
 

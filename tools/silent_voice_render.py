@@ -8,7 +8,7 @@ Two groups:
           the shared Kokoro script, or Microsoft by name): the voice nobody changed must still come out;
   new     voices the agents could not speak before Phase B, made through their own (switched) scripts and the shared
           speaker given with --speaker (by default this checkout's speak_any.py, so it can be checked before the
-          merge puts it at ~/GitHub/Voice_Desk/speak_any.py);
+          merge puts it at ~/GitHub/Agent_Control_Desk/speak_any.py);
   silent  a voice that does not exist: the script must fail and write nothing (no other voice).
 
 Each file is checked with ffprobe and transcribed by the local whisper-server (127.0.0.1:8178, the one Voice Desk's

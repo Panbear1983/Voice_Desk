@@ -147,7 +147,7 @@ curl -L -o ~/.local/share/whisper-models/ggml-small.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
 
 # 3. the app
-git clone https://github.com/Panbear1983/Voice_Desk.git && cd Voice_Desk
+git clone https://github.com/Panbear1983/Agent_Control_Desk.git && cd Agent_Control_Desk
 uv venv .venv --python 3.11          # or: python3.11 -m venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 

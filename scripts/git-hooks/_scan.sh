@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared secret + personal-data scanner for the Voice_Desk repo (public remote).
+# Shared secret + personal-data scanner for the Agent_Control_Desk repo (public remote).
 # Dependency-free (pure grep). Called by pre-commit (staged) and pre-push (range).
 # If `gitleaks` is installed it is ALSO run as a second, stronger layer.
 #

@@ -125,7 +125,7 @@ no_fallback = true                  # Peter 2026-11-11: own voice only, silent i
 effect = "16 pitch=1.4"
 english_only = true                  # no Mandarin voice: a Chinese line stays silent (Voice Desk and simba_tts.py)
 # Voice Desk speaks her English lines through: <command> <text file> <out.wav> <voice> <effect>
-command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python", "~/GitHub/Voice_Desk/simba_tts.py"]
+command = ["~/Desktop/Peter_Tax/tax_engine/venv/bin/python", "~/GitHub/Agent_Control_Desk/simba_tts.py"]
 
 [agents.jarvis]
 profile = "orchestrator"

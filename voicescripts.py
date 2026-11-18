@@ -23,7 +23,7 @@ nothing is written and the script is reported as "does not fit"):
 
 Simba's script (simba_tts.py) lives in this folder and is switched by the code itself, not by an install.
 
-The shared speaker is speak_any.py in Voice Desk's folder (~/GitHub/Voice_Desk/speak_any.py, run with its .venv
+The shared speaker is speak_any.py in Voice Desk's folder (~/GitHub/Agent_Control_Desk/speak_any.py, run with its .venv
 Python). A switched script that finds it missing stays silent for a voice it does not make itself, so the pick-lists
 offer the whole bank to an agent only when BOTH are true: its script carries the switch mark (MARK) and the shared
 speaker is in place (`switched`). Until then the extra voices are shown "not playable yet".
@@ -67,11 +67,11 @@ def home() -> Path:
 
 def speak_any_path() -> Path:
     """Where the outside scripts look for the shared speaker (the same default they carry)."""
-    return Path(os.environ.get("VOICE_DESK_SPEAK_ANY") or home() / "GitHub/Voice_Desk/speak_any.py")
+    return Path(os.environ.get("VOICE_DESK_SPEAK_ANY") or home() / "GitHub/Agent_Control_Desk/speak_any.py")
 
 
 def speak_any_python() -> Path:
-    return Path(os.environ.get("VOICE_DESK_SPEAK_PY") or home() / "GitHub/Voice_Desk/.venv/bin/python")
+    return Path(os.environ.get("VOICE_DESK_SPEAK_PY") or home() / "GitHub/Agent_Control_Desk/.venv/bin/python")
 
 
 def gemini_hook() -> Path:
@@ -199,8 +199,8 @@ JARVIS_EDITS = (
     ('SPEED="${JARVIS_TTS_SPEED:-1.2}"\n',
      'SPEED="${JARVIS_TTS_SPEED:-1.2}"\n'
      'if [ "$native" = 0 ]; then\n'
-     f'  SA="{_sh_default("VOICE_DESK_SPEAK_ANY", "GitHub/Voice_Desk/speak_any.py")}"\n'
-     f'  SPY="{_sh_default("VOICE_DESK_SPEAK_PY", "GitHub/Voice_Desk/.venv/bin/python")}"\n'
+     f'  SA="{_sh_default("VOICE_DESK_SPEAK_ANY", "GitHub/Agent_Control_Desk/speak_any.py")}"\n'
+     f'  SPY="{_sh_default("VOICE_DESK_SPEAK_PY", "GitHub/Agent_Control_Desk/.venv/bin/python")}"\n'
      '  if [ -x "$SPY" ] && [ -f "$SA" ] && "$SPY" "$SA" "$in" "$out" "$voice" "$SPEED" 2>>"$LOG" && [ -s "$out" ]; then\n'
      '    echo "$(date +%T) shared speaker:$voice x$SPEED" >> "$LOG"; exit 0\n'
      '  fi\n'
@@ -218,8 +218,8 @@ ESTHER_EDITS = (
      '# before. Any other voice in the bank (am_adam, bm_george, en-US-AvaNeural ...) is made by Voice Desk\'s shared\n'
      '# speaker (speak_any.py), exactly that voice: it is never turned into alloy. If it fails nothing is written and\n'
      '# this exits 1: the line stays silent.\n'
-     'SPEAK_ANY = os.environ.get("VOICE_DESK_SPEAK_ANY") or str(Path.home() / "GitHub/Voice_Desk/speak_any.py")\n'
-     'SPEAK_PY = os.environ.get("VOICE_DESK_SPEAK_PY") or str(Path.home() / "GitHub/Voice_Desk/.venv/bin/python")\n'
+     'SPEAK_ANY = os.environ.get("VOICE_DESK_SPEAK_ANY") or str(Path.home() / "GitHub/Agent_Control_Desk/speak_any.py")\n'
+     'SPEAK_PY = os.environ.get("VOICE_DESK_SPEAK_PY") or str(Path.home() / "GitHub/Agent_Control_Desk/.venv/bin/python")\n'
      '\n'
      '\n'
      'def wants_shared_speaker(voice: str) -> bool:\n'
@@ -259,8 +259,8 @@ GEMINI_EDITS = (
      '# cannot be made the reply stays silent (the Mac voice is never used any more), and a voice line in\n'
      '# voice-defaults.conf that names no usable voice means silent, not the default above.\n'
      '_KOKORO_VOICE = re.compile(r"^[ab][fm]_[a-z]+$")\n'
-     'SPEAK_ANY = os.environ.get("VOICE_DESK_SPEAK_ANY") or str(Path.home() / "GitHub/Voice_Desk/speak_any.py")\n'
-     'SPEAK_PY = os.environ.get("VOICE_DESK_SPEAK_PY") or str(Path.home() / "GitHub/Voice_Desk/.venv/bin/python")\n'),
+     'SPEAK_ANY = os.environ.get("VOICE_DESK_SPEAK_ANY") or str(Path.home() / "GitHub/Agent_Control_Desk/speak_any.py")\n'
+     'SPEAK_PY = os.environ.get("VOICE_DESK_SPEAK_PY") or str(Path.home() / "GitHub/Agent_Control_Desk/.venv/bin/python")\n'),
     ('        v = _EDGE_VOICE.match(m.group(2))\n'
      '        if m.group(1) == "NEURAL_VOICE_EN" and v and v.group(1) == "en":\n'
      '            en = m.group(2)\n'
@@ -794,10 +794,10 @@ class Outcome:
 
 RESTORE_NOTE = """# Restore note: Voice Desk voice-script install {stamp}
 
-Written by `python -m voicescripts install` (Voice_Desk/voicescripts.py). Each file below was copied here BEFORE it
+Written by `python -m voicescripts install` (Agent_Control_Desk/voicescripts.py). Each file below was copied here BEFORE it
 was edited. To put everything back exactly as it was:
 
-    cd ~/GitHub/Voice_Desk && .venv/bin/python -m voicescripts restore {folder}
+    cd ~/GitHub/Agent_Control_Desk && .venv/bin/python -m voicescripts restore {folder}
 
 That puts a file back only if it still is exactly what the install wrote (fingerprints in manifest.json); a file
 changed by hand since is left alone and named, so nothing newer is lost. By hand, one file at a time:

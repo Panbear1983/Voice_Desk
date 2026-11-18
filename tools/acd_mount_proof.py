@@ -34,7 +34,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 LIVE_STATE = HOME / ".voice_desk"
-LIVE_TOML = HOME / "GitHub/Voice_Desk/agents.toml"
+LIVE_TOML = HOME / "GitHub/Agent_Control_Desk/agents.toml"
 PRIVATE = ("receiver_token", "tg_dm_chat", "transcript.log", "*.log", "acd", "saved_drafts", "*.bundle", "sounds",
            "speech", "*.lock")
 FAKE_CODE = "00000000-0000-4000-8000-000000000000"

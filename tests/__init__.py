@@ -43,7 +43,7 @@ os.environ.setdefault("VOICE_DESK_KOKORO_BANKS", str(_bank))
 os.environ.setdefault("VOICE_DESK_EDGE_LIST", str(_bank / "edge_voices.json"))
 
 # Which agents' own speaking scripts can play any bank voice (voicescripts.py) depends on files outside the project
-# (Gemini's hook, the shared speaker at ~/GitHub/Voice_Desk/speak_any.py). The tests never read Peter's: Gemini's
+# (Gemini's hook, the shared speaker at ~/GitHub/Agent_Control_Desk/speak_any.py). The tests never read Peter's: Gemini's
 # hook and the shared speaker point at places that do not exist, so every list is built as "not switched yet"
 # unless a test sets them up itself.
 os.environ["VOICE_DESK_GEMINI_HOOK"] = str(_tmp / "no-gemini-hook.py")

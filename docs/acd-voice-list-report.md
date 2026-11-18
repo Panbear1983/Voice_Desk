@@ -54,7 +54,7 @@ Phase B (the scripts):
   different (their own path is untouched and was rendered silently, below). What differs: a voice that fails is now
   silent instead of falling back to the Mac voice (Gemini, Claude) or to Kokoro af_heart (Claude).
 - Waits for the merge to main: the new desk menus, Simba's wider script, and the shared speaker itself
-  (`~/GitHub/Voice_Desk/speak_any.py`). Until then a switched script asked for a voice it does not make stays
+  (`~/GitHub/Agent_Control_Desk/speak_any.py`). Until then a switched script asked for a voice it does not make stays
   silent, and the desk keeps those voices "not playable yet" (it checks that the shared speaker is in place), so the
   list is honest in between. After the merge: Gemini, Jarvis, Esther and Simba can take any bank voice.
 
@@ -90,7 +90,7 @@ Phase B (the scripts):
 
 ## How to undo the outside edits
 
-    cd ~/GitHub/Voice_Desk && .venv/bin/python -m voicescripts restore ~/.hermes/profile-backups/20261118-121053-voice-scripts
+    cd ~/GitHub/Agent_Control_Desk && .venv/bin/python -m voicescripts restore ~/.hermes/profile-backups/20261118-121053-voice-scripts
 
 (also written in that folder's RESTORE.md, with one `cp -p` line per file). It puts a file back only if it is still
 exactly what the install wrote; a file changed since is named and left alone. The backups are the files as they

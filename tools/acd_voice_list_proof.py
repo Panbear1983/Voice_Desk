@@ -2,7 +2,7 @@
 headless on a COPY of agents.toml and show that nothing about any agent's voice changes by itself.
 
     .venv/bin/python tools/acd_voice_list_proof.py --out <folder> [--old <a checkout of the code before>]
-                                                  [--toml ~/GitHub/Voice_Desk/agents.toml]
+                                                  [--toml ~/GitHub/Agent_Control_Desk/agents.toml]
 
 What it does, all silent and read-only towards everything live:
   1. copies agents.toml, Claude's and Gemini's voice-defaults.conf into a throw-away folder and points the desk,
@@ -203,7 +203,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--out", type=Path)
     ap.add_argument("--old", type=Path, help="a checkout of the code before the change, to compare the values")
-    ap.add_argument("--toml", type=Path, default=HOME / "GitHub/Voice_Desk/agents.toml")
+    ap.add_argument("--toml", type=Path, default=HOME / "GitHub/Agent_Control_Desk/agents.toml")
     ap.add_argument("--values", type=Path, help=argparse.SUPPRESS)          # the child process
     a = ap.parse_args()
     if a.values:

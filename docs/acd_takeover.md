@@ -58,8 +58,9 @@ changed behind the desk's back, and the dry-run rule (nothing is written unless 
 Found by reading, nothing was changed.
 
 - `~/.config/herdr/dashboards.manifest`, line 24:
-  `Monitors/Ops      Voice_Desk | wX:pG | ~/GitHub/Voice_Desk | ./dashboard.sh`
-  (the real line spells the home folder out in full)
+  `Monitors/Ops      <desk folder> | wX:pG | <desk folder> | ./dashboard.sh`
+  (the real line spelled the home folder out in full; it now opens `~/GitHub/Agent_Control_Desk` with
+  `./acd.sh --armed`)
   This is the line that opens the old dashboard in the Monitors workspace after a restart.
 - `~/.config/herdr/dashboards-desktop.manifest` has no Voice Desk line.
 - `dashboard.sh` in the project runs `dashboard.py`.

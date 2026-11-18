@@ -15,6 +15,6 @@
 # The project's Python lives in the main Voice Desk folder (.venv); a worktree borrows it.
 cd "$(dirname "$0")" || exit 1
 PY=".venv/bin/python"
-[ -x "$PY" ] || PY="$HOME/GitHub/Voice_Desk/.venv/bin/python"
-[ -x "$PY" ] || { echo "missing .venv in ~/GitHub/Voice_Desk"; exit 1; }
+[ -x "$PY" ] || PY="$HOME/GitHub/Agent_Control_Desk/.venv/bin/python"
+[ -x "$PY" ] || { echo "missing .venv in ~/GitHub/Agent_Control_Desk"; exit 1; }
 exec "$PY" acd.py "$@"
