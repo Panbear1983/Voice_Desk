@@ -512,7 +512,7 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         p = next((x for x in v.presence if x.key == place), None)
         if p is None:
             return Cell(D.GREY, "unknown", fixed=FACT)
-        label = "Terminal chat window" if place == "terminal" else D.PLACE_NAME.get(place, place)
+        label = PLACE_ROW["terminal"] if place == "terminal" else D.PLACE_NAME.get(place, place)
         detail = [f"{label}: {state_word(p)}: {p.evidence}."]
         if place in NOT_THE_VOICE_SWITCH:
             detail.insert(0, NOT_THE_VOICE_SWITCH[place].format(name=name))
@@ -2152,7 +2152,7 @@ class Desk(App):
             if did == "phrase":
                 return ["Next you type the phrase. Nothing is saved until you say yes to it."]
             out = [f"{col.name} is marked {'here' if did == 'here' else 'not here'} at {name} in the Voice Desk list.",
-                   "It is " + MARK_ONLY + ". Spoken replies there keep their own switch"
+                   "Spoken replies there keep their own switch"         # the needs line below says it is only a mark
                    + (f": the row \"{VOICE_ROW['terminal']}\"." if place == "terminal" else ".")]
             if did == "here" and not w.wired:
                 out.append(f"Nothing makes it speak there yet: {w.hint}.")

@@ -258,11 +258,12 @@ class NotTheVoiceSwitch(unittest.TestCase):
         self.assertIn("This row is not the voice switch", strip)
         self.assertIn('Whether Kylie speaks there is the row "Speaks in terminal window"', strip)
         self.assertIn("Enter opens the choices", strip)
+        self.assertIn("Has a terminal chat window: ", " ".join(cell.detail))        # the fact uses the row's name
 
     def test_marked_not_here_it_still_says_so_first(self):
         wire = D.Wire("terminal", False, True, "", False)
         cell = acd.wired_cell("Kylie", D.GREEN, "on", [acd.NOT_THE_VOICE_SWITCH["terminal"].format(name="Kylie"),
-                                                       "Terminal chat window: on: x."], wire)
+                                                       "Has a terminal chat window: on: x."], wire)
         self.assertEqual(cell.words, "not here")
         self.assertTrue(cell.detail[0].startswith(acd.NOT_SWITCH_HEAD))
         self.assertIn("marked not here", cell.detail[1])
@@ -277,6 +278,8 @@ class NotTheVoiceSwitch(unittest.TestCase):
         self.assertIn('Not the voice switch: whether Kylie speaks in its terminal window is the row '
                       '"Speaks in terminal window"', spec.note)
         self.assertIn('the row "Speaks in terminal window"', " ".join(spec.describe("nothere|terminal")))
+        said = " ".join(spec.describe("nothere|terminal")) + " " + spec.needs
+        self.assertEqual(said.count("switches nothing on or off"), 1, said)          # Kylie: it was said twice
         other = app.spec_wire(kylie, "tg_dm")
         self.assertNotIn("Not the voice switch", other.note)
 
