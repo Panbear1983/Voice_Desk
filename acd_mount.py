@@ -237,7 +237,8 @@ def no_code_words(s: Session, name: str, m: Optional["MountView"] = None) -> str
     if m is None:
         return head + ", so voice cannot mount it by itself"
     if m.bound and m.window == s:
-        return f"{which}: voice uses this window for the mounted session {short(m.code)} ({m.why})"
+        return (f"{which}: no session code from herdr; voice uses it for the mounted session {short(m.code)}, "
+                f"the only {name} window open")
     if m.code and m.why:
         return f"{head}; not used for the mounted session {short(m.code)}: {m.why}"
     if len(m.sessions) > 1:

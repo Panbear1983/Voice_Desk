@@ -713,7 +713,7 @@ def mount_cell(o: D.OtherAssistant) -> Cell:
         w = m.window
         detail = [f"Voice {o.name} goes to the mounted session {m.code} ({M.where_words(w)})."]
         if m.bound:
-            detail.append(f"herdr shows that window no session code: {m.why}.")
+            detail.append(m.why[:1].upper() + m.why[1:] + ".")
         return Cell(D.GREEN, f"{M.short(m.code)} open",
                     detail + ["Its answer is read aloud as the window shows it; the typed words start with [voice].",
                               "No other window and no background session is used."], setting="mount")

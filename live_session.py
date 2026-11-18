@@ -227,8 +227,8 @@ def bind_codeless(target: str, pin: str, windows: list, now: Optional[float] = N
     if started and folder and not _same_folder(started, folder):
         return False, (f"the mounted session was started in {started}, but this window is in {folder}, so it is "
                        "not that session")
-    return True, (f"herdr shows this window no session code; it is the only {name} window open and the mounted "
-                  f"session's own record was written {_age_words(age)}, so voice uses this window")
+    return True, (f"it is the only {name} window open, herdr shows it no session code, and the mounted session's "
+                  f"own record was written {_age_words(age)}, so voice uses this window")
 
 
 class LiveBrain:

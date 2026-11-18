@@ -245,13 +245,14 @@ class TheDesk(SessionsFolder):
         spec = app.spec_mount(codex)
         line = next(o for o in spec.options if o.token == f"mount|{CODE}")
         self.assertTrue(line.now and not line.disabled, "the window is the mounted session's: marked, choosable")
-        self.assertIn('"Codex (Dolly)" (wV:p4): voice uses this window for the mounted session 01a1d2df', line.label)
-        self.assertIn("only Codex window open", line.label)
+        self.assertIn('"Codex (Dolly)" (wV:p4): no session code from herdr; voice uses it for the mounted session '
+                      '01a1d2df, the only Codex window open', line.label)
         self.assertFalse(any("its window is not open" in o.label for o in spec.options))
         self.assertIn("window wV:p4", " ".join(spec.describe(f"mount|{CODE}")))
         cell = acd.cell_at("mount", codex)
         self.assertEqual((cell.status, cell.words), (D.GREEN, "01a1d2df open"))
-        self.assertIn("herdr shows that window no session code", " ".join(cell.detail))
+        self.assertIn("It is the only Codex window open, herdr shows it no session code", " ".join(cell.detail))
+        self.assertIn("written 5 min ago", " ".join(cell.detail))
 
     def test_not_bound_the_menu_and_the_cell_say_why(self):
         self.w = w = TM.world(pin=None)
