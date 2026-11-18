@@ -429,8 +429,10 @@ lines only (comments and every other setting stay as they were), backs every fil
 read the result. Hermes reads voice settings when a session starts: reopen the agent's window,
 and restart the Telegram gateway from a separate terminal, to hear a change. The listener reads
 names, greetings, hint words and mic settings at start (restart it after changing those); voices
-are read fresh before every spoken line. The Agent Control Desk lists every agent's voice;
-`.venv/bin/python -m voicecfg check` shows a profile that was hand-edited away from `agents.toml`.
+are read fresh before every spoken line. The Agent Control Desk lists every agent's voice and
+runs the same check on every read: the status line says "voice settings match agents.toml" when
+nothing differs, and a red line in the top strip names the agents and the first difference when a
+profile was hand-edited away from `agents.toml` (`.venv/bin/python -m voicecfg check` lists them all).
 
 Esther keeps her own Kokoro voice everywhere: Voice Desk speaks her lines through her script
 (`command` in her block), with an Edge voice (`fallback`) only if Kokoro fails.

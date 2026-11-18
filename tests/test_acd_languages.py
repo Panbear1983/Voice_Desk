@@ -291,6 +291,66 @@ class TheMenus(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
         self.assertEqual(tried, [])
 
+    async def test_on_the_rows_name_one_choice_goes_to_every_agent_it_is_a_choice_for(self):
+        """Enter on "Other languages" itself (the row's name): one language choice for every agent at once. The
+        confirmation lists each agent's before and after; an English-only agent and an agent without the chosen
+        extra language stay as they are; nothing is written before the second Enter."""
+        w = world(armed=True)
+        english_only(w)                                                 # Jarvis: English only
+        self.assertTrue(P.set_extra(w.edit, "kylie", f"ja={NANAMI}", now=WHEN).ok)   # the row shows from now on
+        app = make_app(w)
+        async with app.run_test(size=(220, 66)) as pilot:
+            await pilot.pause()
+            await show(app, pilot)
+            await open_cell(app, pilot, "languages", 0)
+            self.assertIsInstance(app.screen, acd.CellMenu)
+            self.assertEqual(menu(app, "title"), "Other languages: every agent")
+            self.assertEqual(menu_list(app).split("\n"),
+                             ["(o) follow the reply's language (the default)   now", "( ) always English",
+                              "( ) always Chinese", "( ) always Japanese"])     # no "extra languages..." step here
+            pick(app, "override|zh")
+            await pilot.press("enter")
+            await pilot.pause()
+            confirm = " ".join(menu(app, "confirm").split())
+            self.assertIn("WRITTEN", confirm)
+            for name in ("Kylie", "Esther", "Wanna Buffet", "Claude", "Gemini", "Codex"):
+                self.assertIn(f"{name}: follow the reply's language (the default) -> always Chinese", confirm)
+            self.assertIn("Jarvis: stays follow the reply's language (the default) (not a choice for this agent)",
+                          confirm)
+            self.assertNotIn("voice_override", toml_text(w))           # nothing before the second Enter
+            await pilot.press("enter")
+            await settle(app, pilot)
+            self.assertEqual(len(app.last_results), 6)                  # one change per agent, none for Jarvis
+            self.assertTrue(all(r.ok and not r.dry for r in app.last_results), [r.message for r in app.last_results])
+        for key in ("kylie", "esther", "wanna_buffet", "claude", "gemini", "codex"):
+            self.assertEqual(block(w, key).get("voice_override"), "zh", key)
+        self.assertNotIn("voice_override", block(w, "jarvis"))
+
+    async def test_on_the_rows_name_an_extra_language_only_one_agent_has_changes_only_that_agent(self):
+        w = world(armed=True)
+        self.assertTrue(P.set_extra(w.edit, "kylie", f"ja={NANAMI}", now=WHEN).ok)   # only Kylie has Japanese
+        E.set_armed(w.edit, False)                                      # then a dry desk: shown, nothing written
+        before = F.tree_hashes(w.root)
+        app = make_app(w)
+        async with app.run_test(size=(220, 66)) as pilot:
+            await pilot.pause()
+            await show(app, pilot)
+            await open_cell(app, pilot, "languages", 0)
+            pick(app, "override|ja")
+            await pilot.press("enter")
+            await pilot.pause()
+            confirm = " ".join(menu(app, "confirm").split())
+            self.assertIn("Kylie: follow the reply's language (the default) -> always Japanese", confirm)
+            for name in ("Jarvis", "Esther", "Wanna Buffet", "Claude", "Gemini", "Codex"):
+                self.assertIn(f"{name}: stays follow the reply's language (the default) (not a choice for this agent)",
+                              confirm)
+            await pilot.press("enter")
+            await settle(app, pilot)
+            self.assertEqual(len(app.last_results), 1)
+            self.assertTrue(app.last_results[0].ok and app.last_results[0].dry, app.last_results[0].message)
+        self.assertEqual(F.tree_hashes(w.root), before)
+        self.assertNotIn("voice_override", block(w, "kylie"))
+
 
 if __name__ == "__main__":
     unittest.main()

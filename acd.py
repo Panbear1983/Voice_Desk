@@ -882,6 +882,12 @@ def systems_text(snap: Optional[D.Snapshot], width: int = 10_000, listener: Opti
         t.append("watcher: ", style=DIM)
         t.append(snap.watch_mode, style=COLOUR[D.YELLOW] if snap.watch_paused else DIM)
         items.append(t)
+    vc = snap.voice_check
+    if vc is not None and vc.ok:                        # a difference or a failed check is a line in the strip above
+        t = Text()
+        t.append("● ", style=COLOUR[D.GREEN])
+        t.append(f"voice settings match agents.toml ({vc.checked} in {vc.files} files)", style=DIM)
+        items.append(t)
     for ok, label, _detail in snap.lights:
         if ok is False:                                 # already a red line in the warning strip: said once
             continue

@@ -159,6 +159,7 @@ class Paths:
     grid: Any = None                       # the Voice Desk grid's own files (gridstate.Paths): where a voice speaks
     lights: Optional[Callable] = None      # the Voice Desk's health strip (syshealth.collect), read-only
     mounts: Optional[Callable] = None      # () -> target -> acd_mount.MountView: the session voice goes to (read-only)
+    voice_check: Optional[Callable] = None  # () -> VoiceCheck: `voicecfg check`, read-only (None = not checked)
 
     @classmethod
     def default(cls) -> "Paths":
@@ -171,7 +172,8 @@ class Paths:
             shortcuts=Path(env("ACD_SHORTCUTS_DIR", HOME / "GitHub/Agent_Control_Desk")),
             gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")),
             team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")),
-            grid=_grid_default(), lights=_lights_default(), mounts=_mounts_default())
+            grid=_grid_default(), lights=_lights_default(), mounts=_mounts_default(),
+            voice_check=_voice_check_default())
 
 
 def _mounts_default() -> Optional[Callable]:
@@ -203,6 +205,44 @@ def _lights_default() -> Optional[Callable]:
         return syshealth.collect
     except Exception:                               # noqa: BLE001
         return None
+
+
+def _voice_check_default() -> Optional[Callable]:
+    """`voicecfg check` with no options: agents.toml, every Hermes profile's config.yaml, Claude's and Gemini's
+    voice-defaults.conf, exactly the files the command itself compares."""
+    try:
+        import voicecfg
+    except Exception:                               # noqa: BLE001  the desk still opens without the voice tools
+        return None
+
+    def read() -> "VoiceCheck":
+        return voice_check(A.load(None), voicecfg.PROFILES, voicecfg.CLAUDE_CONF, voicecfg.GEMINI_CONF)
+    return read
+
+
+# ---- does every agent's own voice setting still match agents.toml? -----------------------------------------
+@dataclass(frozen=True)
+class VoiceCheck:
+    """The result of `voicecfg check` as the desk shows it (the retired voice dashboard's drift warning). Only
+    reads: voicecfg's own collect + drift, never its sync."""
+    ok: Optional[bool]                # True everything matches, False something differs, None the check failed
+    checked: int = 0                  # voice settings compared (the ones voicecfg only reads are not counted)
+    files: int = 0
+    who: tuple = ()                   # the agents with a difference, by name
+    lines: tuple = ()                 # each difference, in voicecfg check's own words
+    error: str = ""
+
+
+def voice_check(cfg: dict, profiles: Path, claude_conf: Path, gemini_conf: Optional[Path]) -> VoiceCheck:
+    import voicecfg
+    items = voicecfg.collect(cfg, profiles, claude_conf, gemini_conf)
+    off = voicecfg.drift(items)
+    checked = len(items) - len(voicecfg.unmanaged(items))
+    files = len({str(i.path) for i in items})
+    if not off:
+        return VoiceCheck(True, checked, files)
+    who = tuple(sorted({i.label.split(" (")[0] for i in off}))
+    return VoiceCheck(False, checked, files, who, tuple(" ".join(voicecfg.describe(i).split()) for i in off))
 
 
 # ---- an agent's log ------------------------------------------------------------------------------------
@@ -854,6 +894,7 @@ class Snapshot:
     watch_notes: tuple = ()                           # the newest lines of the watcher's own log
     lights: tuple = ()                                # the Voice Desk's health strip: (ok, label, detail)
     allowance_read: bool = False                      # the usage check has been run at least once
+    voice_check: Optional[VoiceCheck] = None          # `voicecfg check`: None = not checked
 
 
 # ---- small readers ---------------------------------------------------------------------------------------
@@ -1383,14 +1424,21 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         saved = str(members.get("saved") or "")[:10]
         room = f"{lead} leads the Team Room. {len(members['members'])} members saved{' ' + saved if saved else ''}."
     views_t = tuple(views)
-    return Snapshot(views_t, others, warnings(views_t, problems, desk, watch, lights, others=others), room, now,
+    vcheck: Optional[VoiceCheck] = None
+    if paths.voice_check is not None:
+        try:
+            vcheck = paths.voice_check()
+        except Exception as e:                      # noqa: BLE001  a failed check must never take the desk down
+            vcheck = VoiceCheck(None, error=str(e)[:120] or type(e).__name__)
+    return Snapshot(views_t, others, warnings(views_t, problems, desk, watch, lights, others=others, voice=vcheck),
+                    room, now,
                     tuple(problems),
                     waiting=tuple(desk.waiting), armed=desk.armed, last_change=desk.last_change,
                     room_follows_rules=adapter,
                     watch_mode=watch.mode if watch is not None else "",
                     watch_paused=bool(watch.paused) if watch is not None else False,
                     watch_notes=tuple(watch.notes) if watch is not None else (),
-                    lights=lights, allowance_read=usage is not None and bool(usage))
+                    lights=lights, allowance_read=usage is not None and bool(usage), voice_check=vcheck)
 
 
 def _count(n: int, one: str, many: str) -> str:
@@ -1399,7 +1447,7 @@ def _count(n: int, one: str, many: str) -> str:
 
 def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
              desk: Optional[DeskRecord] = None, watch: Any = None, lights: tuple = (),
-             others: tuple = ()) -> tuple[Warning, ...]:
+             others: tuple = (), voice: Optional[VoiceCheck] = None) -> tuple[Warning, ...]:
     """The strip at the top. Real conditions only; when nothing is wrong it says so."""
     out = [Warning(RED, p) for p in problems]
     drifted = [d for v in views for d in v.drifts]
@@ -1408,6 +1456,14 @@ def warnings(views: tuple[AgentView, ...], problems: list[str] = (),
         out.append(Warning(RED, _count(len(drifted), "setting was", "settings were")
                            + " changed behind the desk's back (" + ", ".join(who)
                            + "): press Enter on the red cell to put it back or accept it"))
+    if voice is not None and voice.ok is False:
+        out.append(Warning(RED, _count(len(voice.lines), "voice setting differs", "voice settings differ")
+                           + " from agents.toml (" + ", ".join(voice.who) + "): " + voice.lines[0][:160]
+                           + (" …" if len(voice.lines) > 1 else "")
+                           + ". `.venv/bin/python -m voicecfg check` lists them, `sync --dry-run` shows the fix"))
+    elif voice is not None and voice.ok is None:
+        out.append(Warning(YELLOW, "the voice settings could not be compared with agents.toml (voicecfg check: "
+                                   + (voice.error or "failed") + ")"))
     if watch is not None and watch.paused:
         out.append(Warning(YELLOW, "the watcher is paused (p resumes): the desk is not checking for changes "
                                    "made behind its back"))
