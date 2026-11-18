@@ -43,7 +43,7 @@ paragraph in the room's notes.
 ## Installing it (not done; needs Peter's yes)
 
 In the Team Room's folder: `patch -p1 --dry-run < team_room_rules_adapter.patch`, then the same without
-`--dry-run`. The rules file is found at `~/GitHub/Voice_Desk/acd_rules.toml`, or wherever the setting
+`--dry-run`. The rules file is found at `~/GitHub/Agent_Control_Desk/acd_rules.toml`, or wherever the setting
 `TEAM_ROOM_DESK_RULES` points; that path has to follow the project when it is renamed.
 
 **Does the room need a reload? Yes, once, to load the new code:**

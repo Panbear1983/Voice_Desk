@@ -13,7 +13,7 @@
 +# Additive and safe: with no rules file, or one that cannot be read, every function below answers exactly as the
 +# room behaved before, and nothing else in this file changes.
 +DESK_RULES_FILE = Path(os.environ.get("TEAM_ROOM_DESK_RULES",
-+                                      str(Path.home() / "GitHub" / "Voice_Desk" / "acd_rules.toml")))
++                                      str(Path.home() / "GitHub" / "Agent_Control_Desk" / "acd_rules.toml")))
 +_desk_rules_cache: dict[str, Any] = {"key": None, "rules": {}}
 +
 +
