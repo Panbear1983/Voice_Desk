@@ -187,6 +187,6 @@ def history_text(paths: voiceedit.EditPaths, n: int = 4, watcher_lines: Optional
     if lines:
         t.append("\n" + "\n".join(lines), style="#bbbbbb")
     if watcher_lines:
-        t.append("\nPut back by the watcher (W pauses it)\n", style="bold #9b59b6")
+        t.append("\nPut back by the watcher (p on the desk pauses it)\n", style="bold #9b59b6")
         t.append("\n".join(watcher_lines), style="#bbbbbb")
     return t

@@ -6,7 +6,7 @@
     Hermes fixes      Peter's local patches in Hermes' own program files are still there (a Hermes
                       update can overwrite them)
     watcher           the check that puts drifted settings back as the panel set them: OK / paused / not
-                      running / cannot repair (watcher.py; W pauses it)
+                      running / cannot repair (watcher.py; p on the desk pauses it)
     Mac output        volume, mute and which speaker/headphones are the output right now
 
 Read-only and gentle: a handful of small file reads and one osascript call, done once per refresh

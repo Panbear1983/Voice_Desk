@@ -88,7 +88,7 @@ its start.
 
 **Step 4 additions.** The watcher (`watcher.py`, launchd job `com.peter.voice-desk-watcher` via `install_watcher.sh`)
 re-applies what the panel last set; state in `~/.voice_desk/watcher.json` (last check, problems it could not repair),
-`watcher_log.jsonl` (what it put back), pause = the file `~/.voice_desk/watcher_paused` (W in the dashboard). Claude's
+`watcher_log.jsonl` (what it put back), pause = the file `~/.voice_desk/watcher_paused` (p on the desk). Claude's
 and Gemini's Stop hooks play through the speech queue (`~/bin/afplay` stand-in, `VOICE_DESK_SPEAKER=claude|gemini`);
 `speech/off` gives the old behaviour. See the README section "The watcher (step 4)".
 

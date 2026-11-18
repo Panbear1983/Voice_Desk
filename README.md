@@ -231,6 +231,13 @@ Reproduce these views without a microphone or model calls:
 python3 docs/render_images.py --only 08_codex_window --no-gif
 ```
 
+**An open Codex window by voice.** "Talk to Codex" types into an open Codex terminal window when one is
+mounted on the desk (its "Mounted session" row). herdr does not always report a session code for a Codex
+window; such a window is still used for the mounted session when it is the only Codex window open and that
+session's own record (`~/.codex/sessions/.../rollout-*-<code>.jsonl`) was written in the last day (and, when
+both say, in the window's folder). With two Codex windows open, voice never guesses; with nothing mounted, a
+window without a code is not used. The desk's mount menu says which way it went and why.
+
 ## Talk to it
 
 | Say | What happens |

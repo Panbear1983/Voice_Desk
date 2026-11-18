@@ -897,7 +897,7 @@ def systems_text(snap: Optional[D.Snapshot], width: int = 10_000, listener: Opti
         if ok is False:                                 # already a red line in the warning strip: said once
             continue
         if label.lower().startswith("watcher"):         # the Voice Desk's own watcher (voice switches), not the desk's
-            label = "Voice Desk " + label.replace("(W resumes)", "").strip()
+            label = "Voice Desk " + label.replace("(p on the desk resumes)", "").strip()
             label = label.replace("WATCHER PAUSED", "watcher paused")
         colour = DIM if ok is None else COLOUR[D.GREEN] if ok else COLOUR[D.RED]
         t = Text()
@@ -2232,7 +2232,7 @@ class Desk(App):
             did, place = tok.split("|", 1)
             return [] if did == "phrase" else [lambda: P.set_here(edit, key, place, did == "here")]
 
-        note = ("These are marks kept in the Voice Desk list, the same ones the old dashboard had. A phrase is stored "
+        note = ("These are marks kept in the Voice Desk list (agents.toml). A phrase is stored "
                 "and shown only: it does not rename a Siri shortcut or change the wake words yet.")
         if one and which == "terminal":
             note = (f"Not the voice switch: whether {col.name} speaks in its terminal window is the row "
@@ -2692,7 +2692,7 @@ class Desk(App):
             why = why or "nothing to switch here"
             return Spec(title, locked=why[:1].upper() + why[1:])
         labels = {tok: label for tok, label, _ in options}
-        note = "This is the same switch the Voice Desk dashboard had."
+        note = "The switch writes the setting in the file where the agents read it."
         here = next((p for p in getattr(v, "voice_places", ()) if p.key == place), None)
         if here is not None and here.set_by in SET_BY_SAID:
             note = f"Now: {here.value}, {SET_BY_SAID[here.set_by]}. " + note

@@ -846,7 +846,7 @@ class TheMenus(unittest.IsolatedAsyncioTestCase):
             await show(app, pilot)
             await open_cell(app, pilot, "vplace:tg_group", "Kylie")
             self.assertIsInstance(app.screen, acd.CellMenu)
-            self.assertIn("same switch the Voice Desk dashboard had", menu(app, "note"))
+            self.assertIn("The switch writes the setting in the file where the agents read it", menu(app, "note"))
             self.assertEqual([o.token for o in app.screen.spec.options], [G.OFF, G.ALWAYS])
             pick(app, G.OFF)
             await pilot.press("enter")

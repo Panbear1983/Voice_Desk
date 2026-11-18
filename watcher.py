@@ -13,7 +13,7 @@ itself uses, so every repair has a backup, a read-back, and (for switches) a lin
     Hermes local fixes   hermes_patches.apply_missing (backup, git apply, check the markers, never forced).
 
 Rules that keep it from doing harm:
-  * Pause. The file ~/.voice_desk/watcher_paused (W in the dashboard) means: look at nothing, change nothing.
+  * Pause. The file ~/.voice_desk/watcher_paused (p on the Agent Control Desk) means: look at nothing, change nothing.
   * A drift must be seen on two runs, at least CONFIRM_SEC apart, before it is repaired, so a file that is
     being written right now, or a switch the panel is just making, is never fought.
   * If the same thing has been put back FLAP_MAX times within an hour, the watcher stops: something else is
@@ -467,7 +467,7 @@ def light(p: G.Paths, now: Optional[float] = None) -> tuple[Optional[bool], str,
     """(ok, label, detail) for the top strip: True green, False red, None grey."""
     now = time.time() if now is None else now
     if is_paused(p):
-        return None, "WATCHER PAUSED (W resumes)", "the watcher looks at nothing and repairs nothing while paused; the panel is not being enforced"
+        return None, "WATCHER PAUSED (p on the desk resumes)", "the watcher looks at nothing and repairs nothing while paused; the panel is not being enforced"
     st = load_state(p)
     at = float(st.get("at", 0) or 0)
     if not at or now - at > STALE_SEC:
