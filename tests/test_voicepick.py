@@ -115,13 +115,13 @@ class TheLists(unittest.TestCase):
         self.assertEqual(pickable(P.mandarin(agent(self.cfg, "kylie"))),
                          ["zh-TW-HsiaoChenNeural", "zh-TW-HsiaoYuNeural", "zh-TW-YunJheNeural"])
 
-    def test_gemini_sees_kokoro_but_can_pick_microsoft_only_until_stage_2(self):
+    def test_gemini_sees_kokoro_but_can_pick_microsoft_only_until_its_hook_is_switched(self):
         opts = P.english(agent(self.cfg, "gemini"), self.cfg)
         self.assertTrue(pickable(opts) and all(t.endswith("Neural") for t in pickable(opts)))
         self.assertIn("af_heart", not_yet(opts))
         why = next(o.label for o in opts if o.token == P.NOT_YET + "af_heart")
         self.assertIn("Microsoft voices only", why)
-        self.assertIn("stage 2", why)
+        self.assertIn("not playable yet", why)
 
     def test_esther_sees_microsoft_but_can_pick_kokoro_only_and_her_short_name_counts_as_current(self):
         opts = P.english(agent(self.cfg, "esther"), self.cfg)
@@ -147,7 +147,7 @@ class TheLists(unittest.TestCase):
         self.assertTrue([o for o in opts if o.disabled and o.token.endswith("Neural")])
         for o in opts:
             if o.disabled and o.token.endswith("Neural"):
-                self.assertIn("effect would not apply", o.label, o.token)
+                self.assertIn("effect does not apply", o.label, o.token)
             elif o.disabled:
                 self.assertNotIn("effect", o.label, o.token)
 
@@ -181,6 +181,56 @@ class TheLists(unittest.TestCase):
         opts = P.english(agent(cfg, "zed"), cfg)
         self.assertEqual((opts[0].token, opts[0].current), ("en-US-MadeUpNeural", True))
         self.assertIn("not in the voice bank", opts[0].label)
+
+
+class OnceTheScriptsAreSwitched(unittest.TestCase):
+    """Phase B of the 2026-11-18 brief: once an agent's own script carries the switch mark and the shared speaker is
+    in place, "not playable yet" disappears by itself and the whole English bank is pickable for everyone. The
+    English-only setting (Simba, Jarvis) is a setting, not a script: it stays."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vd-pick-switched-"))
+        self.esther = self.tmp / "esther_tts.py"
+        self.simba = self.tmp / "simba_tts.py"
+        for p in (self.esther, self.simba):
+            p.write_text("# a stand-in script\n")
+        extra = SIMBA.replace("/nonexistent/simba_tts.py", str(self.simba))
+        w = F.make_world()
+        w.toml.write_text(F.AGENTS_TOML.replace("/nonexistent/esther_tts.py", str(self.esther)) + extra)
+        self.cfg = agents.load(w.toml)
+
+    def test_not_playable_yet_disappears_for_everyone(self):
+        with tests.scripts_switched(self.esther, self.simba):
+            for key in ("kylie", "gemini", "esther", "simba", "codex", "jarvis", "claude", "wanna_buffet"):
+                opts = P.english(agent(self.cfg, key), self.cfg)
+                self.assertEqual(not_yet(opts), [], key)
+                self.assertFalse([o for o in opts if "not playable yet" in o.label], key)
+        opts = P.english(agent(self.cfg, "esther"), self.cfg)
+        self.assertIn("en-US-AvaNeural", not_yet(opts), "outside the switch it is back: the files decide")
+
+    def test_simba_may_take_a_british_or_microsoft_voice_and_is_told_her_effect_does_not_apply(self):
+        with tests.scripts_switched(self.simba):
+            opts = P.english(agent(self.cfg, "simba"), self.cfg)
+            self.assertIn("bf_emma", pickable(opts))
+            self.assertIn("en-US-AvaNeural", pickable(opts))
+            ava = next(o for o in opts if o.token == "en-US-AvaNeural")
+            self.assertIn("effect does not apply", ava.label)
+            emma = next(o for o in opts if o.token == "bf_emma")
+            self.assertNotIn("effect", emma.label, "her effect works on every Kokoro voice")
+            self.assertEqual([o.token for o in opts if o.current], ["am_fenrir"], "her voice stays what it is")
+
+    def test_a_marked_script_without_the_shared_speaker_is_still_not_playable(self):
+        self.esther.write_text(f"# {tests.SWITCH_MARK}\n")
+        opts = P.english(agent(self.cfg, "esther"), self.cfg)
+        self.assertIn("en-US-AvaNeural", not_yet(opts))
+
+    def test_english_only_stays_a_setting(self):
+        with tests.scripts_switched(self.simba):
+            title, opts, why = P.menu(agent(self.cfg, "simba"), "voice_zh", self.cfg)
+            self.assertEqual(pickable(opts), [])
+            self.assertTrue(all("English only" in o.label for o in opts if o.disabled))
+            self.assertFalse([o for o in opts if "not playable yet" in o.label])
 
 
 class NothingChangesByItself(unittest.TestCase):

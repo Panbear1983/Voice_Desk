@@ -338,10 +338,15 @@ def claude_wants(a: agents.Agent) -> list[tuple[str, str]]:
 
 def gemini_wants(a: agents.Agent, cfg: dict) -> tuple[Optional[str], Optional[str]]:
     """(English, Mandarin) Gemini should speak with: exactly its own voices from agents.toml. Gemini's hook speaks
-    Edge only, so a Kokoro or missing voice is None: not written (there is no shared voice and no Jenny default any
-    more, Peter 2026-11-11). Careful: the hook itself still falls back to its built-in voice when the file has no
-    line; the grid says so on Gemini's row."""
+    Edge itself; since 2026-11-18 a hook that is switched onto Voice Desk's shared speaker (voicescripts.py) also
+    speaks any English Kokoro voice, so a Kokoro name is written only then. A missing voice is None: not written
+    (there is no shared voice and no Jenny default any more, Peter 2026-11-11). Careful: the hook itself still falls
+    back to its built-in voice when the file has no line; the grid says so on Gemini's row."""
     en = a.voice if _EDGE.match(a.voice or "") else None
+    if en is None and agents.is_kokoro(a.voice):
+        import voicescripts
+        if voicescripts.switched(a):
+            en = a.voice
     zh = a.voice_zh if _EDGE.match(a.voice_zh or "") else None
     return en, zh
 

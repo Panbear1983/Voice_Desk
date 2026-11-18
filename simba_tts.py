@@ -1,4 +1,4 @@
-"""Simba's voice for Voice Desk: Kokoro (an American voice) plus a scratchy "witch" effect.
+"""Simba's voice for Voice Desk: Kokoro plus a scratchy "witch" effect, or any other voice in the voice bank.
 
 Peter, Team room 2026-11-10: Simba is a girl cat with a scratchy, smoky witch voice, AMERICAN accent only,
 made with Kokoro (the local engine Esther already uses). Which Kokoro voice and which effect are settings in
@@ -10,8 +10,16 @@ to make them. Called by Voice Desk exactly like Esther's script:
 The out file's ending picks the format: .wav (the Mac's player), .mp3, or .ogg (Telegram voice bubble: Simba's
 listener in ~/GitHub/panbear-daily sends her Team_Room replies as voice notes made this way).
 Exit 0 = the file is written; 2 = a voice or effect this script does not make, or a line that is not English
-(nothing written: Simba speaks English only); 1 = Kokoro or ffmpeg failed (Voice Desk then speaks the line with the
-agent's Edge backup voice).
+(nothing written: Simba speaks English only); 1 = Kokoro, Microsoft or ffmpeg failed. Either way nothing is written
+and the line stays silent: there is no backup voice (Peter 2026-11-11).
+
+voice-desk: any bank voice (shared speaker). Since 2026-11-18 (Peter: "yes" to the full voice list for every agent,
+Simba included; brief 2026-11-18-acd-full-voice-list.md, Phase B) her voice may be any English voice in the bank:
+    any English Kokoro voice (American af_/am_ as before, now British bf_/bm_ too): made here, with her effect on top
+        (a British voice gets British pronunciation);
+    a Microsoft voice (en-US-AvaNeural ...): made by Voice Desk's shared speaker (speak_any.py), exactly that voice,
+        and spoken PLAIN: her sound effect does not apply to it.
+Her default stays what agents.toml says (am_fenrir with sample 16); nothing changes until Peter picks another voice.
 
 The effect is a short recipe, written the way Peter picks samples:
 
@@ -50,7 +58,7 @@ from typing import Optional
 MODEL_DIR = Path(os.environ.get("SIMBA_KOKORO_DIR", "~/Desktop/Peter_Tax/tax_engine/data/voice")).expanduser()
 MODEL, VOICES_BIN = "kokoro-v1.0.onnx", "voices-v1.0.bin"
 FFMPEG = os.environ.get("SIMBA_FFMPEG", "/opt/homebrew/bin/ffmpeg")
-LANG = "en-us"                     # American pronunciation, whatever the voice
+LANG = "en-us"                     # American pronunciation for an American voice (a British one: en-gb)
 DEFAULT_EFFECT = "fenrir16"
 ECHO = "aecho=0.8:0.6:60|110:0.3|0.2"      # sample 30's cave echo
 # Simba speaks English ONLY (Peter 2026-11-10): text with any Chinese, Japanese or Korean in it is refused (exit 2),
@@ -59,8 +67,9 @@ ECHO = "aecho=0.8:0.6:60|110:0.3|0.2"      # sample 30's cave echo
 NOT_ENGLISH = re.compile(r"[\u2e80-\u2fff\u3000-\u30ff\u3100-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af"
                          r"\uf900-\ufaff\uff00-\uffef\U00020000-\U0003ffff]")
 
-# The American voices in voices-v1.0.bin (read from the file 2026-11-10): af_ female, am_ male. Peter:
-# American accent only, so British (bf_/bm_) and other languages are refused. Sample 16 is am_fenrir.
+# The American voices in voices-v1.0.bin (read from the file 2026-11-10): af_ female, am_ male. Sample 16 is
+# am_fenrir. Until 2026-11-18 these were the only voices she took; now they are the ones a short name ("Nicole")
+# stands for, and every other English voice in the bank is accepted too (voice_problem).
 VOICES = ("af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova",
           "af_river", "af_sarah", "af_sky",
           "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa")
@@ -316,20 +325,51 @@ def ffmpeg_args(effect: str, sr: int, src: Path, dst: Path, fmt: str) -> list[st
     return args + ["-ac", "1", *enc, str(dst)]
 
 
+EDGE_NAME = re.compile(r"^[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural$")
+
+
+def is_edge(name: str) -> bool:
+    return bool(EDGE_NAME.match((name or "").strip()))
+
+
 def clean_voice(name: str) -> str:
-    """'Fenrir', 'nicole' or 'af_nicole' -> the full Kokoro name (unchecked)."""
+    """'Fenrir', 'nicole' or 'af_nicole' -> the full Kokoro name (unchecked); a Microsoft name stays as it is."""
+    if is_edge(name):
+        return name.strip()
     v = (name or "").strip().lower()
     if "_" in v or not re.fullmatch(r"[a-z]+", v):
         return v
     return next((full for full in VOICES if full.split("_", 1)[1] == v), f"af_{v}")
 
 
+def is_kokoro_english(name: str) -> bool:
+    """An English Kokoro voice she can take: one of the American voices above, or any English (af_/am_/bf_/bm_)
+    voice that is really installed (agents.is_kokoro reads the voice bank)."""
+    v = clean_voice(name)
+    if v in VOICES:
+        return True
+    if not re.fullmatch(r"[ab][fm]_[a-z]+", v):
+        return False
+    import agents                                    # light: reads the installed voice files only
+    return agents.is_kokoro(v)
+
+
 def voice_problem(name: str) -> Optional[str]:
-    """None if this script speaks with that voice, else a sentence saying why not."""
-    if clean_voice(name) in VOICES:
+    """None if this script speaks with that voice (any English voice in the bank), else a sentence saying why not."""
+    v = clean_voice(name)
+    if is_edge(v):
+        if v.startswith("en-"):
+            return None
+        return f"Simba speaks English only: her voice must be an English voice; got {name!r}."
+    if is_kokoro_english(v):
         return None
-    return (f"Simba's voice must be an American Kokoro voice (af_… female or am_… male: "
-            f"{', '.join(VOICES)}); got {name!r}.")
+    return (f"Simba's voice must be an English voice in the voice bank: a Kokoro voice (af_/am_ American, "
+            f"bf_/bm_ British, e.g. am_fenrir) or a Microsoft voice (e.g. en-US-AvaNeural); got {name!r}.")
+
+
+def effect_applies(voice: str) -> bool:
+    """Her sound effect works on Kokoro voices only: a Microsoft voice is spoken plain."""
+    return not is_edge(clean_voice(voice))
 
 
 def kokoro_wav(text: str, voice: str, speed: float, dst: Path) -> int:
@@ -337,7 +377,7 @@ def kokoro_wav(text: str, voice: str, speed: float, dst: Path) -> int:
     import numpy as np
     from kokoro_onnx import Kokoro
     k = Kokoro(str(MODEL_DIR / MODEL), str(MODEL_DIR / VOICES_BIN))
-    samples, rate = k.create(text, voice=voice, speed=speed, lang=LANG)
+    samples, rate = k.create(text, voice=voice, speed=speed, lang="en-gb" if voice[:1] == "b" else LANG)
     pcm = (np.clip(np.asarray(samples, dtype="float32"), -1, 1) * 32767).astype("<i2").tobytes()
     with wave.open(str(dst), "wb") as w:
         w.setnchannels(1)
@@ -360,6 +400,14 @@ def make(text: str, out: Path, voice: str, effect: str = DEFAULT_EFFECT) -> int:
     if NOT_ENGLISH.search(text):                       # Peter 2026-11-10: Simba speaks English ONLY
         print("Simba speaks English only: a line with Chinese (or other CJK) in it stays silent", file=sys.stderr)
         return 2
+    if is_edge(voice):
+        # voice-desk: any bank voice (shared speaker). A Microsoft voice is made by Voice Desk's shared speaker, exactly
+        # that voice, plain (her effect does not apply to it). If it fails nothing is written: silent, no other voice.
+        import speak_any
+        with tempfile.TemporaryDirectory(prefix="simba-tts-") as tmp:
+            src = Path(tmp) / "say.txt"
+            src.write_text(text, encoding="utf-8")
+            return speak_any.make(src, out, voice)
     p = recipe(effect)
     fmt = out.suffix.lower().lstrip(".")
     fmt = fmt if fmt in ENCODE else "wav"
@@ -369,7 +417,7 @@ def make(text: str, out: Path, voice: str, effect: str = DEFAULT_EFFECT) -> int:
         try:
             sr = kokoro_wav(text, voice, p["speed"], raw)
             r = subprocess.run(ffmpeg_args(effect, sr, raw, made, fmt), capture_output=True, timeout=120)
-        except Exception as exc:                       # Kokoro or ffmpeg missing/broken: Voice Desk uses the backup
+        except Exception as exc:                       # Kokoro or ffmpeg missing/broken: silent, no backup voice
             print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
             return 1
         if r.returncode != 0 or not made.exists() or made.stat().st_size == 0:

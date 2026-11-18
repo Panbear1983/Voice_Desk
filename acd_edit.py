@@ -1024,14 +1024,36 @@ def speed_word(speed: Optional[float]) -> str:
     return "not set" if speed is None else f"{speed:g}"
 
 
+OTHER_VOICE = "::other"                              # "other, type it…": a line to type a voice name
+
+
+def effect_applies(agent: Optional[A.Agent], voice: Optional[str]) -> bool:
+    """A voice effect (Simba's) works on Kokoro voices only: a Microsoft voice is spoken plain."""
+    import simba_tts
+    return not (voice and simba_tts.is_edge(voice))
+
+
+def check_typed_voice(agent: A.Agent, field_name: str, text: str) -> tuple[str, str]:
+    """(clean name, "") for a typed voice name this agent can take today, else ("", a sentence why not). The same
+    check as the pick-list and every other edit (voiceedit.check_voice: the bank, the agent's own script)."""
+    try:
+        return str(voiceedit.check_voice(field_name, text, agent)), ""
+    except voiceedit.EditError as exc:
+        return "", str(exc)
+
+
 def voice_options(agent: A.Agent, field_name: str, cfg: dict) -> list[tuple[str, str, bool, bool]]:
-    """A short list for the pop-up: (token, label, is today's, cannot be picked). The local voices and the
-    American and British ones, never a typed name."""
+    """The pop-up's lines: (token, label, is today's, cannot be picked). The whole voice bank for the language
+    (Peter 2026-11-18: "yes" to the full voice list for every agent): local Kokoro voices first, Microsoft below,
+    then "silent", then "other, type it…". A voice this agent's own script cannot make yet is SHOWN, marked
+    "not playable yet", and cannot be picked (voicepick.not_yet). The effect list is the named samples only."""
     import voicepick
     _title, options, why = voicepick.menu(agent, field_name, cfg)
     out = []
     for o in options:
         if o.token == voicepick.OTHER:
+            if field_name != "effect":                  # never a typed recipe for the effect
+                out.append((OTHER_VOICE, "other, type it… (any voice name in the bank)", False, False))
             continue
         if field_name == "effect":                      # the named samples and starting points; never a typed recipe
             out.append((o.token, o.label, o.current, False))
@@ -1040,10 +1062,6 @@ def voice_options(agent: A.Agent, field_name: str, cfg: dict) -> list[tuple[str,
             out.append(("", "silent: no voice for this language", o.current, False))
             continue
         name = o.token[len(voicepick.NOT_YET):] if o.token.startswith(voicepick.NOT_YET) else o.token
-        if o.disabled and not o.current:
-            continue                                    # a voice this agent's own speaker cannot make is not listed
-        if field_name == "voice" and not (o.current or A.is_kokoro(name) or name.startswith(("en-US-", "en-GB-"))):
-            continue
         out.append((name, o.label, o.current, o.disabled and not o.current))
     return out
 

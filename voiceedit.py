@@ -54,6 +54,16 @@ def _kokoro_name(v: Optional[str]) -> str:
 
 
 # ---- validating what Peter types ----------------------------------------------------------------
+def _playable(agent: agents.Agent, voice: str) -> str:
+    """The voice, if the agent's own speaking script can play it today; else EditError "not playable yet" (a typed
+    name gets the same answer as the pick-list's ◌ line: voicescripts.speaker_problem)."""
+    import voicescripts
+    why = voicescripts.speaker_problem(agent, "voice", voice)
+    if why:
+        raise EditError(f"{voice} is not playable yet for {agent.display}: {why}.")
+    return voice
+
+
 def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
     """Return the cleaned value or raise EditError with a sentence Peter can read."""
     if agent.english_only and (field_name in ("voice_zh", "voices_extra")
@@ -71,13 +81,13 @@ def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
         if problem:
             raise EditError(problem)
         return v
-    if field_name == "voice" and uses_simba_script(agent):        # Peter 2026-11-10: American accent only (af_/am_)
+    if field_name == "voice" and uses_simba_script(agent):        # any English voice in the bank (2026-11-18)
         import simba_tts
         v = simba_tts.clean_voice(str(value or ""))
         problem = simba_tts.voice_problem(v)
         if problem:
             raise EditError(problem)
-        return v
+        return _playable(agent, v)
     if field_name in ("voice", "voice_zh"):
         v = str(value or "").strip()
         m = _EDGE.match(v)
@@ -87,10 +97,11 @@ def check_voice(field_name: str, value: Any, agent: agents.Agent) -> Any:
             if not v.startswith("zh-TW-"):                # Peter 2026-11-09: Taiwan Mandarin only, no Mainland accent
                 raise EditError(f"Mandarin voices are Taiwan Mandarin only (zh-TW-…, e.g. zh-TW-HsiaoYuNeural); got {v!r}.")
         elif field_name == "voice" and agents.is_kokoro(v):
-            return v                                   # Kokoro, the local voice (2026-11-11): any agent may use it
+            return _playable(agent, v)                 # Kokoro, the local voice (2026-11-11): any agent may use it
         elif m:
             if m.group(1) != "en":
                 raise EditError(f"The English voice must start with en- (for example en-US-AvaNeural); got {v!r}.")
+            return _playable(agent, v)
         elif not (agent.command and _BARE.match(v)):
             raise EditError(f"{agent.display} needs an Edge voice like en-US-AvaNeural or a Kokoro voice like "
                             f"af_heart (af_/am_ American, bf_/bm_ British); got {v!r}.")

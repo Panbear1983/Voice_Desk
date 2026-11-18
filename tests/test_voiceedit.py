@@ -367,10 +367,18 @@ class KokoroForAnyAgent(unittest.TestCase):
             return voices.voice_for(target)
 
     def test_a_kokoro_name_is_a_valid_english_voice_for_any_agent(self):
-        for key in ("kylie", "claude", "gemini", "codex", "jarvis"):
-            self.assertEqual(VE.check_voice("voice", "af_heart", agent_of(self.w, key)), "af_heart", key)
+        with tests.scripts_switched():
+            for key in ("kylie", "claude", "gemini", "codex", "jarvis"):
+                self.assertEqual(VE.check_voice("voice", "af_heart", agent_of(self.w, key)), "af_heart", key)
         with self.assertRaises(VE.EditError):
             VE.check_voice("voice", "af_nobody", agent_of(self.w, "kylie"))
+
+    def test_a_voice_gemini_s_own_hook_cannot_play_yet_is_refused_by_name_too(self):
+        """2026-11-18: a typed name gets the same answer as the pick-list's "not playable yet" line."""
+        with self.assertRaises(VE.EditError) as caught:
+            VE.check_voice("voice", "af_heart", agent_of(self.w, "gemini"))
+        self.assertIn("not playable yet", str(caught.exception))
+        self.assertEqual(VE.check_voice("voice", "en-US-AvaNeural", agent_of(self.w, "gemini")), "en-US-AvaNeural")
 
     def test_kylie_switched_to_kokoro_gets_no_fallback_and_her_hermes_profile_is_left_alone(self):
         yaml = self.w.paths.profiles / "assistant/config.yaml"
@@ -405,9 +413,22 @@ class KokoroForAnyAgent(unittest.TestCase):
         self.assertEqual(agent_of(self.w, "claude").voice, "en-US-JennyNeural")
         self.assertIn('ENGLISH_ENGINE="edge"', self.w.edit.claude_conf.read_text())
 
-    def test_gemini_on_kokoro_writes_nothing_to_its_edge_only_hook_file(self):
+    def test_gemini_on_kokoro_is_refused_while_its_hook_speaks_edge_only(self):
         self.assertTrue(VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit).ok)
+        before = self.w.toml.read_text()
         res = VE.change("gemini", "voice", "am_adam", self.w.edit)
-        self.assertTrue(res.ok, res.message)
-        self.assertNotIn("am_adam", self.w.edit.gemini_conf.read_text(), "its hook speaks Edge only")
-        self.assertEqual(self.voice_desk_voice("gemini").en, "am_adam")
+        self.assertFalse(res.ok, "its hook cannot play it yet: nothing is written")
+        self.assertIn("not playable yet", res.message)
+        self.assertEqual(self.w.toml.read_text(), before)
+        self.assertNotIn("am_adam", self.w.edit.gemini_conf.read_text())
+
+    def test_gemini_on_kokoro_once_its_hook_is_switched_writes_the_name_for_the_hook(self):
+        with tests.scripts_switched():
+            self.assertTrue(VE.change("gemini", "voice", "en-US-AriaNeural", self.w.edit).ok)
+            res = VE.change("gemini", "voice", "am_adam", self.w.edit)
+            self.assertTrue(res.ok, res.message)
+            self.assertIn('NEURAL_VOICE_EN="am_adam"', self.w.edit.gemini_conf.read_text(),
+                          "the switched hook reads a Kokoro name and hands it to the shared speaker")
+            self.assertEqual(self.voice_desk_voice("gemini").en, "am_adam")
+            self.assertTrue(VE.undo(self.w.edit).ok)
+            self.assertIn('NEURAL_VOICE_EN="en-US-AriaNeural"', self.w.edit.gemini_conf.read_text())

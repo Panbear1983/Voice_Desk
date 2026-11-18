@@ -449,6 +449,11 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
                                              "change. n adds an agent to that list."],
                         fixed=f"{name} has no voice in the Voice Desk list")
         if key == "voice":
+            if v.voice.not_playable:
+                return Cell(D.RED, f"{D.voice_label(v.voice.english)}, not playable yet",
+                            [f"{name}'s English voice is {D.voice_label(v.voice.english)}, but it is not playable yet: "
+                             f"{v.voice.not_playable}. Until then {name}'s English lines from its own script stay "
+                             "silent (never another voice).", E.NEEDS["voice"]], setting="voice")
             return Cell(D.GREEN, D.voice_label(v.voice.english),
                         [f"{name} speaks English as {D.voice_label(v.voice.english)}. One voice: if it fails, "
                          f"{name} stays silent, no stand-in voice.", E.NEEDS["voice"]], setting="voice")
@@ -474,8 +479,13 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
                         [f"{name}'s speaking speed: {words}.", E.NEEDS["voice"]], setting="speed")
         if not v.effect:
             return Cell()
-        return Cell(D.GREEN, str(v.effect), [f"{name}'s voice effect: {v.effect}.", E.NEEDS["voice"]],
-                    setting="effect")
+        if not E.effect_applies(None, v.voice.english):
+            return Cell(D.GREY, f"{v.effect} (does not apply)",
+                        [f"{name}'s voice effect: {v.effect}. It works on Kokoro voices only, and "
+                         f"{D.voice_label(v.voice.english)} is a Microsoft voice: it is spoken plain. The effect stays "
+                         "stored and comes back with a Kokoro voice.", E.NEEDS["voice"]], setting="effect")
+        return Cell(D.GREEN, str(v.effect), [f"{name}'s voice effect: {v.effect}. It works on Kokoro voices only.",
+                                             E.NEEDS["voice"]], setting="effect")
 
     if key.startswith("vplace:"):
         return place_cell(name, key, v.voice_places, has_voice=bool(v.voice))
@@ -582,6 +592,11 @@ def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
     key = row.key
     lands = f" Where a change lands: {o.takes_effect}." if o.takes_effect else ""
     if key == "voice":
+        if o.english and o.not_playable:
+            return Cell(D.RED, f"{D.voice_label(o.english)}, not playable yet",
+                        [f"{o.name}'s English voice is {D.voice_label(o.english)}, but it is not playable yet: "
+                         f"{o.not_playable}. Until then its own spoken replies stay silent (never another voice)."
+                         + lands, E.NEEDS["voice"]], setting="voice")
         return Cell(D.GREEN if o.english else D.GREY, D.voice_label(o.english) if o.english else "silent",
                     [f"{o.name} speaks English as {D.voice_label(o.english)}." + lands, E.NEEDS["voice"]],
                     setting="voice")
@@ -1938,6 +1953,9 @@ class Desk(App):
             if cell.setting.startswith("wire:") and token.startswith("phrase|"):
                 self.ask_phrase(col, token.split("|", 1)[1])
                 return
+            if cell.setting in ("voice", "voice_zh") and token == E.OTHER_VOICE:
+                self.ask_voice_name(col, cell.setting)
+                return
             self.run_jobs(spec.jobs(token))
 
         self.push_screen(CellMenu(spec, anchor, dry=not self.is_armed, tester=tester), chosen)
@@ -2024,6 +2042,46 @@ class Desk(App):
 
         self.push_screen(AskPopup(title, note, have if stored else ""), answered)
 
+    def ask_voice_name(self, col: Any, setting: str) -> None:
+        """"other, type it…": a line to type any voice name in the bank, the same check as every pick (the bank, and
+        whether this agent's own script can play it), then one yes / no line with the old and the new."""
+        edit = self.edit
+        agent, _cfg = self.voice_agent(col)
+        lang = "English" if setting == "voice" else "Chinese"
+        title = f"{col.name}: {lang} voice, typed"
+        if agent is None:
+            self.push_screen(NoticePopup(title, Text(f"{col.name} has no voice in the Voice Desk list. Nothing was "
+                                                     "changed.")))
+            return
+        before = agent.voice if setting == "voice" else agent.voice_zh
+        note = ("A Kokoro name (af_heart, bm_george ...) or a Microsoft name (en-US-AvaNeural ...)." if setting == "voice"
+                else "A Taiwan Mandarin Microsoft name (zh-TW-HsiaoYuNeural ...).")
+
+        def answered(text: Optional[str]) -> None:
+            if text is None:
+                return
+            text = text.strip()
+            if not text:
+                return
+            name, why = E.check_typed_voice(agent, setting, text)
+            if why:
+                self.push_screen(NoticePopup(title, Text(f"{why} Nothing was changed.")))
+                return
+            if name == before:
+                self.push_screen(NoticePopup(title, Text("That is what it is now, so there is nothing to change.")))
+                return
+            body = [Text(f"  now    {D.voice_label(before) if before else 'silent'}"),
+                    Text(f"  new    {D.voice_label(name)}")]
+            if setting == "voice" and agent.effect and not E.effect_applies(agent, name):
+                body.append(Text(f"  Her sound effect ({agent.effect}) does not apply to this voice: it is spoken plain.",
+                                 style=DIM))
+            body += [Text(""), Text(E.NEEDS["voice"], style=DIM), Text(""), self.dry_line()]
+            self.push_screen(NoticePopup(f"{col.name}: change the {lang} voice?", join(body), ask="yes, change it"),
+                             lambda yes: self.run_jobs([lambda: E.change_voice(agent.key, setting, name, edit)])
+                             if yes else None)
+
+        self.push_screen(AskPopup(title, note, ""), answered)
+
     def open_row(self, row: Row, anchor: Optional[tuple[int, int]] = None) -> None:
         """Enter on a row's name: the same choices, applied to every agent the row can be changed for, after one
         confirmation that lists each agent's before and after."""
@@ -2055,7 +2113,7 @@ class Desk(App):
         labels: dict = {}
         for _col, spec in specs:
             for o in spec.options:
-                if not o.disabled and o.token not in labels:
+                if not o.disabled and not o.goes_on and o.token not in labels:
                     labels[o.token] = o.label
                     tokens.append(o.token)
         options = [Opt(tok, labels[tok], now=all(any(o.token == tok and o.now for o in spec.options)
@@ -2224,14 +2282,16 @@ class Desk(App):
         if agent is None:
             return Spec(title, locked=f"{v.name} has no voice in the Voice Desk list, so there is nothing to change.")
         speeds = dict(E.SPEEDS)
-        note = "Only the voices this agent's own speaker can make are listed. One voice, silent if it fails."
+        note = ("The whole voice bank: local Kokoro voices first, Microsoft below. A voice marked \"not playable yet\" "
+                "cannot be picked until this agent's own script can play it. One voice, silent if it fails.")
         lands = getattr(v, "takes_effect", "")
         if lands:
             note += f" Where it lands: {lands}."
         testable = ""
         if setting == "effect":
             options = [Opt(tok, label, cur, off) for tok, label, cur, off in E.voice_options(agent, "effect", cfg)]
-            note = f"The effect on {D.voice_label(agent.voice)}."
+            note = (f"The effect on {D.voice_label(agent.voice)}. It works on Kokoro voices only: with a Microsoft "
+                    "voice it does not apply (the voice is spoken plain).")
         elif setting == "speed":
             if agent.key not in self.speed_why:
                 self.speed_why[agent.key] = E.speed_fixed(agent.key, edit)
@@ -2242,7 +2302,8 @@ class Desk(App):
             options = [Opt(word, f"{word} ({value:g})", word == now) for word, value in E.SPEEDS]
             note = "How fast it speaks." + ("" if any(o.now for o in options) else f" Now: {now}.")
         else:
-            options = [Opt(tok, label, cur, off) for tok, label, cur, off in E.voice_options(agent, setting, cfg)]
+            options = [Opt(tok, label, cur, off, goes_on=tok == E.OTHER_VOICE)
+                       for tok, label, cur, off in E.voice_options(agent, setting, cfg)]
             testable = "en" if setting == "voice" else "zh"
 
         def describe(tok: str) -> list[str]:
@@ -2252,8 +2313,12 @@ class Desk(App):
                 return [f"{v.name}'s voice effect changes from {agent.effect or 'none'} to {tok}."]
             before = agent.voice if setting == "voice" else agent.voice_zh
             lang = "English" if setting == "voice" else "Chinese"
-            return [f"{v.name}'s {lang} voice changes from {D.voice_label(before)} to "
-                    f"{D.voice_label(tok) if tok else 'silent'}."]
+            out = [f"{v.name}'s {lang} voice changes from {D.voice_label(before)} to "
+                   f"{D.voice_label(tok) if tok else 'silent'}."]
+            if setting == "voice" and tok and agent.effect and not E.effect_applies(agent, tok):
+                out.append(f"{v.name}'s sound effect ({agent.effect}) does not apply to this voice: it is spoken "
+                           "plain. The effect stays stored and comes back with a Kokoro voice.")
+            return out
 
         return Spec(title, options, describe,
                     lambda tok: [lambda: E.change_voice(agent.key, setting,
@@ -2463,7 +2528,7 @@ class Desk(App):
             except Exception as exc:                     # noqa: BLE001
                 self.push_screen(NoticePopup("Add an agent", Text(f"The voices could not be listed ({exc}).")))
                 return
-            voices = [(tok or SILENT, label) for tok, label, _cur, off in options if not off]
+            voices = [(tok or SILENT, label) for tok, label, _cur, off in options if not off and tok != E.OTHER_VOICE]
             if not any(tok == SILENT for tok, _ in voices):
                 voices.append((SILENT, "silent: no voice"))
             self.push_screen(PickPopup(f"{display}: its English voice", voices,

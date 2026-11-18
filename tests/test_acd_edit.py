@@ -283,7 +283,9 @@ class Voice(unittest.TestCase):
         self.assertTrue(E.undo(w.edit).ok)
         self.assertIn("speed: 1.0", cfg(w).read_text())
 
-    def test_a_short_list_without_a_typing_box(self):
+    def test_the_whole_bank_then_silent_then_a_typing_line(self):
+        """Peter 2026-11-18: the full voice list for every agent: every English voice in the bank (local first,
+        Microsoft below, every accent), "silent", and "other, type it…" last."""
         import agents as A
         w = F.edit_world()
         toml = A.load(w.toml)
@@ -291,10 +293,39 @@ class Voice(unittest.TestCase):
         english = E.voice_options(kylie, "voice", toml)
         tokens = [t for t, *_ in english]
         self.assertIn("", tokens, "silent is a choice")
-        self.assertNotIn("::other", tokens)
+        self.assertEqual(tokens[-2:], ["", E.OTHER_VOICE])
         self.assertTrue(any(cur for _, _, cur, _ in english))
-        self.assertFalse([t for t in tokens if t.startswith("en-AU-")], "only the local, American and British voices")
-        self.assertTrue(all(t == "" or t.startswith("zh-TW-") for t, *_ in E.voice_options(kylie, "voice_zh", toml)))
+        self.assertTrue([t for t in tokens if t.startswith("en-AU-")], "every English accent is listed")
+        self.assertLess(tokens.index("af_heart"), tokens.index("en-US-AvaNeural"), "local voices first")
+        zh = [t for t, *_ in E.voice_options(kylie, "voice_zh", toml)]
+        self.assertTrue(all(t in ("", E.OTHER_VOICE) or t.startswith("zh-TW-") for t in zh))
+        self.assertNotIn(E.OTHER_VOICE, [t for t, *_ in E.voice_options(kylie, "effect", toml)])
+
+    def test_a_voice_the_agent_s_script_cannot_play_yet_is_shown_but_cannot_be_picked(self):
+        import agents as A
+        w = F.edit_world()
+        toml = A.load(w.toml)
+        gemini = next(a for a in A.agents(toml) if a.key == "gemini")
+        rows = {t: (label, off) for t, label, _cur, off in E.voice_options(gemini, "voice", toml)}
+        label, off = rows["af_heart"]
+        self.assertTrue(off)
+        self.assertIn("not playable yet", label)
+        self.assertFalse(rows["en-US-AvaNeural"][1])
+        with tests.scripts_switched():
+            rows = {t: (label, off) for t, label, _cur, off in E.voice_options(gemini, "voice", toml)}
+            self.assertFalse(rows["af_heart"][1], "once its hook is switched it can be picked")
+            self.assertNotIn("not playable yet", rows["af_heart"][0])
+
+    def test_a_typed_voice_gets_the_same_check(self):
+        import agents as A
+        w = F.edit_world()
+        toml = A.load(w.toml)
+        gemini = next(a for a in A.agents(toml) if a.key == "gemini")
+        self.assertEqual(E.check_typed_voice(gemini, "voice", " en-GB-RyanNeural "), ("en-GB-RyanNeural", ""))
+        name, why = E.check_typed_voice(gemini, "voice", "af_heart")
+        self.assertEqual(name, "")
+        self.assertIn("not playable yet", why)
+        self.assertIn("got", E.check_typed_voice(gemini, "voice", "Samantha")[1])
 
     def test_refused_voice_changes_nothing(self):
         w = F.edit_world(armed=True)

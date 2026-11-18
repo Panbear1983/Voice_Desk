@@ -293,19 +293,28 @@ class PetersWordsAreTheRecipe(unittest.TestCase):
 
 
 class TheVoiceRule(unittest.TestCase):
-    """Peter: American accent only. Sample 16 is a male Kokoro voice (am_fenrir) pitched up."""
+    """Peter 2026-11-10: American accent only. Since 2026-11-18 (\"yes\" to the full voice list, Simba included) any
+    English voice in the bank: American and British Kokoro (her effect on top) or a Microsoft voice (plain). Sample 16
+    is still a male Kokoro voice (am_fenrir) pitched up, and she still speaks English only."""
 
-    def test_american_kokoro_voices_female_and_male(self):
-        for ok in ("af_nicole", "af_kore", "am_fenrir", "am_onyx", "am_michael", "Nicole", "fenrir", " Fenrir "):
+    def test_any_english_voice_in_the_bank(self):
+        for ok in ("af_nicole", "af_kore", "am_fenrir", "am_onyx", "am_michael", "Nicole", "fenrir", " Fenrir ",
+                   "bf_emma", "bm_george", "en-US-AvaNeural", "en-GB-RyanNeural"):
             self.assertIsNone(simba_tts.voice_problem(ok), ok)
-        for bad in ("bf_emma", "bm_george", "en-US-AvaNeural", "zf_xiaoxiao", "jf_alpha", "", "af_nobody",
-                    "am_nobody", "nicole smoky"):
+        for bad in ("zf_xiaoxiao", "jf_alpha", "", "af_nobody", "am_nobody", "nicole smoky", "zh-TW-HsiaoYuNeural",
+                    "ja-JP-NanamiNeural", "bf_nobody"):
             self.assertIsNotNone(simba_tts.voice_problem(bad), bad)
+
+    def test_her_effect_applies_to_kokoro_voices_only(self):
+        self.assertTrue(simba_tts.effect_applies("am_fenrir"))
+        self.assertTrue(simba_tts.effect_applies("bf_emma"))
+        self.assertFalse(simba_tts.effect_applies("en-US-AvaNeural"))
 
     def test_a_short_name_means_the_american_voice_of_that_name(self):
         self.assertEqual(simba_tts.clean_voice(" Nicole "), "af_nicole")
         self.assertEqual(simba_tts.clean_voice("fenrir"), "am_fenrir")
         self.assertEqual(simba_tts.clean_voice("af_kore"), "af_kore")
+        self.assertEqual(simba_tts.clean_voice(" en-US-AvaNeural "), "en-US-AvaNeural", "a Microsoft name is kept")
 
     def test_the_list_is_every_american_voice_in_the_model_file(self):
         self.assertEqual({v[:3] for v in simba_tts.VOICES}, {"af_", "am_"})
@@ -331,9 +340,9 @@ class TheScriptAsVoiceDeskRunsIt(unittest.TestCase):
         self.txt = self.tmp / "say.txt"
         self.txt.write_text("Show up on Thursday, or I start reading your excuses out loud.", encoding="utf-8")
 
-    def run_script(self, out, *args, fail=None):
+    def run_script(self, out, *args, fail=None, extra=None):
         env = dict(os.environ, PYTHONPATH=str(self.tmp / "fakes"), FAKE_KOKORO_LOG=str(self.log),
-                   SIMBA_KOKORO_DIR=str(self.models))
+                   SIMBA_KOKORO_DIR=str(self.models), **(extra or {}))
         if fail:
             env["FAKE_KOKORO_FAIL"] = fail
         return subprocess.run([sys.executable, str(SCRIPT), str(self.txt), str(out), *args],
@@ -389,12 +398,66 @@ class TheScriptAsVoiceDeskRunsIt(unittest.TestCase):
                 self.assertEqual(probe(out)[0], "mp3")
 
     def test_a_voice_or_effect_it_does_not_make_writes_nothing_and_never_loads_kokoro(self):
-        for args in (("bf_emma", "16"), ("bm_george",), ("am_fenrir", "spooky"), ("am_fenrir", "16 pitch=9")):
+        for args in (("zf_xiaobei", "16"), ("jf_alpha",), ("zh-TW-HsiaoYuNeural",), ("am_fenrir", "spooky"),
+                     ("am_fenrir", "16 pitch=9")):
             out = self.tmp / "no.wav"
             r = self.run_script(out, *args)
             self.assertEqual(r.returncode, 2, args)
             self.assertFalse(out.exists(), args)
         self.assertEqual(self.calls(), [])
+
+    def test_a_british_voice_is_made_here_with_british_pronunciation_and_her_effect(self):
+        out = self.tmp / "gb.wav"
+        r = self.run_script(out, "bf_emma", "16")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        [call] = self.calls()
+        self.assertEqual((call["voice"], call["lang"], call["speed"]), ("bf_emma", "en-gb", 0.95))
+        self.assertAlmostEqual(probe(out)[3], 1 + 0.2, delta=0.06, msg="sample 16's effect is on it")
+
+    def fake_microsoft(self, mode="ok"):
+        """A fake Microsoft helper for the shared speaker: logs the voice asked for, writes a short tone."""
+        log = self.tmp / "edge.log"
+        wav = self.tmp / "edge-tone.wav"
+        with wave.open(str(wav), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(24000)
+            w.writeframes(bytes(48000))
+        py = self.tmp / "fake-edge-python"
+        py.write_text('#!/bin/sh\n[ "$1" = "-c" ] && exit 0\nvoice=""; out=""\n'
+                      'while [ $# -gt 0 ]; do case "$1" in --voice) voice="$2";; --write-media) out="$2";; esac; shift; done\n'
+                      f'echo "$voice" >> "{log}"\n'
+                      + ('exit 1\n' if mode != "ok" else f'cp "{wav}" "$out"\n'))
+        py.chmod(0o755)
+        newhost = self.tmp / "edge_tts_newhost.py"
+        newhost.write_text("# fake\n")
+        return log, {"VOICE_DESK_EDGE_PY": str(py), "VOICE_DESK_EDGE_NEWHOST": str(newhost)}
+
+    def test_a_microsoft_voice_goes_to_the_shared_speaker_plain_and_never_to_kokoro(self):
+        log, env = self.fake_microsoft()
+        out = self.tmp / "ms.ogg"
+        r = self.run_script(out, "en-US-AvaNeural", "16", extra=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(out.read_bytes()[:4], b"OggS")
+        self.assertEqual(log.read_text().split(), ["en-US-AvaNeural"])
+        self.assertEqual(self.calls(), [], "Kokoro is never loaded for a Microsoft voice")
+        self.assertAlmostEqual(probe(out)[3], 1 + 0.4, delta=0.08, msg="plain: no effect, only the Ogg lead silence")
+
+    def test_a_failed_microsoft_voice_writes_nothing_and_tries_no_other_voice(self):
+        log, env = self.fake_microsoft("fail")
+        out = self.tmp / "ms.wav"
+        r = self.run_script(out, "en-GB-RyanNeural", "16", extra=env)
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(out.exists())
+        self.assertEqual(log.read_text().split(), ["en-GB-RyanNeural"] * 2, "the same voice twice, never another")
+        self.assertEqual(self.calls(), [], "never handed to Kokoro")
+
+    def test_a_chinese_line_with_a_microsoft_voice_stays_silent_too(self):
+        log, env = self.fake_microsoft()
+        self.txt.write_text("今天不說英文。", encoding="utf-8")
+        out = self.tmp / "zh.wav"
+        self.assertEqual(self.run_script(out, "en-US-AvaNeural", extra=env).returncode, 2)
+        self.assertFalse(log.exists(), "Microsoft is never asked")
 
     def test_a_line_that_is_not_english_writes_nothing_and_never_loads_kokoro(self):
         for text in ("走開啦，人類。", "Fine, 好啦.", "うるさい", "ｗｈａｔ"):            # Peter 2026-11-10: English ONLY
@@ -633,8 +696,9 @@ class ThePanelChangesHerVoice(unittest.TestCase):
         self.assertEqual(self.w.toml.read_text(), self.start)
 
     def test_what_she_may_not_have_is_refused_and_nothing_is_written(self):
-        for field, value, words in ((("voice", "bf_emma", "American Kokoro")), ("voice", "bm_george", "American"),
-                                    ("voice", "en-US-AvaNeural", "American Kokoro"),
+        for field, value, words in ((("voice", "zf_xiaobei", "English voice")), ("voice", "bf_nobody", "voice bank"),
+                                    ("voice", "en-US-AvaNeural", "not playable yet"),
+                                    ("voice", "bf_emma", "not playable yet"),
                                     ("effect", "spooky", "sample number"), ("effect", "16 pitch=3", "between"),
                                     ("effect", "16 louder", "not a change"), ("effect", "", "empty"),
                                     ("voice_zh", "zh-CN-XiaoxiaoNeural", "English only"),

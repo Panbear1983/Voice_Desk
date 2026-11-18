@@ -11,15 +11,20 @@ really installed, read from the Kokoro voice files and Microsoft's own list, not
 the whole bank for the language, Simba included: local Kokoro voices first, Microsoft below, then "silent", then
 "other, type it". Nothing changes by itself: the current voice stays marked and stays until Peter picks another.
 
-A line the agent's own speaker cannot make today is still shown, marked ◌ and not pickable, with the reason (decision
-14: "verify her script can actually play any bank voice before offering it"). Today that is:
+A line the agent's own speaker cannot make today is still shown, marked ◌ and not pickable, with the words "not
+playable yet" and the reason (decision 14: "verify her script can actually play any bank voice before offering it").
+Whether it can is not written here: voicescripts.py reads the agent's own script (its `command` in agents.toml, or
+Gemini's hook) for the switch mark and checks that Voice Desk's shared speaker (speak_any.py) is in place. Once both
+are true (Phase B of the 2026-11-18 brief, `python -m voicescripts install`) the whole bank is pickable for it and
+"not playable yet" disappears by itself. Until then:
 
-    Gemini          its own hook speaks Microsoft voices only            -> Kokoro lines ◌ until stage 2
-    Esther, Jarvis  their own Kokoro scripts                              -> Microsoft lines ◌ until stage 2
-    Simba           simba_tts.py: American Kokoro only (it refuses the rest) -> British Kokoro and Microsoft lines ◌
-                    until stage 2; on a Microsoft line the note also says her sound effect would not apply to it
-    English only    (Simba, Jarvis) Z shows the Taiwan voices ◌: a Chinese line stays silent for them today
-    everyone else   the whole list is pickable
+    Gemini          its own hook speaks Microsoft voices only            -> Kokoro lines ◌
+    Esther, Jarvis  their own Kokoro scripts                              -> Microsoft lines ◌
+    Simba           simba_tts.py: Kokoro (American) only until switched  -> the other lines ◌
+    everyone else   the whole list is pickable (Kylie, Wanna Buffet, Claude, Codex: Edge or the shared Kokoro script)
+Simba's Microsoft lines also say her sound effect does not apply to them (it works on Kokoro voices only).
+English only    (Simba, Jarvis) Z shows the Taiwan voices ◌: that is their own setting (english_only), not their
+                script, so it is never "not playable yet".
 
 Voices other agents already use are no longer hidden from Simba (decision 14 lifts that limit from the list).
 Jenny is never a line (Peter 2026-11-11: "no Jenny"): she stays in the bank, and an agent that still has her keeps
@@ -35,10 +40,13 @@ import agents
 import onoff
 import voicebank
 import voiceedit
+import voicescripts
 
 OTHER = "::other"          # "other, type it": the old typing box
 SILENT = "::silent"        # no voice for this language
 NOT_YET = "::not-yet:"     # token prefix of a ◌ line (disabled: it cannot be picked)
+NOT_PLAYABLE = "not playable yet"
+NO_EFFECT = "her sound effect does not apply to this voice"
 
 
 def kokoro_label(name: str) -> str:
@@ -59,26 +67,26 @@ def not_offered(v: voicebank.BankVoice) -> bool:
 
 
 def not_yet(agent: agents.Agent, field_name: str, v: voicebank.BankVoice) -> str:
-    """Why this agent's own speaker cannot make this bank voice today ("" = it can, the line is pickable)."""
-    if field_name == "voice_zh":
-        if agent.english_only:
-            return f"{agent.display} is English only today"
-    elif voiceedit.uses_simba_script(agent):
-        import simba_tts
-        if v.engine == "edge":
-            return "her script: Kokoro only (stage 2); her effect would not apply"
-        if simba_tts.voice_problem(v.name):
-            if v.name[:3] in ("af_", "am_"):              # an American voice installed after her script was checked
-                return "her script knows only the 20 American voices it was checked with (stage 2)"
-            return "her script: American Kokoro only (stage 2)"
-    elif agent.target == "gemini" and v.engine != "edge":
-        return "Gemini's hook: Microsoft voices only (stage 2)"
-    elif agent.command and v.engine != "kokoro":
-        return f"{agent.display}'s script: Kokoro only (stage 2)"
+    """Why this agent cannot take this bank voice today ("" = it can, the line is pickable). A reason that is the
+    agent's own script starts with "not playable yet"."""
+    if field_name == "voice_zh" and agent.english_only:
+        return f"{agent.display} is English only (a setting, not the script)"
+    why = voicescripts.speaker_problem(agent, field_name, v.name)
+    if why:
+        if voiceedit.uses_simba_script(agent) and v.engine == "edge":
+            why += f"; {NO_EFFECT}"
+        return f"{NOT_PLAYABLE}: {why}"
     try:
         voiceedit.check_voice(field_name, v.name, agent)       # the same check a typed name gets
     except voiceedit.EditError as exc:
         return str(exc)
+    return ""
+
+
+def note(agent: agents.Agent, field_name: str, v: voicebank.BankVoice) -> str:
+    """A word on a pickable line: Simba's effect does not apply to a Microsoft voice."""
+    if field_name == "voice" and v.engine == "edge" and voiceedit.uses_simba_script(agent):
+        return NO_EFFECT
     return ""
 
 
@@ -87,15 +95,18 @@ def _rows(agent: agents.Agent, field_name: str, bank: list[voicebank.BankVoice])
     out = []
     for v in bank:
         if _same_voice(v.name, current):
-            note = ("   (stored, but silent today: English only)" if field_name == "voice_zh" and agent.english_only
-                    else "")
-            out.append(onoff.Option(v.name, v.label + note, True))     # today's voice: always shown as it is
+            why = voicescripts.speaker_problem(agent, field_name, v.name)
+            note_ = ("   (stored, but silent today: English only)" if field_name == "voice_zh" and agent.english_only
+                     else f"   ({NOT_PLAYABLE}: {why})" if why
+                     else f"   ({note(agent, field_name, v)})" if note(agent, field_name, v) else "")
+            out.append(onoff.Option(v.name, v.label + note_, True))    # today's voice: always shown as it is
             continue
         if not_offered(v):
             continue                                                   # stays in the bank, never offered as a pick
         why = not_yet(agent, field_name, v)
-        out.append(onoff.Option(NOT_YET + v.name, f"{v.label} — not yet: {why}", False, True) if why
-                   else onoff.Option(v.name, v.label))
+        extra = note(agent, field_name, v)
+        out.append(onoff.Option(NOT_YET + v.name, f"{v.label} — {why}", False, True) if why
+                   else onoff.Option(v.name, v.label + (f" — {extra}" if extra else "")))
     return out
 
 
@@ -148,6 +159,6 @@ def menu(agent: agents.Agent, field_name: str, cfg: dict) -> tuple[str, list[ono
     return "", [], f"{field_name} has no pick-list"
 
 
-HINT = ("Up / Down, then Enter (● = now; ◌ = in the voice bank, but this agent's own speaker cannot make it yet: "
-        "stage 2 moves its script onto Voice Desk's shared speaker; Simba's sound effect works on Kokoro voices only). "
-        "Esc cancels. The files are backed up and read back; U undoes.")
+HINT = ("Up / Down, then Enter (● = now; ◌ = in the voice bank, but not pickable for this agent: \"not playable yet\" "
+        "means its own script cannot make that voice until it is moved onto Voice Desk's shared speaker; Simba's "
+        "sound effect works on Kokoro voices only). Esc cancels. The files are backed up and read back; U undoes.")

@@ -351,6 +351,17 @@ class Voice:
     speed: Optional[float]
     english_only: bool
     silent_if_fails: bool = True    # 2026-11-13: no agent has a stand-in voice; a failed voice stays silent
+    not_playable: str = ""          # 2026-11-18: the English voice is one its own script cannot make yet: why
+
+
+def not_playable(a: A.Agent) -> str:
+    """Why the agent's own speaking script cannot make its English voice yet ("" = it can). Only a voice set behind
+    the desk's back can be in this state: the pick-lists never offer one (voicescripts.py, voicepick.py)."""
+    try:
+        import voicescripts
+        return voicescripts.speaker_problem(a, "voice", a.voice or "")
+    except Exception:                                   # noqa: BLE001  a look must never take the desk down
+        return ""
 
 
 @dataclass(frozen=True)
@@ -786,6 +797,7 @@ class OtherAssistant:
     takes_effect: str = ""          # where a voice change lands, in plain words
     voice_places: tuple = ()        # VoicePlace lines (Claude's and Gemini's own terminal voice, the mic window)
     wiring: tuple = ()              # Wire marks: here / not here and the phrase, place by place
+    not_playable: str = ""          # its English voice is one its own script cannot make yet: why (voicescripts.py)
 
 
 @dataclass(frozen=True)
@@ -962,7 +974,8 @@ def voice_for(profile: str, agents_cfg: Optional[dict]) -> Optional[Voice]:
         if a.profile == profile:
             if not a.voice:
                 return None
-            return Voice(a.voice, None if a.english_only else a.voice_zh, a.speed, a.english_only)
+            return Voice(a.voice, None if a.english_only else a.voice_zh, a.speed, a.english_only,
+                         not_playable=not_playable(a))
     return None
 
 
@@ -1315,7 +1328,7 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
 
     others = tuple(OtherAssistant(a.display, a.voice, a.voice_zh, a.names, a.key,
                                   TAKES_EFFECT.get(a.target, NOT_VERIFIED), places.get(a.key, ()),
-                                  wiring.get(a.key, ()))
+                                  wiring.get(a.key, ()), not_playable(a))
                    for a in listed_agents if not a.profile)
     lights: tuple = ()
     if paths.lights is not None and paths.grid is not None:
