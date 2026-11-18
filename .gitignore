@@ -6,3 +6,4 @@ __pycache__/
 # hand-made dated backups and sed -E leftovers (2026-11-13)
 *.bak-*
 *-E
+.worktrees/
