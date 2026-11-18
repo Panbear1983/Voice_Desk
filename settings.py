@@ -168,6 +168,15 @@ PANE_GIVE_UP_SEC = 300           # still busy after this long: stop waiting, lis
 # off) and a closed window still end it within PANE_END_POLLS reads, as before.
 PANE_IDLE_GRACE_SEC = 60
 PANE_REARM_SEC = 1.5             # how often the four windows are checked for an end phrase to undo
+# Peter 2026-11-17 (via Kylie, card t_69c8023c): the window's own beep when its recording stops is the
+# only signal. From that moment (its bar says ◉ Transcribing) the room mic listens and holds what it
+# hears. If the window then shows "Stop phrase detected", the held words count at once ("hello Jarvis"
+# right after the beep); a normal turn, a new recording, a closed window or PANE_BUFFER_SEC with no
+# verdict throws them away unheard. Echo deafness (ECHO_TAIL_SEC, other programs' playback) still applies.
+PANE_BUFFER_SEC = 12
+# The falling pair after an end phrase in a handed window ("the second beep"). Off: the window's stop
+# beep already said it. True brings it back. Other hand-backs (window closed, chat over) still play it.
+HAND_BACK_CHIME = False
 BRAIN_FILE = STATE_DIR / "brain"                        # "claude" or "hermes:<profile>", set by voice: "talk to Esther"
 HERMES_VOICE_NOTE = (f"(Voice call with {USER_NAME}: they hear you and are not reading a screen. Answer the way you "
                      "would speak on the phone, one to four short sentences, in Mandarin if they spoke Mandarin, "

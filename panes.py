@@ -169,12 +169,12 @@ def recording_confirmed(tail: Optional[str]) -> bool:
     return False
 
 
-def _look(pane: str, confirm_off: bool = True) -> tuple[str, Optional[str]]:
+def _look(pane: str, confirm_off: bool = True, lines: int = STATE_LINES) -> tuple[str, Optional[str]]:
     """(state, tail). A half-drawn frame is read again (up to three reads); "off" is believed only
     if a second read 0.3 s later says so too (a redraw lasts milliseconds, an end phrase stays)."""
     now, tail = "unclear", None
     for attempt in range(4):
-        tail = screen_tail(pane, lines=STATE_LINES)
+        tail = screen_tail(pane, lines=lines)
         now = state_of(tail)
         if now == "unclear" and attempt < 2:
             time.sleep(0.15)
@@ -189,6 +189,43 @@ def _look(pane: str, confirm_off: bool = True) -> tuple[str, Optional[str]]:
 
 def state(pane: str, confirm_off: bool = True) -> str:
     return _look(pane, confirm_off)[0]
+
+
+VERDICT_LINES = 32               # the stop-phrase line sits ~12 rows above the input box in a narrow window
+
+
+def look(pane: str) -> tuple[str, Optional[str]]:
+    """(state, tail) in one read, with rows enough for heard_verdict() (the switchboard's watch)."""
+    return _look(pane, lines=VERDICT_LINES)
+
+
+_STT_STARTED = ("Transcribing", "Preparing local STT")
+_NOTHING_HEARD = ("No speech detected", "Transcription failed", "Voice processing error", "Recording cancelled",
+                  "Voice recording failed")
+
+
+def heard_verdict(tail: Optional[str]) -> str:
+    """What did the window make of its latest recording?  end | nothing | pending
+
+    end: Hermes transcribed it and it was a stop phrase: the newest event above the input box is
+         "Stop phrase detected", printed right after "Transcribing..." (or the local model's
+         "Preparing local STT ..."). Nothing newer, no later "● Recording...".
+    nothing: no words came of it (no speech, a failed transcription, a cancelled recording).
+    pending: no verdict on the screen (still transcribing, a normal turn, a new recording, unreadable).
+    Agent text that merely quotes the line is not "end": the transcribing line must sit just above it."""
+    if not tail:
+        return "pending"
+    above, _, _ = _split(tail)
+    rows = [r.strip() for r in above]
+    for i in range(len(rows) - 1, -1, -1):
+        s = rows[i]
+        if s.startswith("Stop phrase detected"):
+            return "end" if any(r.startswith(_STT_STARTED) for r in rows[max(0, i - 6):i]) else "pending"
+        if s.startswith(_REC_CONFIRMED):
+            return "pending"                   # the newest event is a recording: its verdict is not out yet
+        if s.startswith(_NOTHING_HEARD):
+            return "nothing"
+    return "pending"
 
 
 def stopped_by_phrase(tail: Optional[str]) -> bool:

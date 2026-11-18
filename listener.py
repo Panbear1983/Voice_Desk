@@ -8,6 +8,9 @@ the microphone open and only reacts to a sentence that starts with a name:
                                    answers by its own voice mode. "that's all" / "that's all the
                                    questions I have" / "no further questions" end it there (Hermes
                                    voice.stop_phrases) and the listener waits for the next name.
+                                   The window's own stop beep is the only signal (Peter 2026-11-17):
+                                   from it the room mic holds what it hears, and acts on it only if
+                                   the window then shows "Stop phrase detected" ("hello Jarvis").
     "hey Claude, what time is it" -> one turn here, spoken back (no window to hand to)
     "mute" / "unmute"           -> ignores everything except "unmute" (or M in the dashboard)
 
@@ -108,6 +111,17 @@ class ForeignSpeech:
         self._stop.set()
 
 
+class _Held:
+    """Words heard after a handed window stopped recording, waiting for that window's verdict
+    (Peter 2026-11-17: the window's first beep is the only signal). verdict: None while waiting,
+    "end" = it was an end phrase, act on them; "drop" = a normal turn (or no verdict), never act."""
+    __slots__ = ("pane", "until", "verdict")
+
+    def __init__(self, pane: str, until: float) -> None:
+        self.pane, self.until = pane, until
+        self.verdict: Optional[str] = None
+
+
 class Listener:
     def __init__(self, mic=None, whisper=None, brain: Optional[Brain] = None, player=None,
                  synth: Callable[..., Optional[Path]] = tts.synthesize,
@@ -125,6 +139,8 @@ class Listener:
         self._hand_since = 0.0          # pending since (give up after PANE_GIVE_UP_SEC)
         self._hand_active_at = 0.0      # her last recording / transcribing / reply (voice-idle grace from here)
         self._hand_off_seen = False     # voice went off (an end phrase) since she was last active
+        self._held: Optional[_Held] = None   # words heard since her recording stopped, waiting for her verdict
+        self._held_spent = False        # this recording already had its listening spell (one per recording)
         self._rearm_next = 0.0          # next look at the four windows for an end phrase to undo
         self._pane_cache: dict = {}     # profile -> pane id, refreshed every 30 s
         self._pane_cache_until = 0.0
@@ -155,7 +171,7 @@ class Listener:
         """True while the mic must not be heard: we are speaking, something else on this Mac
         is speaking, or less than ECHO_TAIL_SEC has passed since either stopped."""
         now = self.clock()
-        if self.handed:                 # a Hermes window has the conversation; its own voice mode listens
+        if self.handed and self._held is None:   # a Hermes window has the conversation; its own voice mode listens
             return True
         if self.speaking:
             return True
@@ -445,6 +461,7 @@ class Listener:
         result = self.panes.start(pane)
         self._hand_state = ""
         self._hand_active_at, self._hand_off_seen = self.clock(), False
+        self._held, self._held_spent = None, False
         if result == "started":
             self.handed, self._hand_pending = pane, False
             log(f"switchboard: {name} ({pane}) is listening")
@@ -497,9 +514,24 @@ class Listener:
                     self.speak(self._no_start_line(self.brain.name(self.brain.target()), result))
                 self._take_back(f"window {result}")
             return                                 # busy: try again in PANE_RETRY_SEC
-        st = self.panes.state(pane)
+        st, tail = self._hand_look(pane)
         self._hand_state = st
         now = self.clock()
+        # Peter 2026-11-17: her first beep (recording stopped) is the only signal. An end phrase on her screen
+        # hands back at once, silently; words heard since her recording stopped then count ("hello Jarvis").
+        verdict = panes.heard_verdict(tail) if st not in ("recording", "busy", "gone") else "pending"
+        if verdict == "end" or (st == "off" and self._held is not None):
+            return self._take_back("voice mode off (end phrase)", end_phrase=True)
+        if st == "recording":
+            self._held_spent = False               # a new recording: it gets its own listening spell
+        if self._held is not None:
+            if st in ("recording", "busy", "gone") or verdict == "nothing" or now >= self._held.until:
+                self._drop_held("a new recording" if st == "recording" else "a normal turn" if st == "busy"
+                                else "window gone" if st == "gone" else "nothing said" if verdict == "nothing"
+                                else "no verdict in time")
+        elif st == "transcribing" and not self._held_spent:
+            self._held, self._held_spent = _Held(pane, now + S.PANE_BUFFER_SEC), True
+            log(f"switchboard: {pane} stopped recording; listening in case it was an end phrase")
         if st in self.panes.ACTIVE:
             self._hand_quiet, self._hand_active_at, self._hand_off_seen = 0, now, False
             return
@@ -518,7 +550,21 @@ class Listener:
         if self._hand_quiet >= S.PANE_END_POLLS:
             why = ("window gone" if st == "gone" else "voice mode off (end phrase)" if self._hand_off_seen or st == "off"
                    else "voice chat over")
-            self._take_back(why)
+            self._take_back(why, end_phrase=why.endswith("(end phrase)"))
+
+    def _hand_look(self, pane: str) -> tuple[str, Optional[str]]:
+        """(status-bar state, screen text) of the handed window. A stand-in with only state() gives no text."""
+        look = getattr(self.panes, "look", None)
+        return look(pane) if look else (self.panes.state(pane), None)
+
+    def _drop_held(self, why: str) -> None:
+        """Her recording was a normal turn (or no verdict came): what the room mic heard meanwhile is
+        thrown away unheard, and the mic is hers again."""
+        held, self._held = self._held, None
+        if held is not None:
+            held.verdict = "drop"
+            self._hearing = False
+            log(f"switchboard: not an end phrase ({why}); the room mic stays out of it")
 
     def _rearm_windows(self) -> None:
         """Every PANE_REARM_SEC: any of the four windows whose voice an end phrase just switched off
@@ -535,15 +581,25 @@ class Listener:
             if pane and self.panes.rearm(pane):
                 log(f"switchboard: {S.HERMES_DISPLAY_NAMES[profile]}'s end phrase -> voice back on, waiting ({pane})")
                 if pane == self.handed:            # her voice is back on (idle) at once: the grace must not keep the chat
-                    self._take_back("voice mode off (end phrase)")
+                    self._take_back("voice mode off (end phrase)", end_phrase=True)
 
-    def _take_back(self, why: str) -> None:
+    def _take_back(self, why: str, end_phrase: bool = False) -> None:
+        """The room mic is ours again. After an end phrase there is no falling pair (her own stop beep said
+        it; S.HAND_BACK_CHIME brings it back), and words heard since her recording stopped now count."""
         log(f"switchboard: back to listening for a name ({why})")
+        held = self._held
+        if held is None or not end_phrase:         # mid-sentence after her stop beep: keep the mic and his words
+            self.quiet_until = max(self.quiet_until, self.clock() + S.ECHO_TAIL_SEC)
+        # `handed` before `_held`: in between, deaf() must not see "handed, nothing held" (that cuts his words)
         self.handed, self._hand_pending, self._hand_quiet, self._hand_state = None, False, 0, ""
-        self.quiet_until = max(self.quiet_until, self.clock() + S.ECHO_TAIL_SEC)
+        self._held = None
         self.status.update(note="", pane="")
-        self.mic.drain()
-        self._chime(S.SOUND_ASLEEP)
+        if held is None or not end_phrase:
+            self.mic.drain()
+        if held is not None:                       # set after `handed` is cleared: the main loop reads both
+            held.verdict = "end" if end_phrase else "drop"
+        if not end_phrase or S.HAND_BACK_CHIME:
+            self._chime(S.SOUND_ASLEEP)
         self.settle()
 
     def _chime(self, sound: str) -> None:
@@ -657,31 +713,52 @@ class Listener:
                 self._hearing = False
                 if audio is None:
                     continue
-                text = self.transcribe(audio)
-                secs = len(audio) / S.SAMPLE_RATE
-                if self.awake() and secs >= 3 and len(re.sub(r"[^\w]", "", text or "")) < 3:
-                    # Peter spoke for a while on an open line but whisper made nothing of it: say so and
-                    # keep the line open, instead of hanging up on him (2026-10-25, a 31 s question -> ">>")
-                    log(f"unclear ({secs:.1f}s): {text[:40]!r}")
-                    self.speak("Sorry, I did not catch that. Please say it again.", after="listening")
-                    self.follow_until = self.clock() + S.CONVERSATION_SEC
-                    self.settle()
-                    continue
-                what = self.handle(text)
-                if what == "ignored":
-                    # a sentence that starts with a hail ("hey ...") was meant for us: log what whisper made
-                    # of it, so a misheard name can be fixed (Peter 2026-10-21: "hey Kylie ... did not start")
-                    if DEBUG or re.match(r"^\W*(hey|hay|heya|hi|high|hai|hiya|hello|hallo|hullo|helo|ok|okay|yo|i)\b", text or "", re.I):
-                        log(f"ignored ({len(audio) / S.SAMPLE_RATE:.1f}s): {text[:120]!r}")
-                    self.settle()
-                else:
-                    log(f"heard ({what}): {text[:80]!r}")
+                self._heard(audio)
             except Exception as exc:                   # one bad turn never stops the listener
                 log(f"turn failed: {exc}")
                 self.status.update(note=f"turn failed: {exc}")
                 self.speaking = False
                 time.sleep(1)
         self._off()
+
+    def _may_act(self) -> bool:
+        """May the listener act on what it just heard? Never while a window has the conversation. Words
+        heard after that window stopped recording wait for its verdict: only an end phrase lets them count."""
+        held = self._held
+        if held is None:
+            return not self.handed
+        stop = time.monotonic() + S.PANE_BUFFER_SEC + 2   # the watch decides well before; this only stops a hang
+        while held.verdict is None and time.monotonic() < stop and not self._quit.is_set():
+            time.sleep(0.05)
+        if held.verdict is None and self._held is held:
+            self._drop_held("no verdict in time")
+        return held.verdict == "end" and not self.handed
+
+    def _heard(self, audio) -> str:
+        """One utterance from the mic: transcribe it and act on it (or, held for a window's verdict, drop it)."""
+        text = self.transcribe(audio)
+        secs = len(audio) / S.SAMPLE_RATE
+        if not self._may_act():
+            log(f"switchboard: {secs:.1f}s heard while a window had the conversation, no end phrase: dropped unheard")
+            return "dropped"
+        if self.awake() and secs >= 3 and len(re.sub(r"[^\w]", "", text or "")) < 3:
+            # Peter spoke for a while on an open line but whisper made nothing of it: say so and
+            # keep the line open, instead of hanging up on him (2026-10-25, a 31 s question -> ">>")
+            log(f"unclear ({secs:.1f}s): {text[:40]!r}")
+            self.speak("Sorry, I did not catch that. Please say it again.", after="listening")
+            self.follow_until = self.clock() + S.CONVERSATION_SEC
+            self.settle()
+            return "unclear"
+        what = self.handle(text)
+        if what == "ignored":
+            # a sentence that starts with a hail ("hey ...") was meant for us: log what whisper made
+            # of it, so a misheard name can be fixed (Peter 2026-10-21: "hey Kylie ... did not start")
+            if DEBUG or re.match(r"^\W*(hey|hay|heya|hi|high|hai|hiya|hello|hallo|hullo|helo|ok|okay|yo|i)\b", text or "", re.I):
+                log(f"ignored ({len(audio) / S.SAMPLE_RATE:.1f}s): {text[:120]!r}")
+            self.settle()
+        else:
+            log(f"heard ({what}): {text[:80]!r}")
+        return what
 
     def _on_mic_state(self, s: str) -> None:
         self._hearing = s == "hearing"

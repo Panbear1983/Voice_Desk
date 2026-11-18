@@ -741,8 +741,8 @@ def test_switchboard() -> None:
     fp.bar["wH:pR"] = "off"                 # Peter said "that's all the questions I have": Hermes turned voice off
     for _ in range(S.PANE_END_POLLS):
         lst._watch_hand()
-    report("switchboard: end phrase in her window -> back to listening for a name, falling tone",
-           lst.handed is None and lst.status.state == "asleep" and CHIMES[-1:] == [S.SOUND_ASLEEP],
+    report("switchboard: end phrase in her window -> back to listening for a name, no second beep (her stop beep said it)",
+           lst.handed is None and lst.status.state == "asleep" and S.SOUND_ASLEEP not in CHIMES,
            f"{lst.handed} {lst.status.state} {CHIMES}")
     report("switchboard: the deaf gate opens again (after the echo tail)",
            (clock.advance(S.ECHO_TAIL_SEC + 0.1) or True) and not lst.deaf())
