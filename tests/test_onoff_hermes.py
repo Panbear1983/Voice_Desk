@@ -225,6 +225,117 @@ class GeminiSwitch(Base):
         self.assertIn("prepared", cell.note)
 
 
+class HermesTerminalSwitch(Base):
+    """Phase C (2026-11-18): the desk switches a Hermes agent's terminal windows through the profile's own
+    terminal_voice.json; Peter's local Hermes patch makes every window re-read it before each reply."""
+
+    def sw(self, profile="assistant"):
+        return self.w.paths.profiles / profile / "terminal_voice.json"
+
+    def install_terminal_patch(self):
+        home = self.w.paths.hermes_home
+        (home / "hermes-agent/hermes_cli").mkdir(parents=True)
+        (home / "hermes-agent/hermes_cli/terminal_voice_switch.py").write_text('SWITCH_NAME = "terminal_voice.json"\n')
+        (home / "backups/local-patches").mkdir(parents=True)
+        (home / "backups/local-patches/manifest.json").write_text(json.dumps({"patches": [
+            {"id": "terminal-voice-switch", "diff": "x.diff", "runs_in": "cli", "summary": "terminal switch",
+             "markers": [["hermes_cli/terminal_voice_switch.py", 'SWITCH_NAME = "terminal_voice.json"']]}]}))
+
+    def test_every_hermes_agents_terminal_is_switchable_codex_is_not(self):
+        for key in ("kylie", "jarvis"):
+            self.assertTrue(onoff.can_switch(agent_of(self.w, key), "terminal"), key)
+            m = onoff.menu(agent_of(self.w, key), "terminal", self.cell(key, "terminal"), self.w.paths)
+            self.assertEqual([o.token for o in m.options], ["off", "always"], key)
+        self.assertFalse(onoff.can_switch(agent_of(self.w, "codex"), "terminal"))
+
+    def test_the_default_without_a_file_is_todays_reading_and_reading_writes_nothing(self):
+        from tests.acdfix import tree_hashes
+        before = tree_hashes(self.w.root)
+        cell = self.cell("kylie", "terminal")
+        self.assertEqual(cell.value, G.ALWAYS)                      # fixture: voice.auto_enable true
+        self.assertIn("the desk's switch is not set", cell.note)
+        self.assertFalse(self.sw().exists())
+        self.assertEqual(tree_hashes(self.w.root), before)
+
+    def test_off_writes_the_profiles_own_file_and_nothing_else(self):
+        self.install_terminal_patch()
+        cfg = (self.w.paths.profiles / "assistant/config.yaml").read_bytes()
+        toml = self.w.toml.read_bytes()
+        res = self.switch("kylie", "terminal", "off")
+        self.assertTrue(res.ok, res.message)
+        self.assertEqual(json.loads(self.sw().read_text()), {"voice": "off"})
+        self.assertIn("next reply", res.message)
+        self.assertIn("No gateway restart", res.message)
+        self.assertEqual((self.w.paths.profiles / "assistant/config.yaml").read_bytes(), cfg)
+        self.assertEqual(self.w.toml.read_bytes(), toml)
+        self.assertFalse(self.sw("orchestrator").exists(), "one agent's switch only")
+        cell = self.cell("kylie", "terminal")
+        self.assertEqual((cell.value, cell.problem), (G.OFF, ""))
+        self.assertIn("re-reads it before its next reply", cell.note)
+        self.assertIn("follows it only after it is reopened", cell.note)
+        self.assertNotIn("gateway restart needed)", cell.problem)
+
+    def test_always_then_undo_twice(self):
+        self.install_terminal_patch()
+        self.assertTrue(self.switch("kylie", "terminal", "off").ok)
+        self.assertTrue(self.switch("kylie", "terminal", "always").ok)
+        self.assertEqual(json.loads(self.sw().read_text()), {"voice": "on"})
+        self.assertEqual(self.cell("kylie", "terminal").value, G.ALWAYS)
+        self.assertTrue(self.undo().ok)                             # back to off
+        self.assertEqual(json.loads(self.sw().read_text()), {"voice": "off"})
+
+    def test_undo_of_the_first_switch_removes_the_file_again(self):
+        self.install_terminal_patch()
+        self.assertTrue(self.switch("kylie", "terminal", "off").ok)
+        self.assertTrue(self.undo().ok)
+        self.assertFalse(self.sw().exists(), "no file = the windows go back to what they started with")
+        self.assertIn("the desk's switch is not set", self.cell("kylie", "terminal").note)
+
+    def test_the_same_value_again_changes_nothing(self):
+        self.install_terminal_patch()
+        self.assertTrue(self.switch("kylie", "terminal", "off").ok)
+        res = self.switch("kylie", "terminal", "off")
+        self.assertTrue(res.ok)
+        self.assertIn("nothing to change", res.message)
+
+    def test_a_broken_file_is_never_overwritten_and_shows_red(self):
+        self.sw().write_text("{not json")
+        res = self.switch("kylie", "terminal", "always")
+        self.assertFalse(res.ok)
+        self.assertEqual(self.sw().read_text(), "{not json")
+        cell = self.cell("kylie", "terminal")
+        self.assertEqual(cell.value, G.UNKNOWN)
+        self.assertIn("windows ignore it", cell.problem)
+        self.sw().write_text('{"voice": "loud"}')
+        self.assertEqual(self.cell("kylie", "terminal").value, G.UNKNOWN)
+
+    def test_without_the_hermes_fix_the_switch_says_windows_ignore_it(self):
+        res = self.switch("kylie", "terminal", "off")             # no manifest in this world
+        self.assertTrue(res.ok, res.message)
+        self.assertIn("not in Hermes' code now", res.message)
+        cell = self.cell("kylie", "terminal")
+        self.assertEqual(cell.value, G.OFF)
+        self.assertIn("hermes_patches.py apply", cell.problem)
+
+    def test_hermes_patches_reports_the_terminal_fix(self):
+        self.assertEqual(HP.terminal_voice_switch(self.w.paths.hermes_locations), (HP.MISSING_STATE, None))
+        self.install_terminal_patch()
+        state, since = HP.terminal_voice_switch(self.w.paths.hermes_locations)
+        self.assertEqual(state, HP.LIVE)
+        self.assertAlmostEqual(since or 0.0, time.time(), delta=60)
+        (self.w.paths.hermes_home / "hermes-agent/hermes_cli/terminal_voice_switch.py").write_text("# updated away\n")
+        self.assertEqual(HP.terminal_voice_switch(self.w.paths.hermes_locations)[0], HP.MISSING_STATE)
+
+    def test_the_watcher_plans_the_same_file(self):
+        import watcher
+        self.install_terminal_patch()
+        self.sw().write_text('{"voice": "on"}\n')
+        planned = watcher._plan(agents.load(self.w.toml), "kylie", "terminal", "off", self.w.paths, self.w.edit)
+        self.assertIsNotNone(planned)
+        changes = planned[1] if planned else []
+        self.assertEqual([(c["path"], c["key"], c["after"]) for c in changes], [(str(self.sw()), "voice", "off")])
+
+
 class HermesFixesLight(Base):
     def test_no_manifest_falls_back_to_the_old_marker_check(self):
         light = syshealth.hermes_fixes(self.w.paths, hermes_agent=self.w.root / "nowhere")

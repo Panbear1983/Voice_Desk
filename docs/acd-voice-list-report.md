@@ -120,3 +120,84 @@ silent instead of speaking in the Mac's own voice (or Claude in Kokoro Heart).
 ## Commits (branch builder/t_134ade35)
 
 See `git log main..builder/t_134ade35`.
+
+# Phase C: Hermes terminal windows switch voice on and off from the desk
+
+Written by Builder, 2026-11-18, card t_9833bb53. Branch `builder/t_9833bb53` (worktree `.worktrees/t_9833bb53`),
+NOT merged, NOT pushed.
+
+## In one paragraph
+
+The "Speaks in terminal window" cell of every Hermes agent (Jarvis, Kylie, Esther, Wanna Buffet, Simba) can now be
+switched Off or Always from the desk, like Claude's and Gemini's. The desk writes one small file in that agent's
+own profile folder; every open window of that agent looks at it before each reply and acts only when it changed.
+Off: the window stops reading replies aloud (its mic and Ctrl+B are left alone, so Voice Desk can still hand it
+spoken words). Always: the window turns voice on and reads replies aloud. Nothing changes by default: no such file
+exists today, and without it every window does exactly what it did before. No gateway restart is needed, ever: this
+runs in the windows, not in the gateway, so no cell says "waiting for gateway restart". A window that was already
+open before 12:48 today still runs the old code and follows the switch only after it is closed and opened again.
+
+## What changed
+
+In Hermes (a local patch, live on disk since 12:48; backup first in
+`~/.hermes/backups/local-patches/pre-terminal-voice-switch-20261118-124613/`):
+- new `hermes_cli/terminal_voice_switch.py`: reads `<profile home>/terminal_voice.json` (`{"voice": "on"}` or
+  `{"voice": "off"}`); acts only on a change; file removed = back to what the window started with
+  (`voice.auto_enable`); unreadable file or another value = nothing happens; headless runs (job cards, one-shot,
+  pipes) never act; every error is swallowed, so it can never break a turn. A typed `/voice off` or `/voice tts` in
+  the window still wins until the desk's value changes again.
+- two hook lines: at window start (`cli_tui_mixin._tui_wake_startup`, after `voice.auto_enable`) and at the start of
+  every turn (`cli_chat_turn_mixin._chat_setup_turn_audio`, before the speech decision).
+- new test `tests/hermes_cli/test_terminal_voice_switch.py` (17 checks).
+- the patch manifest lists it as `terminal-voice-switch` (runs in: windows), diff
+  `terminal-voice-switch-20261118.diff` (applies cleanly on top of the earlier patches; checked on a copy).
+  `hermes_patches.py check` says 10/10 in; `apply` would put it back after a Hermes update.
+
+In this project:
+- `gridstate.terminal_cell`: a Hermes agent's cell reads the switch file first (Off / Always, red when the file is
+  unreadable or when the Hermes fix is missing), else the old `voice.auto_enable` reading.
+- `onoff_hermes`: the Off / Always menu and the plan (the same backup, read-back, history and U-undo as every other
+  switch; the first switch makes the file, its undo removes it again; a file that cannot be read is never
+  overwritten). `onoff`, `acd_edit` and `watcher` use it, so the desk, the old grid and the watcher agree.
+- `hermes_patches.terminal_voice_switch`: is the fix in, and since when.
+- `tools/acd_voice_list_proof.py` now also reads every agent's terminal cell and opens its menu (never picks).
+
+## Proof
+
+1. Real program, silent: a real `hermes -p builder` window (Builder's own profile, never a live window) in a
+   pseudo-terminal, with stand-in `afplay` / `ffplay` first on its PATH that write to a log instead of playing.
+   Switch "on" before start: the window turned voice on and said so. Switch flipped to "off", one short message:
+   the window said spoken replies are off, the reply came, the stand-in player was called 0 times. Switch flipped
+   back to "on", one short message: the window said spoken replies are on, and the reply's audio went to the
+   stand-in player once. Nothing reached the speakers. The switch file was removed afterwards.
+2. Tests: Hermes `test_terminal_voice_switch.py` 17 pass; with the other voice test files 199 pass, 2 fail and 4
+   error in `test_voice_mic_recovery.py` / `test_voice_mode.py` (a test guard that refuses the real Hermes home when
+   that file imports the CLI alone, a timing test, and a beep test; they test `tools/voice_mode.py`, which this
+   patch does not touch). Desk: full suite 775 tests, all pass except `test_the_real_agents_toml_entry` (fails only
+   inside a worktree, as before), 3 skipped; `tests/test_voicecfg.py` by hand: the same 4 FAIL lines as a clean copy
+   of main (live silence settings, not this change); `tests/test_listener.py` and `tests/test_speechq.py` ALL PASS.
+   The five tests that said "a Hermes window cannot be switched" now say it can; new tests in
+   `tests/test_onoff_hermes.py` (HermesTerminalSwitch) and `test_acd_v4`.
+3. Nothing changes by default: `tools/acd_voice_list_proof.py --old <main>` on a copy of the live agents.toml:
+   old == new, the copy byte for byte unchanged. Every agent's five "speaks in" cells read by the old and the new
+   code: the same value and the same warning for every agent and place; only the Hermes terminal note's wording
+   differs. No `terminal_voice.json` exists in any profile.
+4. Headless desk on the copy: every Hermes agent's terminal cell offers Off / Always (Builder's column has no voice
+   and no switch); picture `menu_kylie_terminal.svg`.
+
+## How to undo the Hermes patch
+
+    cd ~/.hermes/hermes-agent && git apply -R ~/.hermes/backups/local-patches/terminal-voice-switch-20261118.diff
+    cp -p ~/.hermes/backups/local-patches/manifest.json.bak-20261118-terminal-voice-switch \
+          ~/.hermes/backups/local-patches/manifest.json
+
+(`git apply -R` takes out the two hook lines and removes the two new files.) Any switch made from the desk is undone
+with U, which removes the file again.
+
+## Not verified / open
+
+- Not tried on Peter's open windows (that would touch a live window). They follow the switch only after they are
+  reopened once; no window or service was restarted.
+- Kylie's hands-on look (skill kylie-ui-test) has not happened.
+- The first real-window run met Hermes' one-time "help improve Hermes?" question in Builder's profile; the run's
+  Enter chose the default "No thanks" (shared metrics off) in Builder's own settings.

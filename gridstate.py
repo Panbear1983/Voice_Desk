@@ -58,6 +58,7 @@ TELEGRAM_HANDS_OFF = {
 _VOICE_MODE_TO_CELL = {"off": OFF, "voice_only": VOICE_BACK, "all": ALWAYS}
 CELL_TO_VOICE_MODE = {v: k for k, v in _VOICE_MODE_TO_CELL.items()}
 GEMINI_SWITCH_NAME = "gemini_voice_off"
+TERMINAL_SWITCH_NAME = "terminal_voice.json"      # a Hermes profile's own: the desk's terminal voice switch
 
 
 def _tg_dm_chat() -> str:
@@ -212,16 +213,70 @@ def gemini_hook_honours_switch(p: Paths) -> bool:
         return False
 
 
+def hermes_terminal_switch(p: Paths, profile: str) -> Path:
+    """The desk's voice switch for one Hermes agent's terminal windows (Phase C, 2026-11-18): the profile's own
+    terminal_voice.json, {"voice": "on"} or {"voice": "off"}. Peter's local Hermes patch (terminal-voice-switch
+    in the patch manifest) makes every window re-read it at start and before each reply. No file = the
+    window does what it did before (voice.auto_enable at start)."""
+    return Path(p.profiles) / profile / TERMINAL_SWITCH_NAME
+
+
+def read_terminal_switch(path: Path) -> Optional[str]:
+    """"on" / "off" / None (no file) / "broken" — the same rules as the window's own reader."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return "broken"
+    value = data.get("voice") if isinstance(data, dict) else None
+    return value if value in ("on", "off") else "broken"
+
+
+def _when_words(ts: Optional[float]) -> str:
+    import datetime as _dt
+    if not ts:
+        return "the fix was put in"
+    return _dt.datetime.fromtimestamp(ts).strftime("%-d %b %H:%M")
+
+
+def _hermes_terminal_cell(a: agents.Agent, p: Paths) -> Optional[Cell]:
+    """The desk's switch, when it has been set; None = not set (the old start-of-window reading applies)."""
+    import hermes_patches
+    path = hermes_terminal_switch(p, str(a.profile))
+    got = read_terminal_switch(path)
+    if got is None:
+        return None
+    if got == "broken":
+        return Cell(UNKNOWN, f"{TERMINAL_SWITCH_NAME} for {a.profile} cannot be read",
+                    problem=f"{TERMINAL_SWITCH_NAME} is unreadable or holds another value: the windows ignore it "
+                            f"and keep what they have")
+    state, since = hermes_patches.terminal_voice_switch(p.hermes_locations)
+    value = ALWAYS if got == "on" else OFF
+    said = "on: the window turns voice on and reads replies aloud" if got == "on" else \
+        "off: the window does not read replies aloud (its mic is left alone)"
+    if state != hermes_patches.LIVE:
+        return Cell(value, f"the desk's switch says {said}", problem=(
+            "the Hermes fix that makes windows read this switch is not in Hermes' code now (an update removed "
+            "it?), so windows ignore it: python3 hermes_patches.py apply puts it back"))
+    return Cell(value, f"the desk's switch says {said}; every open window re-reads it before its next reply "
+                       f"(a window opened before {_when_words(since)} follows it only after it is reopened; "
+                       f"no gateway restart needed)")
+
+
 # -- one cell per place -------------------------------------------------------------------------
 def terminal_cell(a: agents.Agent, p: Paths) -> Cell:
     kind = kind_of(a)
     if kind == HERMES:
+        switched = _hermes_terminal_cell(a, p)
+        if switched is not None:
+            return switched
         ok, v = _yaml_value(p.profiles, a.profile, "voice.auto_enable")
         if not ok and not (p.profiles / a.profile / "config.yaml").exists():
             return Cell(UNKNOWN, f"no config.yaml for profile {a.profile}")
         if v is True:
-            return Cell(ALWAYS, "voice.auto_enable: the window starts with voice on (per window, in memory)")
-        return Cell(OFF, "voice starts off in the window (voice.auto_enable is not true); /voice on turns it on per window")
+            return Cell(ALWAYS, "voice.auto_enable: the window starts with voice on (the desk's switch is not set)")
+        return Cell(OFF, "voice starts off in the window (voice.auto_enable is not true; the desk's switch is not set)")
     if kind == CLAUDE:
         settings = _read_json(p.claude_dir / "settings.json") or {}
         enabled = settings.get("voice", {})

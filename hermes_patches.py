@@ -227,6 +227,24 @@ def live_voice_mode(loc: Optional[Locations] = None) -> str:
     return PENDING if started is not None and started < _newest_marker_file(loc, patch) else LIVE
 
 
+TERMINAL_VOICE_ID = "terminal-voice-switch"
+
+
+def terminal_voice_switch(loc: Optional[Locations] = None) -> tuple[str, Optional[float]]:
+    """Do Hermes terminal windows re-read the desk's voice switch (terminal_voice.json)? (`live` or `missing`,
+    when the patch's newest file changed). It runs in the windows, not the gateway: no gateway restart is ever
+    needed; a window opened before that time still runs the old code until it is closed and opened again.
+    Cheap (a few small file reads, no git)."""
+    loc = loc or Locations.default()
+    try:
+        patch = next((p for p in load_manifest(loc) if p.id == TERMINAL_VOICE_ID), None)
+    except ManifestError:
+        return MISSING_STATE, None
+    if patch is None or _marker_state(loc, patch)[0] != len(patch.markers):
+        return MISSING_STATE, None
+    return LIVE, _newest_marker_file(loc, patch) or None
+
+
 # ---- putting missing patches back ----------------------------------------------------------------------------------------
 @dataclass
 class ApplyResult:

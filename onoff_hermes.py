@@ -12,6 +12,11 @@ and undoes). Nothing new is invented: each switch writes the file the agent alre
     Gemini (terminal)      ~/.voice_desk/gemini_voice_off   a marker file: it EXISTS = Gemini stays silent.
                            Gemini's own hook honours it from step 4 (it is not edited in step 3); until then
                            the switch is prepared and the panel says plainly that Gemini still speaks.
+    Hermes (terminal)      ~/.hermes/profiles/<profile>/terminal_voice.json   {"voice": "on"} or {"voice": "off"}
+                           (Phase C, 2026-11-18). Every window of that agent re-reads it at start and before
+                           each reply, through Peter's local Hermes patch "terminal-voice-switch" (hermes_patches.py
+                           check / apply). It runs in the windows, never the gateway: no gateway restart; a window
+                           opened before the patch follows it once reopened. No file = voice.auto_enable as before.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ def can_switch(agent: agents.Agent, place: str) -> bool:
     kind = G.kind_of(agent)
     if place == "tg_dm" and agent.key in G.TELEGRAM_HANDS_OFF:
         return False                                       # Simba's own bot: shown, never switched (2026-11-13)
-    return (place == "tg_dm" and kind == G.HERMES) or (place == "terminal" and kind == G.GEMINI)
+    return (place == "tg_dm" and kind == G.HERMES) or (place == "terminal" and kind in (G.GEMINI, G.HERMES))
 
 
 def _live_note(p: G.Paths) -> str:
@@ -61,7 +66,62 @@ def menu_gemini(agent: agents.Agent, cell: G.Cell, p: G.Paths) -> onoff.Menu:
         onoff.Option(G.ALWAYS, "Always — Gemini speaks every reply (as today)", cell.value == G.ALWAYS)])
 
 
+def _hermes_terminal_when(p: G.Paths) -> str:
+    state, since = HP.terminal_voice_switch(p.hermes_locations)
+    if state != HP.LIVE:
+        return ("saved, but the Hermes fix that makes windows read it is not in Hermes' code now: "
+                "python3 hermes_patches.py apply puts it back")
+    return (f"open windows follow it from their next reply; a window opened before {G._when_words(since)} "
+            f"follows it once reopened")
+
+
+def menu_hermes_terminal(agent: agents.Agent, cell: G.Cell, p: G.Paths) -> onoff.Menu:
+    return onoff.Menu(f"{agent.display} — {G.PLACE_NAME['terminal']} ({_hermes_terminal_when(p)})", [
+        onoff.Option(G.OFF, f"Off — {agent.display}'s windows do not read replies aloud (mic left alone)",
+                     cell.value == G.OFF),
+        onoff.Option(G.ALWAYS, f"Always — {agent.display}'s windows turn voice on and read every reply aloud",
+                     cell.value == G.ALWAYS)])
+
+
 # ---- plans ------------------------------------------------------------------------------------------------------------
+def plan_terminal(agent: agents.Agent, token: str, p: G.Paths) -> tuple[list[dict], str]:
+    """A terminal switch this module owns: Gemini's marker or a Hermes agent's terminal_voice.json."""
+    if G.kind_of(agent) == G.HERMES:
+        return plan_hermes_terminal(agent, token, p)
+    return plan_gemini(agent, token, p)
+
+
+def plan_hermes_terminal(agent: agents.Agent, token: str, p: G.Paths) -> tuple[list[dict], str]:
+    """{"voice": "on"|"off"} in the profile's own terminal_voice.json (Phase C, 2026-11-18). Created on the first
+    switch, so undoing that first switch removes it again and the windows go back to what they started with."""
+    if token not in (G.OFF, G.ALWAYS):
+        raise onoff.SwitchError("a Hermes terminal window has Off and Always only")
+    if not agent.profile or not (Path(p.profiles) / agent.profile).is_dir():
+        raise onoff.SwitchError(f"there is no Hermes profile folder for {agent.display}")
+    path = G.hermes_terminal_switch(p, agent.profile)
+    want = "on" if token == G.ALWAYS else "off"
+    create = not path.exists()
+    cur = None
+    if not create:
+        if G.read_terminal_switch(path) == "broken":
+            raise onoff.SwitchError(f"{path.name} for {agent.profile} cannot be read; nothing changed, so a file "
+                                    f"someone else wrote is never overwritten")
+        cur = onoff._read_json(path).get("voice")
+    if cur == want:
+        return [], ""
+    change = {"t": "json", "path": str(path), "key": "voice", "before": cur, "after": want}
+    if create:
+        change["create"] = True
+    state, since = HP.terminal_voice_switch(p.hermes_locations)
+    if state != HP.LIVE:
+        note = (" Saved, but the Hermes fix that makes windows read it is not in Hermes' code now, so the windows "
+                "ignore it (python3 hermes_patches.py apply puts the fix back).")
+    else:
+        note = (f" Open {agent.display} windows follow it from their next reply; a window opened before "
+                f"{G._when_words(since)} follows it once it is reopened. No gateway restart.")
+    return [change], note
+
+
 def plan_tg_dm(agent: agents.Agent, token: str, p: G.Paths) -> tuple[list[dict], str]:
     mode = G.CELL_TO_VOICE_MODE.get(token)
     if mode is None:

@@ -460,13 +460,12 @@ class VoicePlaces(unittest.TestCase):
         by = {p.key: p for p in v.voice_places}
         self.assertEqual(sorted(by), ["iphone", "mic", "terminal", "tg_dm", "tg_group"])
         self.assertTrue(by["tg_group"].can_switch and by["tg_dm"].can_switch and by["mic"].can_switch)
-        self.assertFalse(by["terminal"].can_switch)                     # a Hermes window decides per window
-        self.assertIn("each open Hermes window keeps its own choice", by["terminal"].why_not)
+        self.assertTrue(by["terminal"].can_switch)                      # Phase C: the desk's own switch file
         self.assertFalse(by["iphone"].can_switch)
         self.assertEqual(by["tg_group"].value, "Always")
         settings = [acd.cell_at(f"vplace:{k}", v).setting for k in by]
-        self.assertEqual(sorted(s for s in settings if s), ["vplace:mic", "vplace:tg_dm", "vplace:tg_group"])
-        self.assertIn("keeps its own choice", acd.cell_at("vplace:terminal", v).fixed)
+        self.assertEqual(sorted(s for s in settings if s),
+                         ["vplace:mic", "vplace:terminal", "vplace:tg_dm", "vplace:tg_group"])
         self.assertIn("Spoken replies, Telegram team group: Always", acd.column_story(snap, v))
 
     def test_not_armed_every_switch_is_a_dry_run_that_writes_nothing(self):
@@ -476,6 +475,7 @@ class VoicePlaces(unittest.TestCase):
                    E.set_voice_place("kylie", "tg_dm", G.VOICE_BACK, w.edit, now=WHEN),
                    E.set_voice_place("claude", "terminal", G.OFF, w.edit, now=WHEN),
                    E.set_voice_place("gemini", "terminal", G.OFF, w.edit, now=WHEN),
+                   E.set_voice_place("kylie", "terminal", G.OFF, w.edit, now=WHEN),
                    E.set_voice_place("kylie", "mic", "queue:off", w.edit, now=WHEN)]
         for r in results:
             self.assertTrue(r.ok and r.dry, r.message)
@@ -513,11 +513,22 @@ class VoicePlaces(unittest.TestCase):
         self.assertTrue(r.ok and not r.dry, r.message)
         self.assertTrue(Path(w.grid.gemini_switch).exists())
 
+    def test_a_hermes_agents_terminal_switch_and_undo(self):
+        w = F.with_grid(F.edit_world(armed=True))
+        switch = Path(w.grid.profiles) / "assistant/terminal_voice.json"
+        r = E.set_voice_place("kylie", "terminal", G.OFF, w.edit, now=WHEN)
+        self.assertTrue(r.ok and not r.dry, r.message)
+        self.assertEqual(json.loads(switch.read_text()), {"voice": "off"})
+        self.assertIn("next reply", r.needs)
+        u = E.undo(w.edit, now=WHEN + dt.timedelta(seconds=4))
+        self.assertTrue(u.ok and not u.dry, u.message)
+        self.assertFalse(switch.exists(), "undo of the change that made the file removes it again")
+
     def test_a_place_with_no_switch_is_refused(self):
         w = F.with_grid(F.edit_world(armed=True))
         r = E.set_voice_place("kylie", "iphone", G.OFF, w.edit, now=WHEN)
         self.assertFalse(r.ok)
-        r = E.set_voice_place("kylie", "terminal", G.OFF, w.edit, now=WHEN)
+        r = E.set_voice_place("codex", "terminal", G.OFF, w.edit, now=WHEN)
         self.assertFalse(r.ok)
         self.assertEqual(E.read_history(w.edit), [])
 

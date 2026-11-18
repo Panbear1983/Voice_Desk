@@ -183,7 +183,8 @@ class PlainWords(unittest.TestCase):
         v = F.agent(F.edit_collect(w), "assistant")
         story = acd.column_story(F.edit_collect(w), v)
         self.assertNotIn("auto_enable", story)
-        self.assertIn("keeps its own choice until it is closed", story)
+        self.assertNotIn("terminal_voice.json", story)
+        self.assertIn("an agent's own terminal windows before their next reply", story)   # Phase C: switchable
 
 
 if __name__ == "__main__":
