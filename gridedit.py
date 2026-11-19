@@ -111,16 +111,24 @@ def put_block(text: str, key: str, block: Optional[str], anchor: Optional[str] =
 
 def new_block(key: str, display: str, names: list[str], voice: Optional[str], *, profile: Optional[str] = None,
               target: Optional[str] = None, when: Optional[_dt.date] = None) -> str:
-    """The block A writes, at the end of the file (a blank line in front of it, as between the others)."""
+    """The block A writes, at the end of the file (a blank line in front of it, as between the others). Its `kind`
+    says which connector reads the agent (acd_setup.py): "hermes" for a Hermes profile, "cli" for another terminal
+    assistant."""
     when = when or _dt.date.today()
     lines = ["", f"# Added on the dashboard grid (A key) {when:%Y-%m-%d}. No voice line = silent.",
              f"[agents.{key}]"]
     lines.append(f"profile = {VE._toml_value(profile)}" if profile else f"target = {VE._toml_value(target or key)}")
+    lines.append(f"kind = {VE._toml_value(kind_for(profile))}")
     lines.append(f"display = {VE._toml_value(display)}")
     lines.append("names = [" + ", ".join(VE._toml_value(n) for n in names) + "]")
     if voice:
         lines.append(f"voice = {VE._toml_value(voice)}")
     return "\n".join(lines) + "\n"
+
+
+def kind_for(profile: Optional[str]) -> str:
+    """The kind a new block is written with: a Hermes profile, or another assistant that runs in a terminal."""
+    return "hermes" if profile else "cli"
 
 
 # ---- what can be added ----------------------------------------------------------------------------
@@ -244,6 +252,8 @@ def add_agent(paths: VE.EditPaths, display: str, names_text: str, voice: Optiona
         got = agents._agent(key, raw)
         if (got.display, got.profile, got.voice, list(got.names)) != (display, profile, voice, names):
             return f"[agents.{key}] reads back as {got.display!r} / {got.profile!r} / {got.voice!r}"
+        if raw.get("kind") != kind_for(profile):
+            return f"[agents.{key}] reads back with kind {raw.get('kind')!r}"
         return ""
 
     res = _write(paths, key, display, "grid:agent", "on the grid", "no", "added", old_text, new_text, check, now=now)

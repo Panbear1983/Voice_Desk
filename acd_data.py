@@ -34,6 +34,7 @@ from typing import Any, Callable, Optional
 
 import agents as A
 import acd_health as H
+import acd_setup
 
 HOME = Path.home()
 REPO = Path(__file__).resolve().parent
@@ -160,6 +161,7 @@ class Paths:
     lights: Optional[Callable] = None      # the Voice Desk's health strip (syshealth.collect), read-only
     mounts: Optional[Callable] = None      # () -> target -> acd_mount.MountView: the session voice goes to (read-only)
     voice_check: Optional[Callable] = None  # () -> VoiceCheck: `voicecfg check`, read-only (None = not checked)
+    windows: Optional[Callable] = None     # () -> the profiles with an open Hermes window, or why herdr could not be asked
 
     @classmethod
     def default(cls) -> "Paths":
@@ -173,7 +175,17 @@ class Paths:
             gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")),
             team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")),
             grid=_grid_default(), lights=_lights_default(), mounts=_mounts_default(),
-            voice_check=_voice_check_default())
+            voice_check=_voice_check_default(), windows=_windows_default())
+
+
+def _windows_default() -> Optional[Callable]:
+    """Which Hermes profiles have a terminal window open: ONE read-only `herdr pane list`, asked only when some
+    column gets the set-up check (acd_setup.py)."""
+    try:
+        import settings as S
+        return acd_setup.windows_reader(S.HERDR_BIN)
+    except Exception:                               # noqa: BLE001  the desk still opens without herdr
+        return None
 
 
 def _mounts_default() -> Optional[Callable]:
@@ -706,6 +718,9 @@ class AgentView:
     voice_places: tuple = ()                          # VoicePlace lines: spoken replies, place by place
     effect: Optional[str] = None                      # a voice effect, for the one voice that has one (Simba)
     wiring: tuple = ()                                # Wire marks: here / not here and the phrase, place by place
+    kind: str = ""                                    # its block's kind in the Voice Desk list ("" = not listed)
+    setup: Any = None                                 # acd_setup.Setup: the set-up check (only for kind = "hermes")
+    call_names: tuple = ()                            # what the voice line answers to (from the Voice Desk list)
 
     @property
     def model_status(self) -> str:
@@ -1350,6 +1365,16 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
     listed_agents = A.agents(agents_cfg) if agents_cfg else []
     keys = {a.profile: a.key for a in listed_agents if a.profile}
     effects = {a.profile: a.effect for a in listed_agents if a.profile and a.effect}
+    by_profile = {a.profile: a for a in listed_agents if a.profile}
+    windows: list = []                              # read once, and only when some column gets the set-up check
+
+    def open_windows() -> Any:
+        if not windows:
+            try:
+                windows.append(paths.windows() if paths.windows is not None else "herdr is not known to the desk")
+            except Exception as e:                  # noqa: BLE001  a failed look must never take the desk down
+                windows.append(str(e)[:120] or type(e).__name__)
+        return windows[0]
     places, wiring = grid_view(paths, agents_cfg, reader, now)
     drifted: dict = {}
     for d in (watch.drifts if watch is not None else ()):
@@ -1363,14 +1388,21 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         name = names[profile]
         r = rules_for(rules, profile)
         role = str(r.get("role") or "")
+        listed_one = by_profile.get(profile)
+        kind = acd_setup.kind_of(listed_one.raw) if listed_one else ""
         try:
             cfg = yaml_loader(paths.profiles / profile / "config.yaml")
             if not isinstance(cfg, dict):
                 raise ValueError("the settings file is not a list of settings")
         except Exception as e:                     # noqa: BLE001  a bad file must never stop the desk
             views.append(AgentView(profile, name, role,
-                                   error=f"the settings file could not be read: {str(e)[:120] or type(e).__name__}"))
+                                   error=f"the settings file could not be read: {str(e)[:120] or type(e).__name__}",
+                                   voice_key=keys.get(profile, ""), kind=kind))
             continue
+        setup = None
+        if listed_one and acd_setup.checked(listed_one.raw):
+            setup = acd_setup.hermes_setup(profile, name, cfg, paths.profiles, platforms=platforms, members=members,
+                                           windows=open_windows(), shortcuts=paths.shortcuts)
         ms = model_set(cfg)
         listed = backups(cfg)
         turns = reader.turns(profile)
@@ -1397,7 +1429,8 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
             in_room=None if in_room is None else profile in in_room,
             health=health, drifts=tuple(drifted.get(profile, ())),
             voice_places=places.get(keys.get(profile, ""), ()), effect=effects.get(profile),
-            wiring=wiring.get(keys.get(profile, ""), ())))
+            wiring=wiring.get(keys.get(profile, ""), ()), kind=kind, setup=setup,
+            call_names=tuple(listed_one.names) if listed_one else ()))
 
     mounts: dict = {}
     if paths.mounts is not None:

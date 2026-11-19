@@ -203,6 +203,31 @@ NEEDS_AGENT = ("Only the Voice Desk list changed. The voice line answers to a ne
                "removed one, after the listener's next restart. No agent's own files were touched.")
 
 
+def setup_report(paths: E.EditPaths, profile: str, display: str, *, loader: Optional[Callable] = None,
+                 windows: Any = None) -> E.Result:
+    """What the new agent's column will show: the Hermes connector's look at the profile's own files (acd_setup.py).
+    Only reads, on an armed desk and a dry run alike; never fails the add it follows."""
+    import acd_setup
+    folder = Path(paths.profiles) / profile
+    try:
+        cfg = (loader or D.hermes_yaml)(folder / "config.yaml")
+    except Exception as exc:                            # noqa: BLE001  a look must never take the desk down
+        cfg = exc
+    if windows is None:
+        windows = acd_setup.open_windows(paths.herdr)
+    found = acd_setup.hermes_setup(profile, display, cfg, paths.profiles,
+                                   platforms=D.read_gateway_platforms(paths.gateway_state),
+                                   members=D.read_members(paths.members) if paths.members else None, windows=windows)
+    gaps = [p.label.lower() for p in found.pieces if p.status == D.RED]
+    blind = [p.label.lower() for p in found.missing if p.status != D.RED]
+    head = (f"What {display}'s column shows, read from the Hermes profile {profile} (nothing in it was changed): "
+            + (f"not set up or not working yet: {', '.join(gaps)}" if gaps else "nothing the desk checks is missing")
+            + (f"; could not be checked: {', '.join(blind)}." if blind else "."))
+    if found.error:
+        head = f"{display}'s settings file could not be read, so its column cannot be filled ({found.error})."
+    return E.Result(True, head, lines=acd_setup.lines(found))
+
+
 def add_agent(paths: E.EditPaths, display: str, names: str, voice: Optional[str], *, profile: Optional[str] = None,
               now: Optional[_dt.datetime] = None) -> E.Result:
     """A new block in the Voice Desk list for a Hermes profile (profile=...) or another terminal assistant."""

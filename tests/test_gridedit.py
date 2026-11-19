@@ -58,6 +58,7 @@ class AddingAnAgent(unittest.TestCase):
         self.assertTrue(res.ok, res.message)
         a = next(x for x in agents.agents(agents.load(self.w.toml)) if x.key == "builder")
         self.assertEqual((a.target, a.display, a.names, a.voice), ("hermes:builder", "Builder", ("builder", "the builder"), None))
+        self.assertEqual(a.raw.get("kind"), "hermes", "the block says which connector reads it")
         self.assertIn("builder", [x.key for x in G.grid_agents(agents.load(self.w.toml))], "a row by itself")
         self.assertIn("silent", res.message)
         self.assertEqual(files_under(self.w.edit.profiles), before_profiles, "no profile file was touched")
@@ -80,7 +81,8 @@ class AddingAnAgent(unittest.TestCase):
         res = GE.add_agent(self.w.edit, "Aider", "aider, ada", "af_heart")
         self.assertTrue(res.ok, res.message)
         raw = agents.load(self.w.toml)["agents"]["aider"]
-        self.assertEqual(raw, {"target": "aider", "display": "Aider", "names": ["aider", "ada"], "voice": "af_heart"})
+        self.assertEqual(raw, {"target": "aider", "kind": "cli", "display": "Aider", "names": ["aider", "ada"],
+                               "voice": "af_heart"})
         self.assertNotIn("chat", self.w.toml.read_text().split("[agents.aider]")[1])
         self.assertIn("cannot talk to it yet", res.message)
 

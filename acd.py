@@ -71,6 +71,7 @@ import acd_edit as E
 import acd_health as H
 import acd_mount as M
 import acd_parity as P
+import acd_setup as S
 import acd_watch as W
 
 REFRESH_SEC = 45
@@ -321,6 +322,68 @@ def last_when(ts: float, now: Optional[float] = None) -> str:
     return then.strftime("%H:%M") if then.date() == today else then.strftime("%-d %b")
 
 
+# ---- the set-up check of a new Hermes agent (acd_setup.py; only blocks that say kind = "hermes") --------------------
+PRESENCE_PIECE = {"terminal": "window", "tg_private": "telegram", "team_room": "team_room", "iphone_voice": "iphone"}
+
+
+def setup_piece(v: D.AgentView, key: str, missing_only: bool = True) -> Optional[S.Piece]:
+    """The set-up check's word on one piece of this column (None = no check here, or, with missing_only, the piece
+    is there: the usual cell stands)."""
+    if v.setup is None or not key:
+        return None
+    got = v.setup.piece(key)
+    if got is None or (missing_only and got.found):
+        return None
+    return got
+
+
+def piece_sentence(p: S.Piece) -> str:
+    return f"{p.label}: {p.words}: {p.why}."
+
+
+def piece_cell(name: str, p: S.Piece, *, setting: str = "", fixed: str = "", more: Optional[list] = None,
+               first: Optional[list] = None) -> Cell:
+    """A cell filled from the set-up check: its light, its few words, and the reason in plain words."""
+    detail = list(first or []) + [piece_sentence(p)] + list(more or [])
+    if not p.found:
+        detail.insert(len(first or []) + 1, f"Found by reading {name}'s own files; nothing in them was changed.")
+    return Cell(p.status, p.words, detail, setting=setting, fixed="" if setting else (fixed or FACT))
+
+
+def silent_cell(name: str, key: str) -> Cell:
+    """An agent in the Voice Desk list with no voice (empty voice = silent): its voice rows say so and stay open to
+    the same pick-lists as everyone else's."""
+    if key == "voice":
+        return Cell(D.GREY, "silent", [f"{name} has no English voice: its English lines stay silent (never another "
+                                       "voice). Enter picks one.", E.NEEDS["voice"]], setting="voice")
+    if key == "voice_zh":
+        return Cell(D.GREY, "silent", [f"{name} has no Chinese voice: a Chinese line stays silent. Enter picks one.",
+                                       E.NEEDS["voice"]], setting="voice_zh")
+    if key == "speed":
+        return Cell(D.GREY, "not set", [f"{name}'s speaking speed: not set (it has no voice yet).", E.NEEDS["voice"]],
+                    setting="speed")
+    return Cell()
+
+
+def names_cell(name: str, call_names: tuple, wiring: tuple, key: str) -> Cell:
+    """What the voice line answers to, with the Voice Desk list's own marks (here / not here, the phrase)."""
+    more = len(call_names) - 1
+    words = (call_names[0] + (f" +{more} more" if more > 0 else "")) if call_names else "none"
+    detail = [f"The voice line wakes {name} when it hears: " + ", ".join(call_names) + "."]
+    if wiring and key:
+        kept = [f"{P.wire_place_name(w.place)}: {w.phrase}" for w in wiring if w.here and w.phrase_stored]
+        away = [P.wire_place_name(w.place) for w in wiring if not w.here and w.here_stored]
+        if kept:
+            detail.append("Stored activation phrases: " + "; ".join(kept) + ".")
+        if away:
+            detail.append("Marked not here at: " + ", ".join(away) + ".")
+        detail.append("The call names themselves are not changed from the desk. Enter marks a place here or "
+                      "not here, or stores an activation phrase.")
+        return Cell(D.GREEN, words, detail, setting=f"wire:{WIRE_ALL}")
+    return Cell(D.GREEN, words, detail,
+                fixed="the call names are kept in the Voice Desk list; the desk shows them and does not change them")
+
+
 def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: Optional[float] = None) -> Cell:
     """One agent's cell on one row: the light, the few words, the full story and what Enter does there."""
     key = row.key
@@ -334,6 +397,9 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
 
     if key == "model":
         if not v.model:
+            got = setup_piece(v, "model")
+            if got is not None:
+                return piece_cell(name, got, fixed=got.why)
             return Cell(D.GREY, "unknown", ["The model could not be read."], fixed="the model could not be read")
         ms = v.model
         detail = [f"{name}'s model is set to {D.model_name(ms.model)}, on {D.service_name(ms.service)}, "
@@ -375,9 +441,16 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         if v.model_locked:
             return Cell(D.GREY if effort == "none" else D.GREEN, words, detail,
                         fixed=f"{name}'s thinking effort is locked with its model")
+        got = setup_piece(v, "effort")
+        if got is not None and effort == "unknown":
+            return piece_cell(name, got, setting="effort", more=[E.NEEDS["effort"]])
         return Cell(D.GREEN, words, detail + [E.NEEDS["effort"]], setting="effort")
 
     if key == "signin":
+        got = setup_piece(v, "signin", missing_only=False)
+        if got is not None and not v.signin_failed and (main is None or main.state == H.UNKNOWN):
+            more = ["The log holds no reply or failure for it yet, so this is what the profile's own files say."]
+            return piece_cell(name, got, fixed=FACT, more=more + _health_lines(main)[1:])
         if main is None:
             if v.signin_failed and v.model:
                 return Cell(D.RED, "could not sign in",
@@ -439,6 +512,10 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
                         fixed=f"{name} has no backups by design")
         lad = D.ladder(v)
         r = lad.rung(rung)
+        empty = setup_piece(v, "ladder")
+        if empty is not None and not any(b.on for b in v.backups):
+            return piece_cell(name, empty, setting=key, more=[f"Enter puts a backup on {E.RUNG_NAME[rung]}.",
+                                                              E.NEEDS["ladder"]])
         if r is None or r.backup is None:
             return Cell(D.GREY, "off", [f"{name} has nothing on {E.RUNG_NAME[rung]}: when the rungs above it fail, "
                                         "this one is skipped.", E.NEEDS["ladder"]],
@@ -494,6 +571,8 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         return languages_cell(name, v) if v.voice else Cell()
 
     if key in ("voice", "voice_zh", "speed", "effect"):
+        if not v.voice and v.voice_key:             # in the Voice Desk list with no voice: silent, and editable
+            return silent_cell(name, key)
         if not v.voice:
             if key == "effect":
                 return Cell()
@@ -543,6 +622,8 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         return place_cell(name, key, v.voice_places, has_voice=bool(v.voice))
 
     if key == "names":
+        if v.setup is not None and v.voice_key:
+            return names_cell(name, v.call_names, v.wiring, v.voice_key)
         return Cell()
 
     if key.startswith("presence:"):
@@ -554,15 +635,25 @@ def agent_cell(row: Row, v: D.AgentView, speed_why: Optional[dict] = None, now: 
         detail = [f"{label}: {state_word(p)}: {p.evidence}."]
         if place in NOT_THE_VOICE_SWITCH:
             detail.insert(0, NOT_THE_VOICE_SWITCH[place].format(name=name))
-        if p.why_not and not p.can_switch:
-            detail.append(p.why_not[0].upper() + p.why_not[1:] + ".")
-        if p.state == D.ON:
+        got = setup_piece(v, PRESENCE_PIECE.get(place, ""), missing_only=False)
+        # the Telegram bot and the window are what the set-up check looks at itself (a token, a connected bot, an
+        # open window: the log only says a reply happened); elsewhere it fills in only where the log knows nothing
+        own = got is not None and (place == "tg_private" or (place == "terminal" and got.status != D.GREY))
+        if got is not None and (own or p.state != D.ON):
+            # the set-up check (acd_setup.py) says what the profile's own files show; the log's line stays below it,
+            # and Enter still opens the same menu as before (the here / not here mark)
+            first = detail[:1] if place in NOT_THE_VOICE_SWITCH else []
+            detail = first + [piece_sentence(got)] + detail[len(first):]
+            words, status = got.words, got.status
+        elif p.state == D.ON:
             words = "in" + (", leads it" if v.room_lead else "") if place == "team_room" else "on"
             status = p.status
         elif p.state == D.OFF:
             words, status = ("out" if place == "team_room" else "off"), (D.RED if p.status == D.RED else D.GREY)
         else:
             words, status = SHORT_UNKNOWN.get(place, "unknown"), D.GREY
+        if p.why_not and not p.can_switch:
+            detail.append(p.why_not[0].upper() + p.why_not[1:] + ".")
         if p.can_switch:
             return Cell(status, words, detail + [E.NEEDS["team_room"]], setting="team_room")
         wire = wire_at(v.wiring, D.WIRE_OF.get(place, ""))
@@ -682,21 +773,7 @@ def other_cell(row: Row, o: D.OtherAssistant) -> Cell:
     if key.startswith("vplace:"):
         return place_cell(o.name, key, o.voice_places)
     if key == "names":
-        more = len(o.call_names) - 1
-        words = (o.call_names[0] + (f" +{more} more" if more > 0 else "")) if o.call_names else "none"
-        detail = [f"The voice line wakes {o.name} when it hears: " + ", ".join(o.call_names) + "."]
-        if o.wiring and o.key:
-            kept = [f"{P.wire_place_name(w.place)}: {w.phrase}" for w in o.wiring if w.here and w.phrase_stored]
-            away = [P.wire_place_name(w.place) for w in o.wiring if not w.here and w.here_stored]
-            if kept:
-                detail.append("Stored activation phrases: " + "; ".join(kept) + ".")
-            if away:
-                detail.append("Marked not here at: " + ", ".join(away) + ".")
-            detail.append("The call names themselves are not changed from the desk. Enter marks a place here or "
-                          "not here, or stores an activation phrase.")
-            return Cell(D.GREEN, words, detail, setting=f"wire:{WIRE_ALL}")
-        return Cell(D.GREEN, words, detail,
-                    fixed="the call names are kept in the Voice Desk list; the desk shows them and does not change them")
+        return names_cell(o.name, o.call_names, o.wiring, o.key)
     if key == "mount":
         return mount_cell(o)
     return Cell()
@@ -2954,11 +3031,41 @@ class Desk(App):
                     Text(f"  voice           {D.voice_label(voice) if voice else 'silent: no voice'}"),
                     Text("  it is           " + (f"the Hermes agent {profile}" if profile
                                                  else "another terminal assistant")),
-                    Text(""), Text(P.NEEDS_AGENT, style=DIM), Text(""), self.dry_line()]
+                    Text(f"  kind            {gridedit.kind_for(profile)}")]
+            if profile:
+                body.append(Text(f"Then the desk reads {profile}'s own settings (only reads) and fills its column: "
+                                 "model, thinking effort, sign-in, backups, Telegram bot, terminal window, Team "
+                                 "Room. Anything missing shows red with the reason.", style=DIM))
+            body += [Text(""), Text(P.NEEDS_AGENT, style=DIM), Text(""), self.dry_line()]
+            loader = self.loader
+
+            def jobs() -> list:
+                out = [lambda: P.add_agent(edit, display, names, voice or None, profile=profile)]
+                if profile:
+                    who = profile
+                    out.append(lambda: P.setup_report(edit, who, display, loader=loader))
+                return out
+
             self.push_screen(
                 NoticePopup(f"Add {display}?", join(body), ask=f"yes, add {display}"),
-                lambda yes: self.run_jobs([lambda: P.add_agent(edit, display, names, voice or None, profile=profile)])
-                if yes else None)
+                lambda yes: self.run_jobs(jobs()) if yes else None)
+
+        def typed_voice(profile: Optional[str], display: str, names: str) -> None:
+            """"other, type it": any voice name in the bank, checked with the same check as every other edit."""
+            draft = P.draft_agent(display, profile)
+
+            def got(text: Optional[str]) -> None:
+                if text is None:
+                    return
+                clean, why = E.check_typed_voice(draft, "voice", text.strip()) if text.strip() else ("", "")
+                if why:
+                    self.push_screen(NoticePopup("Add an agent", Text(f"Not that voice: {why} Nothing was added.")))
+                    return
+                confirm(profile, display, names, clean)
+
+            self.push_screen(AskPopup(f"{display}: type its English voice",
+                                      "Any voice name in the bank, for example af_heart or en-US-AvaNeural. Empty = "
+                                      "silent."), got)
 
         def ask_voice(profile: Optional[str], display: str, names: str) -> None:
             try:
@@ -2967,12 +3074,23 @@ class Desk(App):
             except Exception as exc:                     # noqa: BLE001
                 self.push_screen(NoticePopup("Add an agent", Text(f"The voices could not be listed ({exc}).")))
                 return
-            voices = [(tok or SILENT, label) for tok, label, _cur, off in options if not off and tok != E.OTHER_VOICE]
+            # the same pick-list as every other agent's voice: Kokoro first, Microsoft below, silent, other
+            voices = [(tok or SILENT, label) for tok, label, _cur, off in options if not off]
             if not any(tok == SILENT for tok, _ in voices):
-                voices.append((SILENT, "silent: no voice"))
+                voices.insert(next((i for i, (t, _) in enumerate(voices) if t == E.OTHER_VOICE), len(voices)),
+                              (SILENT, "silent: no voice"))
+
+            def picked(tok: Optional[str]) -> None:
+                if not tok:
+                    return
+                if tok == E.OTHER_VOICE:
+                    typed_voice(profile, display, names)
+                    return
+                confirm(profile, display, names, "" if tok == SILENT else tok)
+
             self.push_screen(PickPopup(f"{display}: its English voice", voices,
                                        note="One voice, silent if it fails. A Chinese voice can be added later in its column."),
-                             lambda tok: confirm(profile, display, names, "" if tok == SILENT else tok) if tok else None)
+                             picked)
 
         def ask_names(profile: Optional[str], display: str) -> None:
             self.push_screen(AskPopup(f"{display}: what it answers to",

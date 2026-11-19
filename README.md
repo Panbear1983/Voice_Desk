@@ -79,6 +79,11 @@ read the whole team at a glance, and Enter on a cell opens a small menu of the c
 - **It never restarts anything on its own.** When a change needs an agent restarted, the desk says so and waits.
 - **It tells you when the settings lie.** If something else changed a setting, or an agent has quietly been
   answering on a backup, the cell turns red or a banner appears.
+- **A new agent arrives filled in.** <kbd>n</kbd> adds a Hermes profile by the name it was created with. Its block
+  in `agents.toml` says `kind = "hermes"` (another terminal assistant gets `kind = "cli"`), and the desk then reads
+  that profile's own files, read-only, to fill its column: model, thinking effort, sign-in, backups, Telegram bot
+  (is a token there, is the bot connected), terminal window, Team Room, Siri shortcut. Anything missing is red,
+  "not set up", with the reason. No token value is ever shown or kept, and no Telegram call is made.
 
 ```bash
 ./acd.sh            # look, and try changes as dry runs
