@@ -84,6 +84,13 @@ read the whole team at a glance, and Enter on a cell opens a small menu of the c
   that profile's own files, read-only, to fill its column: model, thinking effort, sign-in, backups, Telegram bot
   (is a token there, is the bot connected), terminal window, Team Room, Siri shortcut. Anything missing is red,
   "not set up", with the reason. No token value is ever shown or kept, and no Telegram call is made.
+- **Telegram groups get a row each.** <kbd>g</kbd> adds a group row by hand: its name and its ID, typed once
+  (groups the agents' logs have seen are offered, never added by themselves). The desk then asks Telegram, with
+  each agent's own bot and `getChatMember` only, whether that bot is in the group: green it is and the gateway has
+  it connected, red it is not or it is not confirmed (with which bot to add, then <kbd>c</kbd>), blank marked "not
+  in this group". Each cell also shows that agent's voice mode there (Off, Voice-back, Always). The rows live only
+  in the desk's own settings file on the Mac (`docs/tg_groups.example.json` shows the shape with made-up IDs).
+  Removing a row takes it off the desk only; no bot ever leaves a group.
 
 ```bash
 ./acd.sh            # look, and try changes as dry runs

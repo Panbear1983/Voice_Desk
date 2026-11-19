@@ -162,6 +162,7 @@ class Paths:
     mounts: Optional[Callable] = None      # () -> target -> acd_mount.MountView: the session voice goes to (read-only)
     voice_check: Optional[Callable] = None  # () -> VoiceCheck: `voicecfg check`, read-only (None = not checked)
     windows: Optional[Callable] = None     # () -> the profiles with an open Hermes window, or why herdr could not be asked
+    groups: Optional[Path] = None          # the desk's own Telegram group rows (acd_groups.py), read-only here
 
     @classmethod
     def default(cls) -> "Paths":
@@ -175,7 +176,16 @@ class Paths:
             gateway_state=Path(env("ACD_GATEWAY_STATE", HOME / ".hermes/gateway_state.json")),
             team_room_code=Path(env("ACD_TEAM_ROOM_CODE", HOME / "GitHub/Team_Room/team_room.py")),
             grid=_grid_default(), lights=_lights_default(), mounts=_mounts_default(),
-            voice_check=_voice_check_default(), windows=_windows_default())
+            voice_check=_voice_check_default(), windows=_windows_default(), groups=_groups_default())
+
+
+def _groups_default() -> Optional[Path]:
+    """The desk's own settings file of hand-added Telegram group rows, in the desk's own folder (ACD_STATE)."""
+    try:
+        import settings as S
+        return Path(os.environ.get("ACD_STATE", S.STATE_DIR / "acd")) / "tg_groups.json"
+    except Exception:                               # noqa: BLE001  the desk still opens without its own folder
+        return None
 
 
 def _windows_default() -> Optional[Callable]:
@@ -910,7 +920,55 @@ class Snapshot:
     lights: tuple = ()                                # the Voice Desk's health strip: (ok, label, detail)
     allowance_read: bool = False                      # the usage check has been run at least once
     voice_check: Optional[VoiceCheck] = None          # `voicecfg check`: None = not checked
+    groups: tuple = ()                                # GroupView rows: the hand-added Telegram groups (acd_groups.py)
 
+
+@dataclass(frozen=True)
+class GroupView:
+    """One hand-added Telegram group row, as the desk shows it (acd_groups.py). Read-only."""
+    id: str
+    name: str
+    team: bool = False                                # the Team Room's own group (the old single row moved into it)
+    marks: dict = field(default_factory=dict)         # profile -> True in this group / False blank (not in it)
+    modes: dict = field(default_factory=dict)         # profile -> gridstate.Cell: the gateway's voice mode there
+    connected: dict = field(default_factory=dict)     # profile -> its bot connected (True / False), None = not known
+    checks: dict = field(default_factory=dict)        # profile -> acd_groups.Check: Telegram's last answer (in memory)
+
+
+def group_views(paths: "Paths", profiles: list[str], platforms: Optional[dict], problems: list[str]) -> tuple:
+    """The hand-added Telegram group rows with each agent's voice mode there and whether its bot is connected.
+    Only reads the desk's own group list, the gateway's voice-mode file and its status file."""
+    if paths.groups is None:
+        return ()
+    import acd_groups
+    rows, why = acd_groups.read_groups(paths.groups)
+    if why:
+        problems.append(why)
+    if not rows:
+        return ()
+    modes_raw: Optional[dict] = None
+    if paths.grid is not None:
+        try:
+            got = json.loads(Path(paths.grid.voice_mode_file).read_text(encoding="utf-8-sig"))
+            modes_raw = got if isinstance(got, dict) else {}
+        except FileNotFoundError:
+            modes_raw = {}
+        except (OSError, ValueError):
+            modes_raw = None
+    out = []
+    for g in rows:
+        modes, connected = {}, {}
+        for p in profiles:
+            if paths.grid is not None and modes_raw is not None:
+                cell = acd_groups.mode_cell(p, g.id, paths.grid, modes_raw)
+                if cell is not None:
+                    modes[p] = cell
+            if platforms is None:
+                connected[p] = None
+            else:
+                connected[p] = str(_as_dict(platforms.get(f"{p}:telegram")).get("state") or "") == "connected"
+        out.append(GroupView(g.id, g.name, g.team, dict(g.marks), modes, connected))
+    return tuple(out)
 
 # ---- small readers ---------------------------------------------------------------------------------------
 def hermes_yaml(path: Path) -> Any:
@@ -1457,6 +1515,7 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
         saved = str(members.get("saved") or "")[:10]
         room = f"{lead} leads the Team Room. {len(members['members'])} members saved{' ' + saved if saved else ''}."
     views_t = tuple(views)
+    groups = group_views(paths, profiles, platforms, problems)
     vcheck: Optional[VoiceCheck] = None
     if paths.voice_check is not None:
         try:
@@ -1471,7 +1530,7 @@ def collect(paths: Paths, reader: Optional[LogReader] = None, yaml_loader: Calla
                     watch_mode=watch.mode if watch is not None else "",
                     watch_paused=bool(watch.paused) if watch is not None else False,
                     watch_notes=tuple(watch.notes) if watch is not None else (),
-                    lights=lights, allowance_read=usage is not None and bool(usage), voice_check=vcheck)
+                    lights=lights, allowance_read=usage is not None and bool(usage), voice_check=vcheck, groups=groups)
 
 
 def _count(n: int, one: str, many: str) -> str:

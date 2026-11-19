@@ -123,11 +123,17 @@ def plan_hermes_terminal(agent: agents.Agent, token: str, p: G.Paths) -> tuple[l
 
 
 def plan_tg_dm(agent: agents.Agent, token: str, p: G.Paths) -> tuple[list[dict], str]:
+    return plan_tg_chat(str(agent.profile), token, p, p.tg_dm_chat, "a Telegram direct chat")
+
+
+def plan_tg_chat(profile: str, token: str, p: G.Paths, chat: str, what: str = "a Telegram chat") -> tuple[list[dict], str]:
+    """One agent's bot in one Telegram chat (a private chat or a group): the gateway's own /voice mode for that
+    (bot, chat) pair, "<profile>:telegram:<chat id>" in the gateway's one voice-mode file."""
     mode = G.CELL_TO_VOICE_MODE.get(token)
     if mode is None:
-        raise onoff.SwitchError("a Telegram direct chat has Off, Voice-back and Always")
+        raise onoff.SwitchError(f"{what} has Off, Voice-back and Always")
     path = Path(p.voice_mode_file)                       # THE gateway's file; never a profile's stray copy
-    key = f"{agent.profile}:telegram:{p.tg_dm_chat}"
+    key = f"{profile}:telegram:{chat}"
     if "." in key:
         raise onoff.SwitchError(f"{key!r} cannot be written safely")
     create = not path.exists()

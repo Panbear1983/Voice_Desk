@@ -1,0 +1,23 @@
+{
+ "version": 1,
+ "groups": [
+  {
+   "id": "-1001000000001",
+   "name": "Example family group",
+   "team": false,
+   "in": {
+    "assistant": false,
+    "orchestrator": true
+   }
+  },
+  {
+   "id": "-1001000000002",
+   "name": "Example team group",
+   "team": true,
+   "in": {
+    "assistant": true,
+    "orchestrator": true
+   }
+  }
+ ]
+}

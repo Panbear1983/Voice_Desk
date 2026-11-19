@@ -635,7 +635,7 @@ class TheTable(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(200, 60)) as pilot:
             await pilot.pause()
             keys = {b.key for b in app.BINDINGS} | {b.key for b in acd.TableScreen.BINDINGS}
-            self.assertEqual(keys, {"q", "c", "u", "r", "p", "t", "l", "n", "d", "s"})
+            self.assertEqual(keys, {"q", "c", "u", "r", "p", "t", "l", "n", "d", "s", "g"})     # g: a Telegram group row
             self.assertFalse(hasattr(acd, "TreeScreen"))                        # the tree is gone
             self.assertFalse(hasattr(acd, "GridScreen"))
 

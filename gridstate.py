@@ -330,8 +330,14 @@ def tg_dm_cell(a: agents.Agent, p: Paths) -> Cell:
 
 
 def _tg_dm_reading(a: agents.Agent, p: Paths) -> Cell:
-    key = f"{a.profile}:telegram:{p.tg_dm_chat}"
-    modes = _read_json(p.voice_mode_file) or {}
+    return tg_chat_reading(str(a.profile), p, p.tg_dm_chat)
+
+
+def tg_chat_reading(profile: str, p: Paths, chat: str, modes: Optional[dict] = None) -> Cell:
+    """The Hermes gateway's own voice mode of one agent's bot in one Telegram chat (a private chat or a group: the
+    gateway keys it "<profile>:telegram:<chat id>"). modes: gateway_voice_mode.json already read (None = read it)."""
+    key = f"{profile}:telegram:{chat}"
+    modes = (_read_json(p.voice_mode_file) or {}) if modes is None else modes
     mode = modes.get(key)
     if mode in _VOICE_MODE_TO_CELL:
         import hermes_patches
@@ -340,15 +346,15 @@ def _tg_dm_reading(a: agents.Agent, p: Paths) -> Cell:
                hermes_patches.PENDING: "the gateway has the live re-read on disk but has not restarted yet, so it reads this only when it starts",
                }.get(live, "read only when the gateway starts")
         return Cell(_VOICE_MODE_TO_CELL[mode], f"gateway_voice_mode.json says {mode} ({how})")
-    ok, auto = _yaml_value(p.profiles, a.profile, "voice.auto_tts")
+    ok, auto = _yaml_value(p.profiles, profile, "voice.auto_tts")
     if auto is True:
         return Cell(ALWAYS, "no saved chat mode, so voice.auto_tts: true decides (a chat mode, once set, wins)")
     if ok:
         return Cell(OFF, "no saved chat mode and voice.auto_tts is not true")
-    if (Path(p.profiles) / a.profile / "config.yaml").exists():
+    if (Path(p.profiles) / profile / "config.yaml").exists():
         # Hermes' own default (gateway/run_voice.py: voice.auto_tts defaults to false)
         return Cell(OFF, "no saved chat mode and no voice.auto_tts in the profile, so Hermes' default decides: text only")
-    return Cell(UNKNOWN, f"cannot read voice.auto_tts for {a.profile}")
+    return Cell(UNKNOWN, f"cannot read voice.auto_tts for {profile}")
 
 
 def simba_group_cell(p: Paths) -> Cell:

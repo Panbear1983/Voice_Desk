@@ -100,13 +100,13 @@ def _missing(key: str, label: str, why: str, words: str = NOT_SET_UP) -> Piece:
 _ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 
 
-def env_has(path: Path, name: str) -> Optional[bool]:
-    """True when the .env file has `name` with a value, False when it has not, None when it cannot be read. ONLY the
-    yes / no leaves this function: the value itself is never returned, kept or put into any message."""
+def env_value(path: Path, name: str) -> Optional[str]:
+    """The value of `name` in a .env file ("" = not there or empty, None = the file cannot be read). Only for the one
+    caller that must hand a bot's token to Telegram itself (acd_groups.py): it is never kept, shown or logged."""
     try:
         text = Path(path).read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
-        return False
+        return ""
     except OSError:
         return None
     for ln in text.splitlines():
@@ -118,8 +118,15 @@ def env_has(path: Path, name: str) -> Optional[bool]:
             else:
                 value = re.split(r"(?:^|\s)#", value, maxsplit=1)[0]
             if value.strip():
-                return True
-    return False
+                return value.strip()
+    return ""
+
+
+def env_has(path: Path, name: str) -> Optional[bool]:
+    """True when the .env file has `name` with a value, False when it has not, None when it cannot be read. ONLY the
+    yes / no leaves this function: the value itself is never returned, kept or put into any message."""
+    value = env_value(path, name)
+    return None if value is None else bool(value)
 
 
 def read_json(path: Path) -> Optional[dict]:

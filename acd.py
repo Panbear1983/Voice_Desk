@@ -23,6 +23,8 @@ blue a temporary override, red failed or changed behind the desk's back, grey of
   t  silent voice test (one agent or everyone; made to files and checked, never played)
   l  the listener: what the voice line is doing, mute / hush / new conversation / restart / stop
   n  add an agent to the Voice Desk list      d  remove one (shows exactly what goes, asks first)
+  g  add a Telegram group row (its name and ID; the desk then asks Telegram, with each agent's own bot, who is in
+     it: acd_groups.py). Enter on a group row's name: check again, mark it as the Team Room's group, or take it off.
   (plain lower-case letters, no Shift; the hint line on screen shows them the same way)
 
 The strip under the table tells the whole story of the chosen cell: allowance numbers and reset times, why a
@@ -40,7 +42,8 @@ the table names the columns (and sections) that are off screen.
 It is an overseer, never a lifeline: it reads gently (ONE background read every 45 seconds for all agents),
 every change goes through acd_edit.py (backup, atomic write, read back, auto-restore, history, undo), it never
 restarts anything itself (r only leaves a request for the existing restart helper), and it never sends anything
-to Telegram.
+to Telegram. The one thing it ASKS Telegram is getChatMember, for the hand-added group rows only (at the start, on
+c, and on Enter in a group row), each agent asked with its own bot; the token is never kept or shown.
 """
 from __future__ import annotations
 
@@ -68,6 +71,7 @@ import agents as A
 import gridedit
 import acd_data as D
 import acd_edit as E
+import acd_groups as TG
 import acd_health as H
 import acd_mount as M
 import acd_parity as P
@@ -176,6 +180,7 @@ class Row:
     key: str                        # "model", "rung:codex", "vplace:tg_dm", "presence:team_room", "talk:answers" ...
     label: str
     section: bool = False
+    group: Any = field(default=None, compare=False)     # a Telegram group row: its D.GroupView (acd_groups.py)
 
 
 @dataclass
@@ -257,12 +262,18 @@ def rows_of(snap: Optional[D.Snapshot]) -> list[Row]:
         rows.append(Row("effect", "Voice effect"))
     if any(has_languages(c) for c in columns_of(snap)):
         rows.append(Row("languages", LANG_ROW))
-    rows += [Row(f"vplace:{key}", label) for key, label in VPLACE_ROW]
+    groups = tuple(snap.groups) if snap else ()
+    team_row = any(g.team for g in groups)
+    # the Team Room's group, once it has a row of its own, carries the old "Speaks in Telegram group" switch
+    rows += [Row(f"vplace:{key}", label) for key, label in VPLACE_ROW if not (team_row and key == "tg_group")]
     rows.append(Row("names", "Answers to (call names)"))
     if any(getattr(o, "mount", None) is not None for o in (snap.others if snap else ())):
         rows.append(Row("mount", "Mounted session"))
     rows.append(Row("section:presence", SECTIONS[3], True))
-    rows += [Row(f"presence:{key}", PLACE_ROW.get(key, name)) for key, name in D.PLACES]
+    for key, name in D.PLACES:
+        rows.append(Row(f"presence:{key}", PLACE_ROW.get(key, name)))
+        if key == "tg_group":                   # the hand-added Telegram groups, one row each, right below it
+            rows += [Row(group_key(g.id), group_label(g), group=g) for g in groups]
     rows.append(Row("section:talk", SECTIONS[4], True))
     rows += [Row(f"talk:{key}", label) for key, label in TALK_ROW]
     return rows
@@ -820,10 +831,102 @@ def mount_cell(o: D.OtherAssistant) -> Cell:
 ROOM_HEADING = "The Team Room (all agents)"      # the note after it is about the room, not the chosen agent
 
 
+# ---- the hand-added Telegram group rows (acd_groups.py) -----------------------------------------------------------
+GROUP_ROW = "tggroup:"
+MODE_SPLIT = " · "                              # "member · Always": the light is the membership, the word after it the mode
+
+
+def group_key(gid: str) -> str:
+    return GROUP_ROW + gid
+
+
+def group_label(g: D.GroupView) -> str:
+    return f"Telegram group: {g.name}" + (" (Team Room)" if g.team else "")
+
+
+def group_of(snap: Optional[D.Snapshot], gid: str) -> Optional[D.GroupView]:
+    return next((g for g in (snap.groups if snap else ()) if g.id == gid), None)
+
+
+def group_mode(g: D.GroupView, v: D.AgentView) -> tuple[str, str, bool, str]:
+    """(the voice mode in a word, one sentence about it, can it be switched here, why not). The Team Room's group:
+    the old single row's own switch (the Team Room's voice notes); any other group: the Hermes gateway's own
+    per-chat mode of this agent's bot there."""
+    if g.team:
+        p = next((x for x in v.voice_places if x.key == "tg_group"), None)
+        if p is None:
+            return "", f"{v.name} has no voice in the Voice Desk list, so the group's voice notes do not apply.", \
+                False, f"{v.name} has no voice in the Voice Desk list"
+        why = "" if p.can_switch else (D.plain_why(p.why_not) if p.why_not else "there is no switch for it here")
+        return p.value, (f"Voice in this group: {p.value} (the Team Room's voice notes, the same switch as the old row "
+                         f"\"{VOICE_ROW['tg_group']}\"; {p.note})."), p.can_switch, why
+    cell = g.modes.get(v.profile)
+    if cell is None:
+        return "", "Voice in this group: not known (the gateway's voice-mode file could not be read).", False, \
+            "the gateway's voice-mode file could not be read"
+    import gridstate as G
+    off = TG.hands_off(v.profile)
+    return G.LABEL.get(cell.value, cell.value), (f"Voice in this group: {G.LABEL.get(cell.value, cell.value)} "
+                                                 f"({D.plain_why(cell.note)})."), not off, off
+
+
+def group_hint(name: str, g: D.GroupView, chk: Any) -> str:
+    if chk.state == TG.NOT_MEMBER:
+        bot = f" @{chk.bot}" if chk.bot else ""
+        return (f"What to do: in Telegram, add {name}'s bot{bot} (the bot of {name}'s Telegram private chat) to "
+                f"\"{g.name}\"; only a person can add a bot. Then press c to check again.")
+    if chk.state == TG.NO_TOKEN:
+        return (f"What to do: {name} needs a Telegram bot of its own first (the row \"Telegram private chat\"), or "
+                "Enter marks it not in this group.")
+    return "Press c to check again."
+
+
+def group_cell(g: D.GroupView, col: Any) -> Cell:
+    """One agent in one hand-added Telegram group: green its bot is in the group and connected, red not a member or
+    not confirmed (the reason and what to do), blank marked not in this group. The word after the dot is the voice
+    mode there; the light is only about membership."""
+    if not is_agent(col):                       # Claude, Gemini, Codex: no Telegram bot of their own
+        return Cell()
+    v, name = col, col.name
+    setting = group_key(g.id)
+    where = f"the Telegram group \"{g.name}\""
+    if not g.marks.get(v.profile):
+        return Cell(None, "", [f"{name} is marked not in {where}: a mark on the desk only (nothing in Telegram "
+                               "changes)", "Enter marks it in this group; the desk then asks Telegram whether its "
+                               "bot is there"], setting=setting)
+    mode, mode_said, _can, _why = group_mode(g, v)
+    chk = g.checks.get(v.profile)
+    conn = g.connected.get(v.profile)
+    detail: list = []
+    if chk is None or chk.state == TG.NO_TELEGRAM:
+        status, words = D.GREY, "not checked"
+        detail.append(f"Not checked yet whether {name}'s bot is in {where}: c asks Telegram"
+                      + (f" ({chk.why})" if chk is not None else ""))
+    elif chk.state == TG.MEMBER and conn:
+        status, words = D.GREEN, "member"
+        detail.append(f"{chk.why} ({where}), and the Hermes gateway has {name}'s bot connected: it answers there")
+    elif chk.state == TG.MEMBER:
+        status, words = D.RED, "member, not connected" if conn is False else "member, not confirmed"
+        detail.append(f"{chk.why} ({where}), but " + (
+            f"the Hermes gateway has not connected {name}'s bot, so it does not answer there yet (the gateway picks "
+            "up a bot when it starts)" if conn is False else
+            "the gateway's status file could not be read, so it is not confirmed that it answers there"))
+    else:
+        status, words = D.RED, chk.words
+        detail += [chk.why[:1].upper() + chk.why[1:], group_hint(name, g, chk)]
+    detail.append(mode_said)
+    if chk is not None and chk.at and chk.state != TG.NO_TELEGRAM:
+        detail.append(f"Asked Telegram {when(chk.at)}")
+    detail.append("The light is only about the bot being in the group; the voice mode is separate")
+    return Cell(status, words + (MODE_SPLIT + mode if mode else ""), detail, setting=setting, short=words)
+
+
 def cell_of(row: Row, col: Any, speed_why: Optional[dict] = None, room_note: str = "",
             now: Optional[float] = None) -> Cell:
     if row.section:
         return Cell()
+    if row.key.startswith(GROUP_ROW):
+        return group_cell(row.group, col) if row.group is not None else Cell()
     if row.key == "mount" and is_agent(col):        # Hermes agents have their own windows; this row is the three's
         return Cell()
     cell = agent_cell(row, col, speed_why, now) if is_agent(col) else other_cell(row, col)
@@ -846,7 +949,7 @@ def column_story(snap: D.Snapshot, col: Any, speed_why: Optional[dict] = None) -
             out.append(row.label)
             continue
         cell = cell_of(row, col, speed_why, snap.room_note, snap.read_at)
-        if cell.blank:
+        if cell.blank and not cell.setting:
             continue
         out.append(f"{row.label}: {cell_text(cell).plain}")
         out.append("    " + strip_text(row, col, cell, 10_000).plain)
@@ -897,12 +1000,19 @@ def strip_text(row: Row, col: Any, cell: Cell, width: int = 120, armed: bool = F
         t.append(row.label, style=f"bold {COLOUR[D.BLUE]}")
         return t
     if col is None:
-        t.append(row.label + ", every agent: ", style=f"bold {COLOUR[D.BLUE]}")
+        t.append(row.label + (": " if row.key.startswith(GROUP_ROW) else ", every agent: "),
+                 style=f"bold {COLOUR[D.BLUE]}")
+        if row.key.startswith(GROUP_ROW) and row.group is not None:
+            g = row.group
+            t.append(f"the hand-added Telegram group {g.id}" + (", the Team Room's own group" if g.team else "")
+                     + ". Enter: check every agent's bot again, mark it as the Team Room's group, or take the row off "
+                       "the desk (no bot leaves the group).")
+            return t
         t.append("Enter opens the same choices and applies one of them to every agent it applies to, after one "
                  "confirmation that lists each agent's before and after.")
         return t
     head = f"{col.name}, {row.label.strip()}: "
-    if cell.blank:
+    if cell.blank and not cell.setting:
         t.append(head, style=f"bold {COLOUR[D.BLUE]}")
         t.append("Nothing to change here: this row does not apply to " + col.name + "." if nudge else
                  "this row does not apply here.", style=COLOUR[D.YELLOW] if nudge else DIM)
@@ -1655,15 +1765,16 @@ _SHARED_KEYS = [Binding("t", "app.voice_test", "voice test", show=False),
                 Binding("n", "app.add_agent", "add an agent", show=False),
                 Binding("d", "app.remove_agent", "remove an agent", show=False),
                 Binding("s", "app.standard_ladder", "the standard ladder", show=False),
-                Binding("c", "app.reread", "read again", show=False), Binding("q", "app.quit", "close", show=False),
+                Binding("c", "app.check_again", "read again", show=False), Binding("q", "app.quit", "close", show=False),
+                Binding("g", "app.add_group", "add a Telegram group row", show=False),
                 Binding("u", "app.undo", "undo", show=False), Binding("r", "app.restart_review", "restart", show=False),
                 Binding("p", "app.pause_watcher", "pause the watcher", show=False)]
 
 # The letters are shown the way they are typed: plain lower-case keys, no Shift. Shown item by item, so a narrow
 # window breaks the line between two keys and never cuts one off.
 TABLE_KEYS = ("arrows move cell to cell", "Enter open the choices (on a row's name: for every agent)",
-              "s standard ladder", "t voice test", "l listener", "n add", "d remove", "u undo", "r restart review",
-              "p pause watcher", "c read again", "q close")
+              "s standard ladder", "t voice test", "l listener", "n add", "d remove", "g add Telegram group",
+              "u undo", "r restart review", "p pause watcher", "c read again", "q close")
 EDGE_WORDS = {"down": "that is the last row: nothing is below it", "up": "that is the first row: nothing is above it",
               "left": "that is the first column: the row names", "right": "that is the last column"}
 LABEL_WIDTH = 28
@@ -1995,7 +2106,7 @@ class TableScreen(Screen):
             return
         if col is None:
             self.app.open_row(row, self.cell_anchor())
-        elif cell is None or cell.blank or not cell.setting:
+        elif cell is None or not cell.setting:
             self.show_strip(nudge=True)                  # the strip's own last sentence lights up: said once
         else:
             self.app.open_cell(row, col, cell, self.cell_anchor())
@@ -2035,18 +2146,24 @@ class Desk(App):
     """The Agent Control Desk. `collector` returns a Snapshot; tests pass their own, plus their own EditPaths."""
     TITLE = "Agent Control Desk"
     CSS = "Screen { background: #0d1117; color: #e6edf3; }"
-    BINDINGS = [Binding("q", "quit", "close"), Binding("c", "reread", "read again")]
+    BINDINGS = [Binding("q", "quit", "close"), Binding("c", "check_again", "read again")]
 
     def __init__(self, collector: Optional[Callable[[], D.Snapshot]] = None, autostart: bool = True,
                  edit: Optional[E.EditPaths] = None, loader: Optional[E.Loader] = None,
                  tester: Optional[Callable[[A.Agent, str, str], tuple[bool, str]]] = E.real_voice_test,
                  launcher_armed: bool = False, runner: Optional[Callable[[list], tuple]] = None,
                  usage: Optional[H.UsageReader] = None, watching: bool = True, listener: Any = None,
-                 synth: Optional[Callable] = None, probe: Optional[Callable] = None) -> None:
+                 synth: Optional[Callable] = None, probe: Optional[Callable] = None,
+                 telegram: Optional[Callable] = None) -> None:
         super().__init__()
         # the voice line's own plumbing. A desk built with its own collector (a test, a picture) gets none unless
         # it is handed one, so it can never reach the real listener by accident.
         self.listener_svc = listener if listener is not None else (P.RealListener() if collector is None else None)
+        # the one door to Telegram (getChatMember only, for the group rows): the same rule, so a test desk never
+        # reaches the real Telegram by accident
+        self.telegram = telegram if telegram is not None else (TG.telegram_ask if collector is None else None)
+        self.group_checks: dict = {}                             # (group ID, profile) -> acd_groups.Check, in memory
+        self.groups_asked = False                                # the one look at the start has been made
         self.listener_now: Optional[P.ListenerView] = None
         self.synth, self.probe = synth, probe                    # tests pass a fake voice maker
         self.runner = runner                                     # tests pass a fake Team Room command
@@ -2177,12 +2294,69 @@ class Desk(App):
                                                                          "showing the last good one"))
 
     def apply_snapshot(self, snap: D.Snapshot) -> None:
+        snap = self.with_checks(snap)
         self.snapshot = snap
         for screen in self.screen_stack:
             if isinstance(screen, TableScreen):
                 screen.show(snap)
         if self.usage is not None and self.autostart and self.usage.due(self.usage_services()):
             self.read_usage_in_background()
+        if self.autostart and not self.groups_asked and snap.groups and self.telegram is not None:
+            self.groups_asked = True                     # ONE look at the start; after that only c and Enter ask
+            self.check_groups_in_background()
+
+    # -- the Telegram group rows: Telegram's answers are kept in memory and laid on every fresh read -----------------
+    def with_checks(self, snap: Optional[D.Snapshot]) -> Optional[D.Snapshot]:
+        if snap is None or not snap.groups:
+            return snap
+        rows = tuple(dataclasses.replace(g, checks={p: c for (gid, p), c in self.group_checks.items() if gid == g.id})
+                     for g in snap.groups)
+        return dataclasses.replace(snap, groups=rows)
+
+    def check_groups(self, gids: Optional[list] = None, profiles: Optional[list] = None) -> list[str]:
+        """Ask Telegram about each agent marked in each group (or only these agents), with each agent's own bot.
+        The answers are kept in memory. Returns one line per answer ("+ member" / "- anything else")."""
+        snap = self.snapshot
+        names = {v.profile: v.name for v in (snap.agents if snap else ())}
+        out: list[str] = []
+        for g in (snap.groups if snap else ()):
+            if gids is not None and g.id not in gids:
+                continue
+            who = [p for p in (profiles if profiles is not None else [p for p, on in g.marks.items() if on])
+                   if p in names]
+            got = TG.check_group(g.id, who, self.edit.profiles, self.telegram)
+            for p, c in got.items():
+                self.group_checks[(g.id, p)] = c
+                out.append(("+ " if c.state == TG.MEMBER else "- ") + f"{g.name}: {names.get(p, p)}: {c.words}, "
+                           + c.why)
+        return out
+
+    def check_job(self, gids: Optional[list] = None, profiles: Optional[list] = None) -> E.Result:
+        """The check as a job for run_jobs: Telegram is asked, nothing is written."""
+        lines = self.check_groups(gids, profiles)
+        if self.telegram is None:
+            return E.Result(False, "Not checked: this desk was not given a way to ask Telegram.", lines=lines)
+        n = len(lines)
+        return E.Result(True, f"Asked Telegram about {n} bot{'s' if n != 1 else ''} (getChatMember, with each agent's "
+                              "own bot). Nothing was changed or written.", lines=lines)
+
+    @work(thread=True, exclusive=True, group="acd-tg-check")
+    def check_groups_in_background(self) -> None:
+        try:
+            self.check_groups()
+        except Exception:                                # noqa: BLE001  a failed look must never take the desk down
+            pass
+        self.call_from_thread(self.redraw_checks)
+
+    def redraw_checks(self) -> None:
+        if self.snapshot is not None:
+            self.apply_snapshot(self.snapshot)
+
+    def action_check_again(self) -> None:
+        """c: read every file again now, and ask Telegram again about the group rows."""
+        self.action_reread()
+        if self.telegram is not None and self.snapshot is not None and self.snapshot.groups:
+            self.check_groups_in_background()
 
     # -- changing a setting ------------------------------------------------------------------------------------
     def voice_agent(self, v) -> tuple[Optional[A.Agent], dict]:
@@ -2227,6 +2401,8 @@ class Desk(App):
             return self.spec_wire(col, setting.split(":", 1)[1])
         if setting == "mount":
             return self.spec_mount(col)
+        if setting.startswith(GROUP_ROW):
+            return self.spec_group(col, setting[len(GROUP_ROW):])
         if setting == "languages":
             return self.spec_languages(col)
         build = {"model": self.spec_model, "effort": self.spec_effort, "extras": self.spec_extras,
@@ -2590,6 +2766,11 @@ class Desk(App):
         screen = self.table_screen()
         if screen is None:
             return
+        if row.key.startswith(GROUP_ROW):                # a Telegram group row's name: the row's own menu
+            spec = self.spec_group_row(row.key[len(GROUP_ROW):])
+            self.push_screen(CellMenu(spec, anchor, dry=not self.is_armed),
+                             lambda token: self.run_jobs(spec.jobs(token)) if token is not None else None)
+            return
         specs: list[tuple[Any, Spec]] = []
         skipped: list[tuple[str, str]] = []
         for col in screen.cols:
@@ -2646,6 +2827,219 @@ class Desk(App):
                              "agent's before and after.", needs=specs[0][1].needs)
         self.push_screen(CellMenu(combined, anchor, dry=not self.is_armed),
                          lambda token: self.run_jobs(combined.jobs(token)) if token is not None else None)
+
+    # -- the hand-added Telegram group rows (acd_groups.py) -------------------------------------------------------------
+    def group_names(self) -> dict:
+        return {v.profile: v.name for v in (self.snapshot.agents if self.snapshot else ())}
+
+    def spec_group(self, v: Any, gid: str) -> Spec:
+        """One agent in one Telegram group: its voice mode there, mark it in or not in the group (blank), or ask
+        Telegram again about its bot."""
+        edit, names = self.edit, self.group_names()
+        g = group_of(self.snapshot, gid)
+        title = f"{v.name}: Telegram group \"{g.name if g else gid}\""
+        if g is None or not is_agent(v):
+            return Spec(title, locked="This group row is not on the desk any more.")
+        group, profile, inside = g.name, v.profile, bool(g.marks.get(v.profile))
+        options: list[Opt] = []
+        modes: dict = {}
+        if inside:
+            mode, _said, can, why = group_mode(g, v)
+            if g.team:
+                try:
+                    _t, menu, why2 = E.voice_place_menu(v.voice_key, "tg_group", edit) if v.voice_key else ("", [], "")
+                except Exception as e:                   # noqa: BLE001
+                    menu, why2 = [], f"the switch could not be read ({type(e).__name__})"
+                for tok, label, cur in menu:
+                    modes[tok] = label
+                    options.append(Opt(f"mode|{tok}", label, cur))
+                why = why or why2
+            elif can and edit.grid is not None:
+                import gridstate as G
+                for tok, label in ((G.OFF, "Off — text only in this group"),
+                                   (G.VOICE_BACK, "Voice-back — a voice note only after a voice message from Peter"),
+                                   (G.ALWAYS, "Always — a voice note after every reply")):
+                    modes[tok] = label
+                    options.append(Opt(f"mode|{tok}", label, G.LABEL[tok] == mode))
+            if not modes:
+                options.append(Opt("mode|", f"voice mode: {mode or 'not known'}", disabled=True,
+                                   note=(why or "no switch here")[:60]))
+            options.append(Opt("check", f"check {v.name}'s bot again now (asks Telegram; changes nothing)"))
+            options.append(Opt("mark|out", "mark it not in this group (the cell goes blank)"))
+        else:
+            options.append(Opt("mark|in", "mark it in this group (then the desk asks Telegram about its bot)"))
+
+        def describe(tok: str) -> list[str]:
+            if tok == "check":
+                return [f"The desk asks Telegram, with {v.name}'s own bot, whether it is in \"{group}\" "
+                        "(getChatMember). Nothing is changed or written."]
+            if tok == "mark|in":
+                return [f"{v.name} is marked in the group \"{group}\" on the desk.",
+                        f"Then the desk asks Telegram whether {v.name}'s bot is there: green if it is, red with what "
+                        "to do if it is not. Nothing in Telegram changes."]
+            if tok == "mark|out":
+                return [f"{v.name} is marked not in the group \"{group}\": its cell goes blank.",
+                        "A mark on the desk only: its bot stays in the group if it is there."]
+            label = modes.get(tok.split("|", 1)[1], "")
+            if g.team:
+                return [f"{v.name}: spoken replies in the Team Room's Telegram group: {label}.",
+                        "The same switch as the old row: the Team Room's voice notes file, backed up, written and "
+                        "read back."]
+            return [f"{v.name}: spoken replies in the Telegram group \"{group}\": {label}.",
+                    f"The Hermes gateway's own voice mode for {v.name}'s bot in this group (its voice-mode file, the "
+                    "same one as the Telegram private chat's switch), backed up, written and read back."]
+
+        def jobs(tok: str) -> list:
+            if tok == "check":
+                return [lambda: self.check_job([gid], [profile])]
+            if tok.startswith("mark|"):
+                on = tok == "mark|in"
+                out = [lambda: TG.set_mark(edit, gid, profile, on, name=v.name, names=names)]
+                if on and self.telegram is not None:
+                    out.append(lambda: self.check_job([gid], [profile]))
+                return out
+            mode_tok = tok.split("|", 1)[1]
+            if g.team:
+                return [lambda: E.set_voice_place(v.voice_key, "tg_group", mode_tok, edit)]
+            return [lambda: TG.set_mode(edit, gid, profile, mode_tok, name=v.name, group=group)]
+
+        note = ("The light says whether its bot is in the group (Telegram is asked); the voice mode is separate. "
+                "Marks are the desk's own; nothing here adds a bot to a group or takes one out.")
+        return Spec(title, options, describe, jobs, note=note, needs=TG.NEEDS_MODE if inside else TG.NEEDS)
+
+    def spec_group_row(self, gid: str) -> Spec:
+        """Enter on a group row's name: ask Telegram again for everyone, mark it as the Team Room's group (or not), or
+        take the row off the desk."""
+        edit, names = self.edit, self.group_names()
+        g = group_of(self.snapshot, gid)
+        if g is None:
+            return Spec(f"Telegram group {gid}", locked="This group row is not on the desk any more.")
+        other = next((x for x in self.snapshot.groups if x.team and x.id != gid), None) if self.snapshot else None
+        options = [Opt("check", "check every marked agent's bot again now (asks Telegram; changes nothing)")]
+        if g.team:
+            options.append(Opt("team|off", "not the Team Room's group any more (the old row comes back)"))
+        else:
+            options.append(Opt("team|on", "this is the Team Room's group: the row \"Speaks in Telegram group\" moves "
+                                          "into it", disabled=other is not None,
+                               note=f"\"{other.name}\" has that mark" if other is not None else ""))
+        options.append(Opt("remove", "remove this row from the desk (no bot leaves the group in Telegram)"))
+
+        def describe(tok: str) -> list[str]:
+            if tok == "check":
+                return [f"The desk asks Telegram about every agent marked in \"{g.name}\", each with its own bot "
+                        "(getChatMember). Nothing is changed or written."]
+            if tok == "team|on":
+                return [f"\"{g.name}\" is marked as the Team Room's own group.",
+                        f"The row \"{VOICE_ROW['tg_group']}\" moves into this row: each cell's voice mode is then the "
+                        "Team Room's voice notes, with the same switch and every setting unchanged (only the mark "
+                        "is written, in the desk's own file).", "u undoes it."]
+            if tok == "team|off":
+                return [f"\"{g.name}\" is no longer marked as the Team Room's group; the row "
+                        f"\"{VOICE_ROW['tg_group']}\" comes back as it was.", "u undoes it."]
+            return [f"The row \"{g.name}\" ({g.id}) is taken off the desk, with its marks.",
+                    "Nothing in Telegram changes: no bot leaves the group. Each agent's voice mode in that group "
+                    "stays as it is in the gateway's file.", "u puts the row back."]
+
+        def jobs(tok: str) -> list:
+            if tok == "check":
+                return [lambda: self.check_job([gid])]
+            if tok.startswith("team|"):
+                return [lambda: TG.set_team(edit, gid, tok == "team|on", names=names)]
+            if tok == "remove":
+                return [lambda: TG.remove_group(edit, gid, names=names)]
+            return []
+
+        inside = [names.get(p, p) for p, on in g.marks.items() if on]
+        note = (f"ID {g.id}. Marked in it: {', '.join(inside) if inside else 'nobody'}."
+                + (" The Team Room's own group." if g.team else ""))
+        return Spec(f"Telegram group \"{g.name}\"", options, describe, jobs, note=note, needs=TG.NEEDS)
+
+    def action_add_group(self) -> None:
+        """g: a new Telegram group row. Its name, then its ID (a group the logs have seen is offered first: a
+        suggestion only). On Enter the desk asks Telegram, with each agent's own bot, who is in it; then it asks who
+        goes in the row, and adds it through the safe path."""
+        snap = self.snapshot
+        names = self.group_names()
+        profiles = list(names)
+        known = {g.id for g in (snap.groups if snap else ())}
+        try:
+            seen = TG.seen_groups(self.edit.profiles, profiles, known)[:6]
+        except Exception:                                # noqa: BLE001  a suggestion must never stop the key
+            seen = []
+
+        def ask_id(name: str, prefill: str) -> None:
+            def got(text: Optional[str]) -> None:
+                if text is None:
+                    return
+                gid, why = TG.check_id(text)
+                if not why and gid in known:
+                    why = f"The group {gid} already has a row on the desk."
+                if why:
+                    self.push_screen(NoticePopup("Add a Telegram group row", Text(f"{why} Nothing was added.")))
+                    return
+                self.push_screen(NoticePopup("Add a Telegram group row", Text(
+                    f"Asking Telegram, with each agent's own bot, who is in {gid} ...")))
+                self.scan_new_group(gid, name, profiles, names)
+
+            self.push_screen(AskPopup(f"\"{name}\": its Telegram ID", TG.ID_HINT + " Enter asks Telegram, with each "
+                                      "agent's own bot, whether that bot is in the group.", prefill), got)
+
+        def ask_name(prefill_id: str) -> None:
+            def got(text: Optional[str]) -> None:
+                if text is None:
+                    return
+                name, why = TG.check_name(text)
+                if why:
+                    self.push_screen(NoticePopup("Add a Telegram group row", Text(f"{why} Nothing was added.")))
+                    return
+                ask_id(name, prefill_id)
+
+            self.push_screen(AskPopup("New Telegram group row: its name", "The name shown on the desk (the group's name "
+                                      "in Telegram, or any name you like). Kept only in the desk's own settings "
+                                      "file on this Mac.", ""), got)
+
+        if not seen:
+            ask_name("")
+            return
+        rows = [(gid, f"new group seen, add it? {gid} (in {names.get(p, p)}'s log, last {when(ts)})")
+                for gid, p, ts in seen]
+        rows.append(("::type", "type a group's ID by hand"))
+        self.push_screen(PickPopup("Add a Telegram group row", rows,
+                                   note="Groups the agents' logs have seen that have no row yet: suggestions only, "
+                                        "nothing is added by itself."),
+                         lambda tok: ask_name("" if tok == "::type" else tok) if tok else None)
+
+    @work(thread=True, exclusive=True, group="acd-tg-check")
+    def scan_new_group(self, gid: str, name: str, profiles: list, names: dict) -> None:
+        try:
+            got = TG.check_group(gid, profiles, self.edit.profiles, self.telegram)
+        except Exception as e:                           # noqa: BLE001
+            got = {p: TG.Check(TG.ERROR, "not confirmed", f"the check failed ({type(e).__name__})") for p in profiles}
+        for p, c in got.items():
+            self.group_checks[(gid, p)] = c
+        self.call_from_thread(self.ask_who, gid, name, names, got)
+
+    def ask_who(self, gid: str, name: str, names: dict, got: dict) -> None:
+        """After Telegram's answers: who goes in the new row (the agents found in it, or every agent)."""
+        if isinstance(self.screen, NoticePopup) and self.screen.title_words == "Add a Telegram group row":
+            self.screen.dismiss(False)                   # the "asking Telegram ..." box
+        edit = self.edit
+        found = [p for p, c in got.items() if c.state == TG.MEMBER]
+        lines = [f"{names.get(p, p)}: {c.words} ({c.why})" for p, c in got.items()]
+        n = len(found)
+        note = ("What Telegram said, bot by bot:\n" + "\n".join("  " + ln for ln in lines) + "\n\n"
+                + ("ARMED: the row is written (backup, read back, u undoes it)." if self.is_armed else
+                   f"DRY RUN ({E.why_not_armed(edit)}): the desk only shows what would be written."))
+        rows = [("found", f"add it: the {n} agent{'s' if n != 1 else ''} found in it marked in, the others blank"),
+                ("all", "add it with every agent marked in: anyone not in it shows red with what to do")]
+
+        def picked(tok: Optional[str]) -> None:
+            if not tok:
+                return
+            marks = {p: (tok == "all" or p in found) for p in got}
+            self.run_jobs([lambda: TG.add_group(edit, gid, name, marks, names=names)])
+
+        self.push_screen(PickPopup(f"Add the group row \"{name}\" ({gid})?", rows, note=note), picked)
 
     def spec_model(self, v: D.AgentView) -> Spec:
         edit, loader = self.edit, self.loader
